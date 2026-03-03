@@ -1,0 +1,28 @@
+services:
+  navidrome:
+    image: deluan/navidrome:latest
+    restart: unless-stopped
+    ports:
+      - "4533:4533"
+    volumes:
+      - ./data/music:/music:ro
+      - ./data/navidrome:/data
+    environment:
+      ND_SCANSCHEDULE: "0"   # disable auto-scan; music-bot triggers it
+      ND_LOGLEVEL: info
+      ND_SESSIONTIMEOUT: 24h
+
+  music-bot:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8000"
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+      - ./beets:/root/.config/beets
+    depends_on:
+      - navidrome
+    environment:
+      - TZ=Asia/Seoul
+      - CONFIG_PATH=/app/config.yaml

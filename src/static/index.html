@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Music Bot</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 28px;
+    }
+
+    header h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: 0.02em; }
+
+    a.btn-outline {
+      font-size: 0.82rem;
+      padding: 6px 14px;
+      border: 1px solid #4a5568;
+      border-radius: 6px;
+      color: #a0aec0;
+      text-decoration: none;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    a.btn-outline:hover { border-color: #63b3ed; color: #63b3ed; }
+
+    section {
+      background: #1a1d27;
+      border: 1px solid #2d3147;
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 18px;
+    }
+
+    section h2 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #a0aec0;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 16px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 160px; }
+    .field label { font-size: 0.78rem; color: #718096; }
+
+    input[type="text"] {
+      background: #0f1117;
+      border: 1px solid #2d3147;
+      border-radius: 6px;
+      color: #e2e8f0;
+      padding: 8px 12px;
+      font-size: 0.9rem;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus { border-color: #4299e1; }
+
+    button {
+      background: #2b6cb0;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.88rem;
+      font-weight: 500;
+      padding: 8px 20px;
+      transition: background 0.15s;
+      white-space: nowrap;
+      align-self: flex-end;
+    }
+    button:hover { background: #3182ce; }
+    button:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: #2d3147;
+      color: #a0aec0;
+    }
+    .btn-secondary:hover { background: #363b55; color: #e2e8f0; }
+
+    #status-bar {
+      margin-top: 14px;
+      min-height: 28px;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-idle     { background: #4a5568; }
+    .dot-progress { background: #f6ad55; animation: pulse 1s infinite; }
+    .dot-done     { background: #68d391; }
+    .dot-failed   { background: #fc8181; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    .lb-row { display: flex; align-items: center; gap: 12px; }
+
+    /* Downloads table */
+    .table-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .table-wrapper { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.83rem;
+    }
+
+    thead th {
+      text-align: left;
+      color: #718096;
+      font-weight: 500;
+      padding: 6px 10px;
+      border-bottom: 1px solid #2d3147;
+    }
+
+    tbody tr { border-bottom: 1px solid #1e2235; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td { padding: 8px 10px; color: #cbd5e0; vertical-align: top; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .badge-done        { background: #1c4532; color: #68d391; }
+    .badge-failed      { background: #3b1515; color: #fc8181; }
+    .badge-pending     { background: #2d3147; color: #a0aec0; }
+    .badge-downloading { background: #2a3a54; color: #63b3ed; }
+    .badge-tagging     { background: #2d2a54; color: #b794f4; }
+    .badge-scanning    { background: #2a3a54; color: #76e4f7; }
+    .badge-manual      { background: #3a2d54; color: #d6bcfa; }
+    .badge-lb          { background: #1a2a3a; color: #63b3ed; }
+
+    #no-data {
+      text-align: center;
+      color: #4a5568;
+      padding: 24px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Music Bot</h1>
+  <a class="btn-outline" href="http://localhost:4533" target="_blank">Open Navidrome ↗</a>
+</header>
+
+<!-- Manual Download -->
+<section>
+  <h2>수동 다운로드</h2>
+  <div class="input-row">
+    <div class="field">
+      <label for="inp-artist">Artist</label>
+      <input type="text" id="inp-artist" placeholder="Radiohead">
+    </div>
+    <div class="field">
+      <label for="inp-track">Track</label>
+      <input type="text" id="inp-track" placeholder="Creep">
+    </div>
+    <button id="btn-download" onclick="startDownload()">Download</button>
+  </div>
+  <div id="status-bar">
+    <span class="status-dot dot-idle" id="status-dot"></span>
+    <span id="status-msg">대기 중</span>
+  </div>
+</section>
+
+<!-- LB Pipeline -->
+<section>
+  <h2>ListenBrainz 파이프라인</h2>
+  <div class="lb-row">
+    <button class="btn-secondary" onclick="runPipeline()">Run LB Pipeline</button>
+    <span id="lb-msg" style="font-size:0.83rem; color:#718096;"></span>
+  </div>
+</section>
+
+<!-- Download History -->
+<section>
+  <div class="table-header">
+    <h2 style="margin-bottom:0">다운로드 이력</h2>
+    <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem;" onclick="loadHistory()">Refresh</button>
+  </div>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Artist</th>
+          <th>Track</th>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Time</th>
+        </tr>
+      </thead>
+      <tbody id="history-body">
+      </tbody>
+    </table>
+    <p id="no-data">이력 없음</p>
+  </div>
+</section>
+
+<script>
+  // ── Status bar ─────────────────────────────────────────────────────────────
+  const dotEl  = document.getElementById('status-dot');
+  const msgEl  = document.getElementById('status-msg');
+  const dlBtn  = document.getElementById('btn-download');
+
+  function setStatus(type, msg) {
+    dotEl.className = 'status-dot dot-' + type;
+    msgEl.textContent = msg;
+  }
+
+  // ── Manual Download ────────────────────────────────────────────────────────
+  async function startDownload() {
+    const artist = document.getElementById('inp-artist').value.trim();
+    const track  = document.getElementById('inp-track').value.trim();
+    if (!artist || !track) { alert('Artist와 Track을 입력하세요.'); return; }
+
+    dlBtn.disabled = true;
+    setStatus('progress', '요청 중...');
+
+    let jobId;
+    try {
+      const res = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artist, track }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      ({ job_id: jobId } = await res.json());
+    } catch (e) {
+      setStatus('failed', '요청 실패: ' + e.message);
+      dlBtn.disabled = false;
+      return;
+    }
+
+    // SSE
+    const es = new EventSource('/api/sse/' + jobId);
+    es.onmessage = (e) => {
+      const { status, message } = JSON.parse(e.data);
+      const dotType = (status === 'done') ? 'done' : (status === 'failed') ? 'failed' : 'progress';
+      setStatus(dotType, message);
+
+      if (status === 'done' || status === 'failed') {
+        es.close();
+        dlBtn.disabled = false;
+        loadHistory();
+      }
+    };
+    es.onerror = () => {
+      setStatus('failed', 'SSE 연결 오류');
+      es.close();
+      dlBtn.disabled = false;
+    };
+  }
+
+  // Enter key submits (preventDefault: 브라우저가 button에 암묵적 클릭 보내는 것 차단)
+  ['inp-artist', 'inp-track'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); startDownload(); }
+    });
+  });
+
+  // ── LB Pipeline ────────────────────────────────────────────────────────────
+  async function runPipeline() {
+    const lbMsg = document.getElementById('lb-msg');
+    lbMsg.textContent = '실행 중...';
+    try {
+      const res = await fetch('/api/pipeline/run', { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      lbMsg.textContent = '파이프라인 시작됨 ✓';
+    } catch (e) {
+      lbMsg.textContent = '오류: ' + e.message;
+    }
+    setTimeout(() => { lbMsg.textContent = ''; }, 5000);
+  }
+
+  // ── History ────────────────────────────────────────────────────────────────
+  function relativeTime(isoStr) {
+    if (!isoStr) return '—';
+    const diff = Math.floor((Date.now() - new Date(isoStr + 'Z')) / 1000);
+    if (diff < 60)   return diff + '초 전';
+    if (diff < 3600) return Math.floor(diff / 60) + '분 전';
+    if (diff < 86400) return Math.floor(diff / 3600) + '시간 전';
+    return Math.floor(diff / 86400) + '일 전';
+  }
+
+  function statusBadge(status) {
+    const map = {
+      done: '● done', failed: '✕ failed', pending: '○ pending',
+      downloading: '↓ downloading', tagging: '⊙ tagging', scanning: '⟳ scanning',
+    };
+    const label = map[status] || status;
+    return `<span class="badge badge-${status}">${label}</span>`;
+  }
+
+  function sourceBadge(src) {
+    if (!src) return '';
+    const cls = (src === 'manual') ? 'badge-manual' : 'badge-lb';
+    return `<span class="badge ${cls}">${src}</span>`;
+  }
+
+  async function loadHistory() {
+    try {
+      const res = await fetch('/api/downloads');
+      const rows = await res.json();
+      const tbody = document.getElementById('history-body');
+      const noData = document.getElementById('no-data');
+
+      if (!rows.length) {
+        tbody.innerHTML = '';
+        noData.style.display = 'block';
+        return;
+      }
+      noData.style.display = 'none';
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td>${esc(r.artist)}</td>
+          <td>${esc(r.track_name)}</td>
+          <td>${sourceBadge(r.source)}</td>
+          <td>${statusBadge(r.status)}</td>
+          <td style="color:#718096;">${relativeTime(r.downloaded_at)}</td>
+        </tr>
+      `).join('');
+    } catch (e) {
+      console.error('history load failed', e);
+    }
+  }
+
+  function esc(str) {
+    return String(str ?? '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Initial load + auto-refresh every 5 s
+  loadHistory();
+  setInterval(loadHistory, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+# music-bot
+
+ListenBrainz 추천 기반 음악 자동 수집 및 스트리밍 시스템.
+
+ListenBrainz 추천 → YouTube 다운로드 → beets 자동 태깅 → Navidrome 스트리밍까지 완전 자동화된 파이프라인.
+
+## 빠른 시작
+
+```bash
+# 1. 설정 파일 복사 및 편집
+cp config.yaml.example config.yaml
+# config.yaml에서 listenbrainz.username, token, navidrome 계정 설정
+
+# 2. 서비스 시작
+docker compose up --build -d
+
+# 3. 접속
+# Web UI:    http://localhost:8080
+# Navidrome: http://localhost:4533
+```
+
+## 문서
+
+| 문서 | 설명 |
+|------|------|
+| [요구사항 정의서](docs/requirements.md) | 기능/비기능 요구사항, 외부 의존성 |
+| [시스템 아키텍처](docs/architecture.md) | 컴포넌트 구조, 파이프라인 흐름, 스레딩 모델 |
+| [API 명세서](docs/api-spec.md) | REST API 엔드포인트, SSE 이벤트 스펙 |
+| [데이터 모델](docs/data-model.md) | SQLite 스키마, 상태 전이도 |
+| [운영 가이드](docs/operations.md) | 배포, 설정, 로그, 트러블슈팅 |
+| [프로젝트 백로그](docs/backlog.md) | 완료된 기능 이력, 알려진 이슈, 개선 후보 |
+
+## 서비스 구성
+
+| 서비스 | 포트 | 역할 |
+|--------|------|------|
+| music-bot | 8080 | Web UI + REST API + 파이프라인 |
+| navidrome | 4533 | 음악 스트리밍 (Subsonic 호환) |
+
+## 주요 명령어
+
+```bash
+# 로그 확인
+docker compose logs -f music-bot
+
+# 컨테이너 재시작 (소스 변경 후)
+docker restart music-bot-temp-music-bot-1
+
+# 전체 재빌드 (Python 소스 변경 후)
+docker compose up --build -d
+
+# LB 파이프라인 수동 실행
+curl -X POST http://localhost:8080/api/pipeline/run
+
+# 다운로드 이력 확인
+curl http://localhost:8080/api/downloads | python3 -m json.tool
+
+# SQLite 상태 확인
+sqlite3 data/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
+```
