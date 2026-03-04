@@ -6,7 +6,7 @@ services:
       - "4533:4533"
     volumes:
       - ./data/music:/music:ro
-      - ./data/navidrome:/data
+      - navidrome-data:/data
     environment:
       ND_SCANSCHEDULE: "0"   # disable auto-scan; music-bot triggers it
       ND_LOGLEVEL: info
@@ -30,3 +30,4 @@ services:
 
 volumes:
   db-data:
+  navidrome-data:

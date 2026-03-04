@@ -1,5 +1,5 @@
 # User config (contains secrets)
-config.yaml
+/config.yaml
 
 # Data directories
 data/
