@@ -13,7 +13,7 @@ services:
       ND_SESSIONTIMEOUT: 24h
 
   brainstream:
-    image: ghcr.io/bigpie1367/brainstream:latest
+    image: ghcr.io/bigpie1367/brain-stream:latest
     restart: unless-stopped
     ports:
       - "8080:8000"
