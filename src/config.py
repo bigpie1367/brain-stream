@@ -41,7 +41,7 @@ class AppConfig:
     beets: BeetsConfig = field(default_factory=BeetsConfig)
     navidrome: NavidromeConfig = field(default_factory=NavidromeConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-    state_db: str = "/app/data/state.db"
+    state_db: str = "/app/db/state.db"
     log_level: str = "INFO"
     log_file: Optional[str] = "/app/data/logs/music-bot.log"
 
@@ -86,7 +86,7 @@ def load_config(path: str = "/app/config.yaml") -> AppConfig:
         beets=beets,
         navidrome=navidrome,
         scheduler=scheduler,
-        state_db=raw.get("state_db", "/app/data/state.db"),
+        state_db=raw.get("state_db", "/app/db/state.db"),
         log_level=raw.get("log_level", "INFO"),
         log_file=raw.get("log_file", "/app/data/logs/music-bot.log"),
     )

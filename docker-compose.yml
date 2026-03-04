@@ -19,6 +19,7 @@ services:
       - "8080:8000"
     volumes:
       - ./data:/app/data
+      - db-data:/app/db
       - ./config.yaml:/app/config.yaml:ro
       - ./beets:/root/.config/beets
     depends_on:
@@ -26,3 +27,6 @@ services:
     environment:
       - TZ=Asia/Seoul
       - CONFIG_PATH=/app/config.yaml
+
+volumes:
+  db-data:
