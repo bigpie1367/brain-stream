@@ -13,7 +13,6 @@ services:
       ND_SESSIONTIMEOUT: 24h
 
   music-bot:
-    build: .
     image: ghcr.io/bigpie1367/music-bot:latest
     container_name: music-bot
     restart: unless-stopped
