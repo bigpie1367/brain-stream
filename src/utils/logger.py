@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+
 import structlog
 
 
@@ -15,7 +16,9 @@ def setup_logger(log_level: str = "INFO", log_file: str = None):
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.dev.ConsoleRenderer() if sys.stdout.isatty() else structlog.processors.JSONRenderer(),
+        structlog.dev.ConsoleRenderer()
+        if sys.stdout.isatty()
+        else structlog.processors.JSONRenderer(),
     ]
 
     structlog.configure(
