@@ -109,9 +109,9 @@ POST /api/download {artist, track}
 | `src/main.py` | Entrypoint; wires config → DB → API → threads → uvicorn |
 | `src/api.py` | FastAPI app; `_cfg` injected by main.py at startup |
 | `src/state.py` | SQLite wrapper; `mbid` is PK (real MB UUID for LB tracks, `manual-{uuid8}` for manual) |
-| `src/config.py` | YAML loader; env vars `LB_USERNAME`, `LB_TOKEN`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD` override config |
+| `src/config.py` | Env-var only config (no file needed); `LB_USERNAME`, `LB_TOKEN`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`, `NAVIDROME_URL` |
 | `src/pipeline/tagger.py` | Most complex module; handles pre-tagging, beets import, enrichment, art embedding |
-| `beets/config.yaml` | Volume-mounted (no rebuild needed); changes take effect immediately on next import |
+| `beets/config.yaml` | Bundled in Docker image via Dockerfile COPY; changes require rebuild + push |
 
 ## Critical beets Constraints
 
@@ -122,15 +122,13 @@ POST /api/download {artist, track}
 - beet returns exit code 0 on skip — detect skips by reading the import log before/after with byte offsets
 - Do **not** set `mb_albumid` in file tags via `beet modify`; doing so causes Navidrome to split same-album tracks into separate album entries (Navidrome groups by album name, not mb_albumid)
 
-## Volume Mounts (docker-compose.yml)
+## Volume Mounts (docker-compose.prod.yml)
 
 | Host path | Container path | Notes |
 |-----------|----------------|-------|
 | `./data` | `/app/data` | Music files, staging, logs, state.db |
-| `./config.yaml` | `/app/config.yaml` | Read-only; config changes need container restart |
-| `./beets` | `/root/.config/beets` | beets config + state.pickle; changes take effect immediately |
 
 ## Services
 
-- **music-bot**: `http://localhost:8080` (Web UI + API)
-- **navidrome**: `http://localhost:4533` (music streaming; auto-scan disabled, triggered by music-bot)
+- **brainstream**: `http://localhost:8080` (Web UI + API)
+- **navidrome**: `http://localhost:4533` (music streaming; auto-scan disabled, triggered by brainstream)

@@ -1,7 +1,6 @@
 import os
 import sys
 import types
-import textwrap
 from unittest.mock import MagicMock
 
 import pytest
@@ -73,43 +72,6 @@ def tmp_state_db(tmp_path):
     db_path = str(tmp_path / "state.db")
     init_db(db_path)
     return db_path
-
-
-# ── Config YAML 픽스처 ─────────────────────────────────────────────────────────
-
-@pytest.fixture()
-def tmp_config_yaml(tmp_path):
-    """tmpdir에 최소한의 테스트용 config.yaml을 작성하고 경로를 반환한다."""
-    staging = str(tmp_path / "staging")
-    music = str(tmp_path / "music")
-    db = str(tmp_path / "state.db")
-    yaml_content = textwrap.dedent(f"""\
-        listenbrainz:
-          username: "yaml_user"
-          token: "yaml_token"
-          recommendation_count: 10
-
-        download:
-          staging_dir: {staging}
-          prefer_flac: true
-
-        beets:
-          music_dir: {music}
-
-        navidrome:
-          url: "http://localhost:4533"
-          username: "admin"
-          password: "secret"
-
-        scheduler:
-          interval_hours: 6
-
-        state_db: {db}
-        log_level: "INFO"
-    """)
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(yaml_content)
-    return str(config_path)
 
 
 # ── FastAPI TestClient 픽스처 ──────────────────────────────────────────────────

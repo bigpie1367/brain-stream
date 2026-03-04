@@ -1,5 +1,4 @@
 import os
-import yaml
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -46,41 +45,23 @@ class AppConfig:
     log_file: Optional[str] = "/app/data/logs/music-bot.log"
 
 
-def load_config(path: str = "/app/config.yaml") -> AppConfig:
-    raw: dict = {}
-    if os.path.isfile(path):
-        with open(path, "r") as f:
-            raw = yaml.safe_load(f) or {}
-
-    lb_raw = raw.get("listenbrainz", {})
+def load_config() -> AppConfig:
     listenbrainz = ListenBrainzConfig(
-        username=os.environ.get("LB_USERNAME", lb_raw.get("username", "")),
-        token=os.environ.get("LB_TOKEN", lb_raw.get("token", "")),
-        recommendation_count=lb_raw.get("recommendation_count", 25),
+        username=os.environ.get("LB_USERNAME", ""),
+        token=os.environ.get("LB_TOKEN", ""),
     )
 
-    dl_raw = raw.get("download", {})
-    download = DownloadConfig(
-        staging_dir=dl_raw.get("staging_dir", "/app/data/staging"),
-        prefer_flac=dl_raw.get("prefer_flac", True),
-    )
+    download = DownloadConfig()
 
-    beets_raw = raw.get("beets", {})
-    beets = BeetsConfig(
-        music_dir=beets_raw.get("music_dir", "/app/data/music"),
-    )
+    beets = BeetsConfig()
 
-    nd_raw = raw.get("navidrome", {})
     navidrome = NavidromeConfig(
-        url=os.environ.get("NAVIDROME_URL", nd_raw.get("url", "http://navidrome:4533")),
-        username=os.environ.get("NAVIDROME_USER", nd_raw.get("username", "admin")),
-        password=os.environ.get("NAVIDROME_PASSWORD", nd_raw.get("password", "")),
+        url=os.environ.get("NAVIDROME_URL", "http://navidrome:4533"),
+        username=os.environ.get("NAVIDROME_USER", "admin"),
+        password=os.environ.get("NAVIDROME_PASSWORD", ""),
     )
 
-    sched_raw = raw.get("scheduler", {})
-    scheduler = SchedulerConfig(
-        interval_hours=sched_raw.get("interval_hours", 6),
-    )
+    scheduler = SchedulerConfig()
 
     return AppConfig(
         listenbrainz=listenbrainz,
@@ -88,7 +69,4 @@ def load_config(path: str = "/app/config.yaml") -> AppConfig:
         beets=beets,
         navidrome=navidrome,
         scheduler=scheduler,
-        state_db=raw.get("state_db", "/app/db/state.db"),
-        log_level=raw.get("log_level", "INFO"),
-        log_file=raw.get("log_file", "/app/data/logs/music-bot.log"),
     )

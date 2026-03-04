@@ -101,4 +101,4 @@
 | TD-01 | `src/api.py`의 `_cfg` 전역 변수 주입 방식 → FastAPI의 Dependency Injection으로 전환 권장 |
 | TD-02 | `tagger.py`에서 `beet list` subprocess 의존 → mediafile/beets Python API 직접 사용 검토 |
 | TD-03 | 테스트 코드 없음 — 핵심 파이프라인 단계(downloader, tagger, state) 단위 테스트 필요 |
-| TD-04 | `config.yaml`에 평문 비밀번호 저장 → Docker Secrets 또는 환경변수 전용 사용 권장 |
+| TD-04 | ~~`config.yaml`에 평문 비밀번호 저장~~ → 환경변수 전용으로 전환 완료 |

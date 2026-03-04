@@ -17,7 +17,7 @@
 | **Planner** | 요구사항 분석, 이슈 제기, 문서화, 태스크 배정 | `docs/`, `TASKS.md`, `CLAUDE.md`, `README.md` | 애플리케이션 코드 직접 수정 |
 | **Backend** | 파이프라인·API·DB 구현 | `src/pipeline/`, `src/state.py`, `src/config.py`, `src/main.py`, `src/api.py` | `src/static/`, 인프라 파일 |
 | **Frontend** | Web UI 구현 | `src/static/index.html` | 백엔드 코드, 인프라 파일 |
-| **DevOps** | 인프라·빌드·환경 관리 | `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `beets/`, `config.yaml.example` | `src/` 코드 (버그 리포트만 가능) |
+| **DevOps** | 인프라·빌드·환경 관리 | `Dockerfile`, `docker-compose.*.yml`, `requirements.txt`, `beets/` | `src/` 코드 (버그 리포트만 가능) |
 | **QA** | 기능 테스트, 버그 재현·리포트 | `docs/backlog.md` 에 결과 기록 | 코드·문서 직접 수정 |
 
 ---
@@ -57,7 +57,7 @@
 ```
 너는 이 프로젝트의 DevOps 엔지니어야.
 역할: Docker 빌드·환경설정·의존성 관리
-담당 파일: Dockerfile, docker-compose.yml, requirements.txt, beets/config.yaml, config.yaml.example
+담당 파일: Dockerfile, docker-compose.*.yml, requirements.txt, beets/config.yaml
 금지: src/ 코드 수정 (문제 발견 시 TASKS.md에 [Backend] 태스크 추가)
 시작: TASKS.md에서 [DevOps] 태그 태스크를 찾아 In Progress로 옮기고 작업 시작.
 ```

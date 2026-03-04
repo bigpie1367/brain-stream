@@ -55,7 +55,7 @@ External APIs:
 | 파일 | 역할 |
 |------|------|
 | `src/main.py` | 진입점. 설정 로드 → DB 초기화 → API 설정 주입 → 파이프라인 스레드 시작 → uvicorn 실행 |
-| `src/config.py` | `config.yaml` 로드. 환경변수(LB_USERNAME 등)로 오버라이드 가능 |
+| `src/config.py` | 환경변수로 설정 로드 (config 파일 불필요) |
 | `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD |
 | `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회 |
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출 |
@@ -64,7 +64,7 @@ External APIs:
 | `src/pipeline/navidrome.py` | Subsonic API token-auth, startScan + getScanStatus 폴링 |
 | `src/utils/logger.py` | structlog 설정 (TTY: 컬러 콘솔, non-TTY: JSON) |
 | `src/static/index.html` | 다크 테마 단일 파일 Web UI |
-| `beets/config.yaml` | beets 설정 (볼륨 마운트, 재빌드 불필요) |
+| `beets/config.yaml` | beets 설정 (Dockerfile에 번들, 변경 시 재빌드 필요) |
 
 ---
 
@@ -184,27 +184,12 @@ staging 파일은 import 성공/실패 후 삭제됨.
 
 ## 6. 설정 구조
 
-```yaml
-# config.yaml
-listenbrainz:
-  username: "..."       # LB_USERNAME 환경변수로 오버라이드 가능
-  token: "..."          # LB_TOKEN
-  recommendation_count: 25
+config 파일 없이 환경변수만으로 동작합니다. `.env` 파일 또는 docker-compose `environment`로 주입합니다.
 
-download:
-  staging_dir: /app/data/staging
-  prefer_flac: true
-
-beets:
-  music_dir: /app/data/music
-
-navidrome:
-  url: "http://navidrome:4533"
-  username: "..."       # NAVIDROME_USER
-  password: "..."       # NAVIDROME_PASSWORD
-
-scheduler:
-  interval_hours: 6
-```
-
-민감 정보는 환경변수로 주입 권장 (`.env` 파일 또는 docker-compose `environment`).
+| 환경변수 | 기본값 | 필수 |
+|----------|--------|------|
+| `LB_USERNAME` | `""` | 필수 |
+| `LB_TOKEN` | `""` | 필수 |
+| `NAVIDROME_URL` | `http://navidrome:4533` | |
+| `NAVIDROME_USER` | `admin` | |
+| `NAVIDROME_PASSWORD` | `""` | 필수 |
