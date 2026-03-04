@@ -1,3 +1,6 @@
+# Config (env vars로 대체됨, 로컬 잔존 파일 무시)
+/config.yaml
+
 # Data directories
 data/
 
