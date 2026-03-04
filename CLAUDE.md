@@ -2,6 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Multi-Session Workflow (Subagent 방식)
+
+이 프로젝트는 **단일 Planner 세션 + 서브에이전트** 구조로 운영된다.
+별도 세션을 여러 개 열 필요 없이, Planner(현재 세션)가 요구사항을 분석하고 적절한 서브에이전트에 자동 위임한다.
+
+### 서브에이전트 (.claude/agents/)
+
+| 에이전트 | 담당 파일 | 자동 호출 시점 |
+|----------|-----------|---------------|
+| `backend` | `src/pipeline/`, `src/state.py`, `src/config.py`, `src/main.py`, `src/api.py` | Python 코드 구현·수정 |
+| `frontend` | `src/static/index.html` | Web UI 수정 |
+| `devops` | `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `beets/` | 인프라·빌드·환경 |
+| `qa` | (읽기 전용 + Bash) | 기능 검증·버그 재현 |
+
+### Planner 역할 (이 세션)
+- 요구사항 분석, 허점 이의 제기, 서브에이전트 위임, 문서 업데이트
+- 담당: `docs/`, `TASKS.md`, `CLAUDE.md`, `README.md`
+- 코드·인프라 직접 수정 금지 (서브에이전트에 위임)
+
+상세 워크플로우: [`docs/multi-session-workflow.md`](docs/multi-session-workflow.md)
+Task board: [`TASKS.md`](../TASKS.md)
+
 ## Documentation
 
 Before diving into code, read the relevant docs first to save context:
@@ -14,6 +36,7 @@ Before diving into code, read the relevant docs first to save context:
 | [`docs/requirements.md`](docs/requirements.md) | Functional/non-functional requirements, constraints |
 | [`docs/operations.md`](docs/operations.md) | Deployment, config, troubleshooting, log locations |
 | [`docs/backlog.md`](docs/backlog.md) | Known bugs, enhancement candidates, technical debt |
+| [`docs/multi-session-workflow.md`](docs/multi-session-workflow.md) | Multi-session roles, task board, handoff protocol |
 
 ## Commands
 

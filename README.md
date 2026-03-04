@@ -19,6 +19,20 @@ docker compose up --build -d
 # Navidrome: http://localhost:4533
 ```
 
+## 개발 워크플로우
+
+여러 Claude Code 세션을 역할별로 나눠 협업합니다. 각 세션은 `TASKS.md`를 통해 조율됩니다.
+
+| 역할 | 담당 영역 |
+|------|-----------|
+| Planner | 요구사항 분석, 문서화, 태스크 배정 |
+| Backend | `src/pipeline/`, API, DB |
+| Frontend | `src/static/index.html` |
+| DevOps | `Dockerfile`, `docker-compose.yml`, `beets/` |
+| QA | 기능 검증, 버그 리포트 |
+
+자세한 세션 초기화 프롬프트 및 협업 규칙: [docs/multi-session-workflow.md](docs/multi-session-workflow.md)
+
 ## 문서
 
 | 문서 | 설명 |
@@ -29,6 +43,7 @@ docker compose up --build -d
 | [데이터 모델](docs/data-model.md) | SQLite 스키마, 상태 전이도 |
 | [운영 가이드](docs/operations.md) | 배포, 설정, 로그, 트러블슈팅 |
 | [프로젝트 백로그](docs/backlog.md) | 완료된 기능 이력, 알려진 이슈, 개선 후보 |
+| [멀티 세션 워크플로우](docs/multi-session-workflow.md) | 역할 정의, 태스크 보드, 핸드오프 프로토콜 |
 
 ## 서비스 구성
 
