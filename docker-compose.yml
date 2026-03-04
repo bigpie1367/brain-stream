@@ -14,8 +14,7 @@ services:
 
   music-bot:
     build: .
-    # TODO: OWNER를 실제 GitHub 사용자명(또는 org 이름)으로 교체하세요.
-    image: ghcr.io/OWNER/music-bot:latest
+    image: ghcr.io/bigpie1367/music-bot:latest
     container_name: music-bot
     restart: unless-stopped
     ports:
@@ -31,9 +30,6 @@ services:
       - TZ=Asia/Seoul
       - CONFIG_PATH=/app/config.yaml
 
-  # Watchtower: GHCR 인증 사전 준비 필요
-  #   docker login ghcr.io -u GITHUB_USERNAME -p GITHUB_PAT
-  # 위 명령 실행 후 ~/.docker/config.json 이 생성됩니다.
   watchtower:
     image: containrrr/watchtower
     container_name: watchtower
@@ -45,7 +41,7 @@ services:
       - WATCHTOWER_POLL_INTERVAL=300      # 5분마다 신규 이미지 체크
       - WATCHTOWER_CLEANUP=true           # 오래된 이미지 자동 삭제
       - WATCHTOWER_INCLUDE_STOPPED=false
-    command: music-bot  # music-bot 컨테이너만 모니터링 (container_name 기준)
+    command: music-bot  # music-bot 컨테이너만 모니터링
 
 volumes:
   db-data:
