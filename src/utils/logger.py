@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import structlog
 
@@ -28,6 +29,7 @@ def setup_logger(log_level: str = "INFO", log_file: str = None):
     )
 
     if log_file:
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(logging.Formatter("%(message)s"))
         logging.getLogger().addHandler(file_handler)
