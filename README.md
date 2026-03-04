@@ -6,17 +6,31 @@ ListenBrainz 추천 → YouTube 다운로드 → beets 자동 태깅 → Navidro
 
 ## 빠른 시작
 
-```bash
-# 1. 설정 파일 복사 및 편집
-cp config.yaml.example config.yaml
-# config.yaml에서 listenbrainz.username, token, navidrome 계정 설정
+### 로컬 개발
 
-# 2. 서비스 시작
-docker compose up --build -d
+```bash
+# 1. 환경변수 설정
+cp .env.example .env
+# .env에서 LB_TOKEN, NAVIDROME_PASSWORD 입력
+
+# 2. 서비스 시작 (소스 빌드)
+./restart_local_docker.sh
 
 # 3. 접속
 # Web UI:    http://localhost:8080
 # Navidrome: http://localhost:4533
+```
+
+### 서버 배포 (이미지 전용)
+
+```bash
+# 1. docker-compose.prod.yml만 서버에 복사
+# 2. .env 파일 생성
+cp .env.example .env
+# .env에서 LB_TOKEN, NAVIDROME_PASSWORD 입력
+
+# 3. 서비스 시작
+./restart_production_docker.sh
 ```
 
 ## 개발 워크플로우
@@ -28,7 +42,7 @@ docker compose up --build -d
 | Planner | 요구사항 분석, 문서화, 태스크 배정 |
 | Backend | `src/pipeline/`, API, DB |
 | Frontend | `src/static/index.html` |
-| DevOps | `Dockerfile`, `docker-compose.yml`, `beets/` |
+| DevOps | `Dockerfile`, `docker-compose.*.yml`, `beets/` |
 | QA | 기능 검증, 버그 리포트 |
 
 자세한 세션 초기화 프롬프트 및 협업 규칙: [docs/multi-session-workflow.md](docs/multi-session-workflow.md)

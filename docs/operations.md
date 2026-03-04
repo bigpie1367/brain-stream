@@ -15,79 +15,71 @@
 
 ## 2. 초기 설정
 
-### 2.1 설정 파일
+### 2.1 환경변수 설정
+
+`config.yaml` 없이 `.env` 파일만으로 동작합니다:
 
 ```bash
-cp config.yaml.example config.yaml
+cp .env.example .env
 ```
 
-`config.yaml`을 편집:
-
-```yaml
-listenbrainz:
-  username: "your_lb_username"
-  token: "your_lb_token"
-  recommendation_count: 25   # 1회 파이프라인에서 처리할 추천 수
-
-download:
-  staging_dir: /app/data/staging
-  prefer_flac: true           # true: FLAC 우선, false: Opus만
-
-navidrome:
-  url: "http://navidrome:4533"
-  username: "admin"           # Navidrome 관리자 계정
-  password: "your_password"
-
-scheduler:
-  interval_hours: 6           # 자동 실행 주기 (시간)
-```
-
-### 2.2 환경변수 오버라이드 (선택)
-
-`config.yaml` 대신 환경변수로 민감 정보 주입 가능:
-
-```bash
-export LB_USERNAME="your_lb_username"
-export LB_TOKEN="your_lb_token"
-export NAVIDROME_USER="admin"
-export NAVIDROME_PASSWORD="your_password"
-```
-
-또는 `.env` 파일 생성 (`.gitignore`에 포함 권장):
+`.env` 파일 편집:
 
 ```
-LB_USERNAME=your_lb_username
-LB_TOKEN=your_lb_token
-NAVIDROME_USER=admin
-NAVIDROME_PASSWORD=your_password
+LB_TOKEN=your_listenbrainz_token
+NAVIDROME_PASSWORD=your_navidrome_password
 ```
+
+비민감 설정(`LB_USERNAME`, `NAVIDROME_USER` 등)은 `docker-compose.prod.yml`에 하드코딩되어 있습니다.
+
+**지원 환경변수 전체 목록:**
+
+| 환경변수 | 기본값 | 설명 |
+|----------|--------|------|
+| `LB_USERNAME` | (prod compose에 하드코딩) | ListenBrainz 사용자명 |
+| `LB_TOKEN` | — | ListenBrainz API 토큰 **(필수)** |
+| `NAVIDROME_URL` | `http://navidrome:4533` | Navidrome URL |
+| `NAVIDROME_USER` | `admin` | Navidrome 사용자명 |
+| `NAVIDROME_PASSWORD` | — | Navidrome 비밀번호 **(필수)** |
 
 ---
 
 ## 3. 배포
 
-### 3.1 최초 실행
+### 3.1 로컬 개발
 
 ```bash
-docker compose up --build -d
+./restart_local_docker.sh
+# = docker compose -f docker-compose.local.yml down && up --build -d
 ```
 
-### 3.2 Navidrome 초기 설정
+### 3.2 서버 배포 (이미지 전용)
+
+서버에 필요한 파일: `docker-compose.prod.yml`, `restart_production_docker.sh`, `.env`
+
+```bash
+./restart_production_docker.sh
+# = docker compose -f docker-compose.prod.yml down && up -d
+```
+
+Watchtower가 5분마다 GHCR 신규 이미지를 자동으로 감지하고 업데이트합니다.
+
+### 3.3 Navidrome 초기 설정
 
 1. `http://localhost:4533` 접속
-2. 최초 접속 시 관리자 계정 생성 (config.yaml의 username/password와 일치시킬 것)
+2. 최초 접속 시 관리자 계정 생성 (`NAVIDROME_USER` / `NAVIDROME_PASSWORD`와 일치시킬 것)
 
-### 3.3 서비스 확인
+### 3.4 서비스 확인
 
 ```bash
 # 상태 확인
-docker compose ps
+docker compose -f docker-compose.prod.yml ps
 
-# music-bot 로그
-docker compose logs -f music-bot
+# brainstream 로그
+docker compose -f docker-compose.prod.yml logs -f brainstream
 
 # navidrome 로그
-docker compose logs -f navidrome
+docker compose -f docker-compose.prod.yml logs -f navidrome
 ```
 
 ---
@@ -97,14 +89,14 @@ docker compose logs -f navidrome
 ### 4.1 소스 코드 변경 시
 
 ```bash
-# Python 소스 변경 (src/ 파일)
-docker compose up --build -d
+# Python 소스 변경 (src/ 파일) — 로컬
+./restart_local_docker.sh
 
-# beets 설정 변경 (beets/config.yaml) — 재빌드 불필요
-docker restart music-bot-temp-music-bot-1
+# beets 설정 변경 (beets/config.yaml) — 이미지에 번들됨, 재빌드 후 push 필요
+# git push → CI → Watchtower 자동 배포
 
-# config.yaml 변경 — 재빌드 불필요, 재시작만
-docker restart music-bot-temp-music-bot-1
+# 환경변수 변경 (.env) — 재시작만
+docker compose -f docker-compose.prod.yml down && docker compose -f docker-compose.prod.yml up -d
 ```
 
 ### 4.2 파이프라인 수동 실행
@@ -134,13 +126,13 @@ sqlite3 data/state.db "SELECT artist, track_name, error_msg, attempts FROM downl
 
 ```bash
 # 전체 목록
-docker exec music-bot-temp-music-bot-1 beet list -f '$artist - $title [$album]'
+docker exec brainstream-1 beet list -f '$artist - $title [$album]'
 
 # 특정 아티스트
-docker exec music-bot-temp-music-bot-1 beet list -f '$path' artist:Radiohead
+docker exec brainstream-1 beet list -f '$path' artist:Radiohead
 
 # 앨범 없는 트랙 확인
-docker exec music-bot-temp-music-bot-1 beet list -f '$artist - $title' album:''
+docker exec brainstream-1 beet list -f '$artist - $title' album:''
 ```
 
 ---
@@ -159,13 +151,13 @@ docker exec music-bot-temp-music-bot-1 beet list -f '$artist - $title' album:''
 
 ```bash
 # 실시간 앱 로그
-docker compose logs -f music-bot
+docker compose logs -f brainstream
 
 # beets import 로그
 tail -f data/logs/beets-import.log
 
 # 최근 에러만
-docker compose logs music-bot | grep '"level":"error"'
+docker compose logs brainstream | grep '"level":"error"'
 ```
 
 ---
@@ -183,7 +175,7 @@ docker compose logs music-bot | grep '"level":"error"'
    ```bash
    sqlite3 data/state.db "SELECT artist, track_name, error_msg FROM downloads WHERE status='failed';"
    ```
-3. 로그 확인: `docker compose logs -f music-bot`
+3. 로그 확인: `docker compose logs -f brainstream`
 
 ### beets가 skip을 반복함
 
@@ -200,7 +192,7 @@ tail -100 data/logs/beets-import.log
 
 ```bash
 # 파일 태그 확인
-docker exec music-bot-temp-music-bot-1 beet list -f '$mb_albumid' artist:"아티스트"
+docker exec brainstream-1 beet list -f '$mb_albumid' artist:"아티스트"
 # 비어 있어야 정상
 ```
 
