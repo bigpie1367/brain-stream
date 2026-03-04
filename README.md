@@ -1,4 +1,4 @@
-# music-bot
+# BrainStream
 
 ListenBrainz 추천 기반 음악 자동 수집 및 스트리밍 시스템.
 
@@ -49,17 +49,17 @@ docker compose up --build -d
 
 | 서비스 | 포트 | 역할 |
 |--------|------|------|
-| music-bot | 8080 | Web UI + REST API + 파이프라인 |
+| brainstream | 8080 | Web UI + REST API + 파이프라인 |
 | navidrome | 4533 | 음악 스트리밍 (Subsonic 호환) |
 
 ## 주요 명령어
 
 ```bash
 # 로그 확인
-docker compose logs -f music-bot
+docker compose logs -f brainstream
 
 # 컨테이너 재시작 (소스 변경 후)
-docker restart music-bot-temp-music-bot-1
+docker restart brainstream
 
 # 전체 재빌드 (Python 소스 변경 후)
 docker compose up --build -d

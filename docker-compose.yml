@@ -13,8 +13,8 @@ services:
       ND_SESSIONTIMEOUT: 24h
 
   music-bot:
-    image: ghcr.io/bigpie1367/music-bot:latest
-    container_name: music-bot
+    image: ghcr.io/bigpie1367/brainstream:latest
+    container_name: brainstream
     restart: unless-stopped
     ports:
       - "8080:8000"
@@ -40,7 +40,7 @@ services:
       - WATCHTOWER_POLL_INTERVAL=300      # 5분마다 신규 이미지 체크
       - WATCHTOWER_CLEANUP=true           # 오래된 이미지 자동 삭제
       - WATCHTOWER_INCLUDE_STOPPED=false
-    command: music-bot  # music-bot 컨테이너만 모니터링
+    command: brainstream  # brainstream 컨테이너만 모니터링
 
 volumes:
   db-data:
