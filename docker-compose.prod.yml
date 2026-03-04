@@ -20,13 +20,15 @@ services:
     volumes:
       - ./data:/app/data
       - db-data:/app/db
-      - ./config.yaml:/app/config.yaml:ro
-      - ./beets:/root/.config/beets
     depends_on:
       - navidrome
     environment:
       - TZ=Asia/Seoul
-      - CONFIG_PATH=/app/config.yaml
+      - LB_USERNAME=bigpie1367
+      - LB_TOKEN=${LB_TOKEN}
+      - NAVIDROME_USER=admin
+      - NAVIDROME_PASSWORD=${NAVIDROME_PASSWORD}
+      # - NAVIDROME_URL=http://navidrome:4533
 
   watchtower:
     image: containrrr/watchtower

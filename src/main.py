@@ -1,4 +1,3 @@
-import os
 import threading
 import time
 
@@ -7,14 +6,12 @@ import uvicorn
 
 import src.api as api_module
 from src.config import load_config
-from src.state import init_db, is_downloaded, mark_pending, mark_done, mark_failed, get_retryable
-from src.pipeline.listenbrainz import fetch_recommendations
 from src.pipeline.downloader import download_track
-from src.pipeline.tagger import tag_and_import
+from src.pipeline.listenbrainz import fetch_recommendations
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
-from src.utils.logger import setup_logger, get_logger
-
-CONFIG_PATH = os.environ.get("CONFIG_PATH", "/app/config.yaml")
+from src.pipeline.tagger import tag_and_import
+from src.state import get_retryable, init_db, is_downloaded, mark_done, mark_failed, mark_pending
+from src.utils.logger import get_logger, setup_logger
 
 log = get_logger(__name__)
 
@@ -68,7 +65,9 @@ def run_pipeline(cfg):
             continue
 
         # 5. Tag + import with beets
-        success = tag_and_import(file_path, cfg.beets.music_dir, artist=artist, track_name=track_name)
+        success = tag_and_import(
+            file_path, cfg.beets.music_dir, artist=artist, track_name=track_name
+        )
         if success:
             mark_done(cfg.state_db, mbid)
             imported_any = True
@@ -91,7 +90,7 @@ def _run_scheduler(cfg):
 
 
 def main():
-    cfg = load_config(CONFIG_PATH)
+    cfg = load_config()
     setup_logger(cfg.log_level, cfg.log_file)
 
     log.info("music-bot starting", interval_hours=cfg.scheduler.interval_hours)

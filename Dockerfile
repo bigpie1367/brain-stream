@@ -12,11 +12,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
+COPY beets/ /root/.config/beets/
 
 # Directories that will be bind-mounted or created at runtime
 RUN mkdir -p /app/data/staging /app/data/music /app/data/logs /app/data/navidrome
 
 ENV PYTHONUNBUFFERED=1
-ENV CONFIG_PATH=/app/config.yaml
 
 CMD ["python", "-m", "src.main"]

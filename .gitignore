@@ -29,6 +29,3 @@ env/
 
 # macOS
 .DS_Store
-
-# Local Docker override (로컬 빌드용; CI/CD 환경에는 존재하지 않음)
-docker-compose.override.yml

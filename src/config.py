@@ -47,8 +47,10 @@ class AppConfig:
 
 
 def load_config(path: str = "/app/config.yaml") -> AppConfig:
-    with open(path, "r") as f:
-        raw = yaml.safe_load(f)
+    raw: dict = {}
+    if os.path.isfile(path):
+        with open(path, "r") as f:
+            raw = yaml.safe_load(f) or {}
 
     lb_raw = raw.get("listenbrainz", {})
     listenbrainz = ListenBrainzConfig(
@@ -70,7 +72,7 @@ def load_config(path: str = "/app/config.yaml") -> AppConfig:
 
     nd_raw = raw.get("navidrome", {})
     navidrome = NavidromeConfig(
-        url=nd_raw.get("url", "http://navidrome:4533"),
+        url=os.environ.get("NAVIDROME_URL", nd_raw.get("url", "http://navidrome:4533")),
         username=os.environ.get("NAVIDROME_USER", nd_raw.get("username", "admin")),
         password=os.environ.get("NAVIDROME_PASSWORD", nd_raw.get("password", "")),
     )
