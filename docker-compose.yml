@@ -8,13 +8,12 @@ services:
       - ./data/music:/music:ro
       - navidrome-data:/data
     environment:
-      ND_SCANSCHEDULE: "0"   # disable auto-scan; music-bot triggers it
+      ND_SCANSCHEDULE: "0"   # disable auto-scan; brainstream triggers it
       ND_LOGLEVEL: info
       ND_SESSIONTIMEOUT: 24h
 
-  music-bot:
+  brainstream:
     image: ghcr.io/bigpie1367/brainstream:latest
-    container_name: brainstream
     restart: unless-stopped
     ports:
       - "8080:8000"
@@ -31,7 +30,6 @@ services:
 
   watchtower:
     image: containrrr/watchtower
-    container_name: watchtower
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
