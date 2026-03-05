@@ -131,4 +131,4 @@ POST /api/download {artist, track}
 ## Services
 
 - **brainstream**: `http://localhost:8080` (Web UI + API)
-- **navidrome**: `http://localhost:4533` (music streaming; auto-scan disabled, triggered by brainstream)
+- **navidrome**: 외부 포트 미노출 — `http://localhost:8080/navidrome/` 로 접근 (brainstream 프록시)

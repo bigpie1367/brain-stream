@@ -207,6 +207,6 @@ config 파일 없이 환경변수만으로 동작합니다. `.env` 파일 또는
 |----------|--------|------|
 | `LB_USERNAME` | `""` | 필수 |
 | `LB_TOKEN` | `""` | 필수 |
-| `NAVIDROME_URL` | `http://navidrome:4533` | |
+| `NAVIDROME_URL` | `http://navidrome:4533/navidrome` | |
 | `NAVIDROME_USER` | `admin` | |
 | `NAVIDROME_PASSWORD` | `""` | 필수 |

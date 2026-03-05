@@ -38,7 +38,7 @@ NAVIDROME_PASSWORD=your_navidrome_password
 |----------|--------|------|
 | `LB_USERNAME` | (prod compose에 하드코딩) | ListenBrainz 사용자명 |
 | `LB_TOKEN` | — | ListenBrainz API 토큰 **(필수)** |
-| `NAVIDROME_URL` | `http://navidrome:4533` | Navidrome URL |
+| `NAVIDROME_URL` | `http://navidrome:4533/navidrome` | Navidrome URL |
 | `NAVIDROME_USER` | `admin` | Navidrome 사용자명 |
 | `NAVIDROME_PASSWORD` | — | Navidrome 비밀번호 **(필수)** |
 
