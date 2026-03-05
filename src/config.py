@@ -23,7 +23,7 @@ class BeetsConfig:
 
 @dataclass
 class NavidromeConfig:
-    url: str = "http://navidrome:4533"
+    url: str = "http://navidrome:4533/navidrome"
     username: str = "admin"
     password: str = ""
 
@@ -56,7 +56,7 @@ def load_config() -> AppConfig:
     beets = BeetsConfig()
 
     navidrome = NavidromeConfig(
-        url=os.environ.get("NAVIDROME_URL", "http://navidrome:4533"),
+        url=os.environ.get("NAVIDROME_URL", "http://navidrome:4533/navidrome"),
         username=os.environ.get("NAVIDROME_USER", "admin"),
         password=os.environ.get("NAVIDROME_PASSWORD", ""),
     )

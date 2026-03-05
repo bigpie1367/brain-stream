@@ -2,8 +2,6 @@ services:
   navidrome:
     image: deluan/navidrome:latest
     restart: unless-stopped
-    ports:
-      - "4533:4533"  # 4533: LAN 전용 (방화벽에서 외부 차단 필요, brainstream UI에서 Navidrome 설정 접근용)
     volumes:
       - ./data/music:/music:ro
       - navidrome-data:/data
@@ -11,6 +9,7 @@ services:
       ND_SCANSCHEDULE: "0"   # disable auto-scan; brainstream triggers it
       ND_LOGLEVEL: info
       ND_SESSIONTIMEOUT: 24h
+      ND_BASEURL: /navidrome
 
   brainstream:
     image: ghcr.io/bigpie1367/brain-stream:latest
@@ -29,6 +28,9 @@ services:
       - NAVIDROME_USER={NAVIDROME_USER}
       - NAVIDROME_PASSWORD=${NAVIDROME_PASSWORD}
       # - NAVIDROME_URL=http://navidrome:4533
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 1
+      net.ipv6.conf.default.disable_ipv6: 1
 
   watchtower:
     image: containrrr/watchtower

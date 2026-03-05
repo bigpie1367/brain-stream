@@ -2,8 +2,6 @@ services:
   navidrome:
     image: deluan/navidrome:latest
     restart: unless-stopped
-    ports:
-      - "4533:4533"
     volumes:
       - ./data/music:/music:ro
       - navidrome-data:/data
@@ -11,6 +9,7 @@ services:
       ND_SCANSCHEDULE: "0"   # disable auto-scan; brainstream triggers it
       ND_LOGLEVEL: info
       ND_SESSIONTIMEOUT: 24h
+      ND_BASEURL: /navidrome
 
   brainstream:
     build: .
@@ -26,10 +25,9 @@ services:
       - .env
     environment:
       - TZ=Asia/Seoul
-      - LB_USERNAME=
-      - LB_TOKEN=
-      - NAVIDROME_USER=
-      - NAVIDROME_PASSWORD=
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 1
+      net.ipv6.conf.default.disable_ipv6: 1
 
 volumes:
   db-data:

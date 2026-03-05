@@ -326,6 +326,31 @@
     }
     .album-block.open .album-chevron { transform: rotate(90deg); }
 
+    .album-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .btn-album-action {
+      background: none;
+      border: 1px solid #2d3147;
+      border-radius: 4px;
+      color: #718096;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 7px;
+      white-space: nowrap;
+      align-self: auto;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      line-height: 1.4;
+    }
+    .btn-album-action:hover { background: #2d3147; border-color: #4a5568; color: #e2e8f0; }
+
+    .ctrl-btn.shuffle-active { color: #4ade80; }
+
     .track-list { display: none; padding: 0 0 8px 0; }
     .album-block.open .track-list { display: block; }
 
@@ -565,7 +590,7 @@
       <button class="tab-btn active" onclick="switchTab('downloads')">Downloads</button>
       <button class="tab-btn" onclick="switchTab('library')">Library</button>
     </nav>
-    <a class="btn-outline" href="#" onclick="event.preventDefault(); window.open('http://' + window.location.hostname + ':4533', '_blank');">Navidrome ↗</a>
+    <a class="btn-outline" href="#" onclick="event.preventDefault(); window.open('/navidrome/', '_blank');">Navidrome ↗</a>
   </div>
 </header>
 
@@ -660,6 +685,7 @@
     <div class="player-artist" id="player-artist">-</div>
   </div>
   <div class="player-controls">
+    <button class="ctrl-btn" id="btn-shuffle" onclick="toggleShuffle()" title="셔플">&#8652;</button>
     <button class="ctrl-btn" id="btn-prev" onclick="playPrev()" title="이전 곡">&#9664;&#9664;</button>
     <button class="ctrl-btn-play" id="btn-play-pause" onclick="togglePlay()" title="재생/정지">&#9654;</button>
     <button class="ctrl-btn" id="btn-next" onclick="playNext()" title="다음 곡">&#9654;&#9654;</button>
@@ -699,11 +725,17 @@
   }
 
   // ── Manual Download ────────────────────────────────────────────────────────
+  let isDownloading = false;
+
   async function startDownload() {
+    // 재진입 방지: 이미 진행 중이면 즉시 반환
+    if (isDownloading || dlBtn.disabled) return;
+
     const artist = document.getElementById('inp-artist').value.trim();
     const track  = document.getElementById('inp-track').value.trim();
     if (!artist || !track) { alert('Artist와 Track을 입력하세요.'); return; }
 
+    isDownloading = true;
     dlBtn.disabled = true;
     setStatus('progress', '요청 중...');
 
@@ -718,6 +750,7 @@
       ({ job_id: jobId } = await res.json());
     } catch (e) {
       setStatus('failed', '요청 실패: ' + e.message);
+      isDownloading = false;
       dlBtn.disabled = false;
       return;
     }
@@ -731,6 +764,7 @@
 
       if (status === 'done' || status === 'failed') {
         es.close();
+        isDownloading = false;
         dlBtn.disabled = false;
         loadHistory();
       }
@@ -738,6 +772,7 @@
     es.onerror = () => {
       setStatus('failed', 'SSE 연결 오류');
       es.close();
+      isDownloading = false;
       dlBtn.disabled = false;
     };
   }
@@ -958,9 +993,35 @@
     chevron.className = 'album-chevron';
     chevron.textContent = '›';
 
+    // 전체 재생 / 셔플 재생 버튼
+    const actions = document.createElement('div');
+    actions.className = 'album-header-actions';
+
+    const btnPlay = document.createElement('button');
+    btnPlay.className = 'btn-album-action';
+    btnPlay.textContent = '\u25B6 전체 재생';
+    btnPlay.title = '앨범 전체 재생';
+    btnPlay.addEventListener('click', (e) => {
+      e.stopPropagation();
+      playAlbum(album.id, false);
+    });
+
+    const btnShuffle = document.createElement('button');
+    btnShuffle.className = 'btn-album-action';
+    btnShuffle.textContent = '\u21C4 셔플';
+    btnShuffle.title = '앨범 셔플 재생';
+    btnShuffle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      playAlbum(album.id, true);
+    });
+
+    actions.appendChild(btnPlay);
+    actions.appendChild(btnShuffle);
+
     header.appendChild(img);
     header.appendChild(placeholder);
     header.appendChild(info);
+    header.appendChild(actions);
     header.appendChild(chevron);
 
     const trackListEl = document.createElement('div');
@@ -1070,6 +1131,7 @@
   let currentPlaylist = [];  // { id, title, artist, albumId } 배열
   let currentPlaylistIdx = -1;
   let isSeeking = false;
+  let shuffleMode = false;
 
   function updatePlaylistForAlbum(block, songs) {
     // 현재 재생 중인 곡이 이 앨범에 있으면 플레이리스트 갱신
@@ -1179,9 +1241,67 @@
     }
   }
 
+  function randomIndexExcluding(length, excludeIdx) {
+    if (length <= 1) return 0;
+    let idx;
+    do { idx = Math.floor(Math.random() * length); } while (idx === excludeIdx);
+    return idx;
+  }
+
+  function toggleShuffle() {
+    shuffleMode = !shuffleMode;
+    const btn = document.getElementById('btn-shuffle');
+    btn.classList.toggle('shuffle-active', shuffleMode);
+    btn.title = shuffleMode ? '셔플 끄기' : '셔플';
+  }
+
+  async function playAlbum(albumId, shuffle) {
+    // 캐시에 없으면 트랙 로드 후 재생
+    if (!albumCache[albumId]) {
+      // 블록을 찾아 로딩 상태 없이 직접 API 호출
+      try {
+        const res = await fetch('/api/subsonic/getAlbum?id=' + encodeURIComponent(albumId) + '&f=json');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        albumCache[albumId] = data['subsonic-response']?.album?.song ?? [];
+        // 블록이 열려 있으면 트랙 목록도 렌더링
+        const block = document.querySelector('.album-block[data-album-id="' + albumId + '"]');
+        if (block && block.classList.contains('open')) {
+          renderTracks(block, albumCache[albumId]);
+        }
+      } catch (e) {
+        console.error('playAlbum: 트랙 로드 실패', e);
+        return;
+      }
+    }
+
+    const songs = albumCache[albumId];
+    if (!songs || !songs.length) return;
+
+    const sorted = [...songs].sort((a, b) => (a.track || 0) - (b.track || 0));
+    setPlaylistFromSongs(sorted);
+
+    // 셔플이면 Fisher-Yates로 플레이리스트 섞기
+    if (shuffle) {
+      for (let i = currentPlaylist.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [currentPlaylist[i], currentPlaylist[j]] = [currentPlaylist[j], currentPlaylist[i]];
+      }
+    }
+
+    currentPlaylistIdx = 0;
+    loadAndPlayIdx(0);
+  }
+
   function playNext() {
-    if (currentPlaylistIdx < currentPlaylist.length - 1) {
-      loadAndPlayIdx(currentPlaylistIdx + 1);
+    if (shuffleMode) {
+      if (currentPlaylist.length === 0) return;
+      const nextIdx = randomIndexExcluding(currentPlaylist.length, currentPlaylistIdx);
+      loadAndPlayIdx(nextIdx);
+    } else {
+      if (currentPlaylistIdx < currentPlaylist.length - 1) {
+        loadAndPlayIdx(currentPlaylistIdx + 1);
+      }
     }
   }
 
@@ -1211,7 +1331,9 @@
 
   // 곡 종료 → 다음 곡
   audio.addEventListener('ended', () => {
-    if (currentPlaylistIdx < currentPlaylist.length - 1) {
+    if (shuffleMode && currentPlaylist.length > 1) {
+      loadAndPlayIdx(randomIndexExcluding(currentPlaylist.length, currentPlaylistIdx));
+    } else if (currentPlaylistIdx < currentPlaylist.length - 1) {
       loadAndPlayIdx(currentPlaylistIdx + 1);
     } else {
       btnPlayPause.innerHTML = '&#9654;';

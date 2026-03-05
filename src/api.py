@@ -8,7 +8,7 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -182,11 +182,8 @@ _HOP_BY_HOP = frozenset([
     "te", "trailers", "transfer-encoding", "upgrade",
 ])
 
-# 응답에서 포워딩할 미디어 관련 헤더
-_FORWARD_RESPONSE_HEADERS = frozenset([
-    "content-type", "content-length", "content-range", "accept-ranges",
-    "last-modified", "etag", "cache-control",
-])
+# 응답 헤더 중 포워딩 제외 목록 (hop-by-hop + 프록시가 직접 관리하는 헤더)
+_HOP_BY_HOP_RESPONSE = _HOP_BY_HOP | frozenset(["content-length", "content-encoding"])
 
 
 @app.api_route("/rest/{path:path}", methods=["GET", "POST", "HEAD"])
@@ -202,38 +199,47 @@ async def subsonic_proxy(path: str, request: Request):
         if k.lower() not in _HOP_BY_HOP
     }
 
+    request_body = await request.body()
+
+    client = httpx.AsyncClient(timeout=60.0)
     try:
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
+        upstream = await client.send(
+            client.build_request(
                 request.method,
                 target_url,
                 params=dict(request.query_params),
                 headers=forward_headers,
-                content=await request.body(),
-                timeout=60.0,
-            ) as upstream:
-                # 포워딩할 응답 헤더만 추출
-                response_headers = {
-                    k: v for k, v in upstream.headers.items()
-                    if k.lower() in _FORWARD_RESPONSE_HEADERS
-                }
-
-                async def generate():
-                    async for chunk in upstream.aiter_bytes():
-                        yield chunk
-
-                return StreamingResponse(
-                    generate(),
-                    status_code=upstream.status_code,
-                    headers=response_headers,
-                )
-
+                content=request_body,
+            ),
+            stream=True,
+        )
     except httpx.ConnectError:
+        await client.aclose()
         log.error("subsonic proxy: navidrome connection failed", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome unavailable")
     except httpx.TimeoutException:
+        await client.aclose()
         log.error("subsonic proxy: navidrome request timed out", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome request timed out")
+
+    response_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP_RESPONSE
+    }
+
+    async def generate():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        generate(),
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
 
 
 # 클라이언트에서 온 Subsonic 인증 파라미터 — brainstream이 자동 주입하므로 제거
@@ -269,32 +275,109 @@ async def subsonic_authed_proxy(path: str, request: Request):
 
     target_url = f"{_cfg.navidrome.url.rstrip('/')}/rest/{path}"
 
+    client = httpx.AsyncClient(timeout=60.0)
     try:
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "GET",
-                target_url,
-                params=merged_params,
-                timeout=60.0,
-            ) as upstream:
-                response_headers = {
-                    k: v for k, v in upstream.headers.items()
-                    if k.lower() in _FORWARD_RESPONSE_HEADERS
-                }
-
-                async def generate():
-                    async for chunk in upstream.aiter_bytes():
-                        yield chunk
-
-                return StreamingResponse(
-                    generate(),
-                    status_code=upstream.status_code,
-                    headers=response_headers,
-                )
-
+        upstream = await client.send(
+            client.build_request("GET", target_url, params=merged_params),
+            stream=True,
+        )
     except httpx.ConnectError:
+        await client.aclose()
         log.error("subsonic authed proxy: navidrome connection failed", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome unavailable")
     except httpx.TimeoutException:
+        await client.aclose()
         log.error("subsonic authed proxy: navidrome request timed out", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome request timed out")
+
+    response_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP_RESPONSE
+    }
+
+    async def generate():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        generate(),
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
+
+
+# ── Navidrome web UI proxy ────────────────────────────────────────────────────
+
+_NAVIDROME_BASE = "http://navidrome:4533"
+
+
+@app.get("/navidrome")
+async def navidrome_redirect():
+    """/navidrome (trailing slash 없음) → /navidrome/ redirect."""
+    return RedirectResponse(url="/navidrome/", status_code=301)
+
+
+@app.api_route("/navidrome/{path:path}", methods=["GET", "POST", "HEAD"])
+async def navidrome_proxy(path: str, request: Request):
+    """Navidrome 웹 UI 투명 프록시. 인증 주입 없이 요청을 그대로 전달한다."""
+    target_url = f"{_NAVIDROME_BASE}/navidrome/{path}"
+
+    forward_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP
+    }
+
+    request_body = await request.body()
+
+    client = httpx.AsyncClient(timeout=60.0)
+    try:
+        upstream = await client.send(
+            client.build_request(
+                request.method,
+                target_url,
+                params=dict(request.query_params),
+                headers=forward_headers,
+                content=request_body,
+            ),
+            stream=True,
+        )
+    except httpx.ConnectError:
+        await client.aclose()
+        log.error("navidrome proxy: connection failed", url=target_url)
+        raise HTTPException(status_code=503, detail="navidrome unavailable")
+    except httpx.TimeoutException:
+        await client.aclose()
+        log.error("navidrome proxy: request timed out", url=target_url)
+        raise HTTPException(status_code=503, detail="navidrome request timed out")
+
+    response_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP_RESPONSE
+    }
+
+    # 리다이렉트 응답: Location의 내부 주소를 /navidrome 경로로 재작성
+    if upstream.status_code in (301, 302, 303, 307, 308):
+        location = upstream.headers.get("location", "")
+        if location.startswith(_NAVIDROME_BASE):
+            location = location[len(_NAVIDROME_BASE):]
+        await upstream.aclose()
+        await client.aclose()
+        return RedirectResponse(url=location, status_code=upstream.status_code)
+
+    async def generate():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        generate(),
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
