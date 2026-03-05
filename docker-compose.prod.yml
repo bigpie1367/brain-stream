@@ -3,7 +3,7 @@ services:
     image: deluan/navidrome:latest
     restart: unless-stopped
     ports:
-      - "4533:4533"
+      - "4533:4533"  # 4533: LAN 전용 (방화벽에서 외부 차단 필요, brainstream UI에서 Navidrome 설정 접근용)
     volumes:
       - ./data/music:/music:ro
       - navidrome-data:/data

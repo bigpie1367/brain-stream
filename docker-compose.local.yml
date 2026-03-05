@@ -22,14 +22,14 @@ services:
       - db-data:/app/db
     depends_on:
       - navidrome
+    env_file:
+      - .env
     environment:
       - TZ=Asia/Seoul
       - LB_USERNAME=
       - LB_TOKEN=
+      - NAVIDROME_USER=
       - NAVIDROME_PASSWORD=
-      # Optional overrides (defaults shown):
-      # - NAVIDROME_USER=admin
-      # - NAVIDROME_URL=http://navidrome:4533
 
 volumes:
   db-data:

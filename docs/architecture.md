@@ -8,37 +8,49 @@
 ## 1. 전체 구성도
 
 ```
+인터넷 클라이언트 (Amperfy 등 Subsonic 앱, 브라우저)
+        │ HTTPS :443
+        ▼
+   [nginx 리버스 프록시]
+   stream.example.com → brainstream:8080
+        │
+        │  /rest/*  (Subsonic API 프록시)
+        │  /        (Web UI)
+        │  /api/*   (REST API + SSE)
+        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     Docker Network                          │
 │                                                             │
-│  ┌──────────────────────────────────────┐                   │
-│  │           music-bot :8080            │                   │
-│  │                                      │                   │
-│  │  ┌──────────┐  ┌──────────────────┐  │                   │
-│  │  │ FastAPI  │  │  Pipeline Core   │  │                   │
-│  │  │  (API)   │  │                  │  │                   │
-│  │  │  Web UI  │  │  LB Fetcher      │  │                   │
-│  │  │  SSE     │  │  Downloader      │  │                   │
-│  │  └────┬─────┘  │  Tagger          │  │                   │
-│  │       │        │  Navidrome       │  │                   │
-│  │       └────────┤                  │  │                   │
-│  │                └────────┬─────────┘  │                   │
-│  │                         │            │                   │
-│  │  ┌──────────────────────▼──────────┐ │                   │
-│  │  │         state.db (SQLite)       │ │                   │
-│  │  └─────────────────────────────────┘ │                   │
-│  └──────────────────────────────────────┘                   │
-│                         │                                   │
-│  ┌──────────────────────▼──────────────┐                    │
-│  │         navidrome :4533             │                    │
-│  │   (Subsonic API + 스트리밍)          │                    │
-│  └─────────────────────────────────────┘                    │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │               brainstream :8080                      │   │
+│  │                                                      │   │
+│  │  ┌────────────────┐  ┌──────────────────────────┐   │   │
+│  │  │   FastAPI      │  │     Pipeline Core        │   │   │
+│  │  │   Web UI       │  │                          │   │   │
+│  │  │   SSE          │  │   LB Fetcher             │   │   │
+│  │  │   /rest/* ─────┼──┼──▶ Subsonic Proxy        │   │   │
+│  │  │   proxy        │  │   Downloader (yt-dlp)    │   │   │
+│  │  └───────┬────────┘  │   Tagger (beets/mutagen) │   │   │
+│  │          │           │   Navidrome (scan)        │   │   │
+│  │          └───────────┤                          │   │   │
+│  │                      └──────────┬───────────────┘   │   │
+│  │                                 │                    │   │
+│  │  ┌──────────────────────────────▼──────────────┐    │   │
+│  │  │              state.db (SQLite)               │    │   │
+│  │  └──────────────────────────────────────────────┘    │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                             │                               │
+│  ┌──────────────────────────▼────────────────────────┐      │
+│  │              navidrome :4533                       │      │
+│  │   (Subsonic API + 스트리밍)                         │      │
+│  │   LAN 직접 접근용 포트 노출 (외부 방화벽 차단 권장) │      │
+│  └───────────────────────────────────────────────────┘      │
 │                                                             │
 │  Volumes:                                                   │
-│    ./data/music   → music-bot:/app/data/music               │
+│    ./data/music   → brainstream:/app/data/music             │
 │                   → navidrome:/music (read-only)            │
-│    ./data/staging → music-bot:/app/data/staging             │
-│    ./beets        → music-bot:/root/.config/beets           │
+│    ./data/staging → brainstream:/app/data/staging           │
+│    ./beets        → brainstream:/root/.config/beets         │
 └─────────────────────────────────────────────────────────────┘
 
 External APIs:
@@ -46,6 +58,11 @@ External APIs:
   YouTube       → yt-dlp
   MusicBrainz   → musicbrainz.org/ws/2
   Cover Art     → coverartarchive.org
+
+접근 경로 요약:
+  외부 (인터넷)  → stream.example.com (nginx → brainstream:8080)
+  LAN (내부망)   → server-ip:4533 (navidrome 직접, 방화벽 설정에 따라 차단 가능)
+  LAN (내부망)   → server-ip:8080 (brainstream 직접)
 ```
 
 ---
@@ -57,7 +74,7 @@ External APIs:
 | `src/main.py` | 진입점. 설정 로드 → DB 초기화 → API 설정 주입 → 파이프라인 스레드 시작 → uvicorn 실행 |
 | `src/config.py` | 환경변수로 설정 로드 (config 파일 불필요) |
 | `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD |
-| `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회 |
+| `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회, `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계) |
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출 |
 | `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback) |
 | `src/pipeline/tagger.py` | mutagen 선-태깅 → beets import → MB enrichment → 앨범아트 임베딩 |

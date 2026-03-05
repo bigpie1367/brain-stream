@@ -1,10 +1,13 @@
+import hashlib
 import json
+import secrets
 import threading
 import uuid
 from queue import Queue, Empty
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -169,3 +172,129 @@ async def trigger_pipeline():
     from src.main import run_pipeline
     threading.Thread(target=run_pipeline, args=(_cfg,), daemon=True).start()
     return {"status": "started"}
+
+
+# ── Subsonic proxy ────────────────────────────────────────────────────────────
+
+# hop-by-hop 헤더는 프록시 시 포워딩하지 않는다 (RFC 2616 §13.5.1)
+_HOP_BY_HOP = frozenset([
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade",
+])
+
+# 응답에서 포워딩할 미디어 관련 헤더
+_FORWARD_RESPONSE_HEADERS = frozenset([
+    "content-type", "content-length", "content-range", "accept-ranges",
+    "last-modified", "etag", "cache-control",
+])
+
+
+@app.api_route("/rest/{path:path}", methods=["GET", "POST", "HEAD"])
+async def subsonic_proxy(path: str, request: Request):
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+
+    target_url = f"{_cfg.navidrome.url.rstrip('/')}/rest/{path}"
+
+    # 포워딩할 요청 헤더 필터링 (hop-by-hop 제외)
+    forward_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                request.method,
+                target_url,
+                params=dict(request.query_params),
+                headers=forward_headers,
+                content=await request.body(),
+                timeout=60.0,
+            ) as upstream:
+                # 포워딩할 응답 헤더만 추출
+                response_headers = {
+                    k: v for k, v in upstream.headers.items()
+                    if k.lower() in _FORWARD_RESPONSE_HEADERS
+                }
+
+                async def generate():
+                    async for chunk in upstream.aiter_bytes():
+                        yield chunk
+
+                return StreamingResponse(
+                    generate(),
+                    status_code=upstream.status_code,
+                    headers=response_headers,
+                )
+
+    except httpx.ConnectError:
+        log.error("subsonic proxy: navidrome connection failed", url=target_url)
+        raise HTTPException(status_code=503, detail="navidrome unavailable")
+    except httpx.TimeoutException:
+        log.error("subsonic proxy: navidrome request timed out", url=target_url)
+        raise HTTPException(status_code=503, detail="navidrome request timed out")
+
+
+# 클라이언트에서 온 Subsonic 인증 파라미터 — brainstream이 자동 주입하므로 제거
+_SUBSONIC_AUTH_PARAMS = frozenset(["u", "t", "s", "p"])
+
+
+@app.get("/api/subsonic/{path:path}")
+async def subsonic_authed_proxy(path: str, request: Request):
+    """navidrome 인증(MD5 토큰)을 자동 주입하는 Subsonic API 프록시.
+    프론트엔드는 navidrome 계정 정보 없이 이 엔드포인트만 사용하면 된다."""
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+
+    # MD5 인증 파라미터 생성
+    salt = secrets.token_hex(6)
+    token = hashlib.md5(f"{_cfg.navidrome.password}{salt}".encode()).hexdigest()
+    auth_params = {
+        "u": _cfg.navidrome.username,
+        "t": token,
+        "s": salt,
+        "v": "1.16.1",
+        "c": "brainstream",
+        "f": "json",
+    }
+
+    # 클라이언트 쿼리 파라미터에서 인증 관련 키 제거 후 auth_params와 합산
+    client_params = {
+        k: v for k, v in request.query_params.items()
+        if k.lower() not in _SUBSONIC_AUTH_PARAMS
+    }
+    # 클라이언트가 f(format)를 명시하면 덮어쓰기 허용; 아니면 json 기본값 사용
+    merged_params = {**auth_params, **client_params}
+
+    target_url = f"{_cfg.navidrome.url.rstrip('/')}/rest/{path}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                "GET",
+                target_url,
+                params=merged_params,
+                timeout=60.0,
+            ) as upstream:
+                response_headers = {
+                    k: v for k, v in upstream.headers.items()
+                    if k.lower() in _FORWARD_RESPONSE_HEADERS
+                }
+
+                async def generate():
+                    async for chunk in upstream.aiter_bytes():
+                        yield chunk
+
+                return StreamingResponse(
+                    generate(),
+                    status_code=upstream.status_code,
+                    headers=response_headers,
+                )
+
+    except httpx.ConnectError:
+        log.error("subsonic authed proxy: navidrome connection failed", url=target_url)
+        raise HTTPException(status_code=503, detail="navidrome unavailable")
+    except httpx.TimeoutException:
+        log.error("subsonic authed proxy: navidrome request timed out", url=target_url)
+        raise HTTPException(status_code=503, detail="navidrome request timed out")
