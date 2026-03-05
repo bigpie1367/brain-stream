@@ -26,7 +26,7 @@ def test_defaults_when_no_env_vars(monkeypatch):
     assert cfg.download.staging_dir == "/app/data/staging"
     assert cfg.download.prefer_flac is True
     assert cfg.beets.music_dir == "/app/data/music"
-    assert cfg.navidrome.url == "http://navidrome:4533"
+    assert cfg.navidrome.url == "http://navidrome:4533/navidrome"
     assert cfg.navidrome.username == "admin"
     assert cfg.navidrome.password == ""
     assert cfg.scheduler.interval_hours == 6
