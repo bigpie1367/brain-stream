@@ -108,7 +108,7 @@ def download_track(
 
     # Step 1: fetch metadata for top 5 results without downloading to pick the best entry
     search_query = f"ytsearch5:{artist} {track_name}"
-    selected_entry = None
+    entries: list[dict] = []
     try:
         meta_opts = {
             "quiet": True,
@@ -119,8 +119,8 @@ def download_track(
         with yt_dlp.YoutubeDL(meta_opts) as ydl:
             info = ydl.extract_info(search_query, download=False)
             if info:
-                entries = info.get("entries") or [info]
-                entries = [e for e in entries if e]
+                raw_entries = info.get("entries") or [info]
+                entries = [e for e in raw_entries if e]
                 if entries:
                     selected_entry = _select_best_entry(entries, mb_duration)
                     yt_dur = selected_entry.get("duration")
@@ -144,38 +144,85 @@ def download_track(
     except Exception as exc:
         log.warning("metadata fetch failed, falling back to direct download", error=str(exc))
 
-    # Build the actual download URL: use selected entry URL, or fall back to ytsearch1
-    if selected_entry and selected_entry.get("webpage_url"):
-        download_target = selected_entry["webpage_url"]
-    elif selected_entry and selected_entry.get("url"):
-        download_target = selected_entry["url"]
-    else:
-        download_target = f"ytsearch1:{artist} {track_name}"
+    _BLOCKED_KEYWORDS = ("payment", "members-only", "members only", "private", "unavailable")
+
+    def _is_blocked_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return any(kw in msg for kw in _BLOCKED_KEYWORDS)
+
+    def _entry_url(entry: dict) -> Optional[str]:
+        return entry.get("webpage_url") or entry.get("url")
+
+    # Try entries one by one (skip blocked videos), fall back to ytsearch1 if all fail
+    remaining_entries = list(entries) if entries else []
+    download_target: Optional[str] = None
+    attempted_urls: list[str] = []
 
     opts_list = [_flac_opts(output_template), _opus_opts(output_template)] if prefer_flac \
         else [_opus_opts(output_template)]
 
-    for opts in opts_list:
-        try:
-            yt_metadata = None
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(download_target, download=True)
-                if info:
-                    entry = info.get("entries", [info])[0] if "entries" in info else info
-                    thumbnail_url = entry.get("thumbnail", "")
-                    channel = entry.get("channel") or entry.get("uploader", "")
-                    if thumbnail_url or channel:
-                        yt_metadata = {"thumbnail_url": thumbnail_url, "channel": channel}
+    while True:
+        # Pick next candidate from remaining entries
+        if remaining_entries:
+            candidate_entry = _select_best_entry(remaining_entries, mb_duration)
+            url = _entry_url(candidate_entry)
+            if not url or url in attempted_urls:
+                remaining_entries = [e for e in remaining_entries if e is not candidate_entry]
+                continue
+            download_target = url
+        else:
+            # All entries exhausted (or no entries from the start) — final fallback
+            download_target = f"ytsearch1:{artist} {track_name}"
 
-            # Find the downloaded file
-            for ext in ("flac", "opus", "webm", "m4a", "mp3"):
-                candidate = Path(staging_dir) / f"{mbid}.{ext}"
-                if candidate.exists():
-                    log.info("download complete", file=str(candidate))
-                    return str(candidate), yt_metadata
+        attempted_urls.append(download_target)
 
-        except yt_dlp.utils.DownloadError as exc:
-            log.warning("download attempt failed", error=str(exc), opts=opts.get("format"))
+        blocked = False
+        for opts in opts_list:
+            try:
+                yt_metadata = None
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(download_target, download=True)
+                    if info:
+                        entry = info.get("entries", [info])[0] if "entries" in info else info
+                        thumbnail_url = entry.get("thumbnail", "")
+                        channel = entry.get("channel") or entry.get("uploader", "")
+                        if thumbnail_url or channel:
+                            yt_metadata = {"thumbnail_url": thumbnail_url, "channel": channel}
+
+                # Find the downloaded file
+                for ext in ("flac", "opus", "webm", "m4a", "mp3"):
+                    candidate_file = Path(staging_dir) / f"{mbid}.{ext}"
+                    if candidate_file.exists():
+                        log.info("download complete", file=str(candidate_file))
+                        return str(candidate_file), yt_metadata
+
+            except yt_dlp.utils.DownloadError as exc:
+                if _is_blocked_error(exc):
+                    log.warning(
+                        "video blocked (payment/private/members-only), trying next candidate",
+                        url=download_target,
+                        error=str(exc),
+                    )
+                    blocked = True
+                    break  # skip remaining opts, move to next entry
+                log.warning("download attempt failed", error=str(exc), opts=opts.get("format"))
+                continue
+
+        if blocked:
+            # Remove the blocked entry and retry with next candidate
+            remaining_entries = [e for e in remaining_entries if _entry_url(e) != download_target]
+            if not remaining_entries and download_target == f"ytsearch1:{artist} {track_name}":
+                # ytsearch1 fallback also blocked — give up
+                break
+            continue
+
+        # If we reach here without returning, all format opts failed for this target
+        # and it was not a blocked error — break out to avoid infinite loop
+        if download_target == f"ytsearch1:{artist} {track_name}":
+            break
+        remaining_entries = [e for e in remaining_entries if _entry_url(e) != download_target]
+        if not remaining_entries:
+            # No more entries — try ytsearch1 fallback once
             continue
 
     log.error("all download attempts failed", mbid=mbid)
