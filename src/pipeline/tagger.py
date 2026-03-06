@@ -482,7 +482,7 @@ def beet_remove_track(mbid: str, artist: str = "", track_name: str = "") -> list
         return removed
 
     for file_path in paths:
-        ok, out = _beet("remove", "-d", "-y", file_path)
+        ok, out = _beet("remove", "-d", "-f", f"path:{file_path}")
         if ok:
             log.info("beet remove succeeded", file=file_path)
             removed.append(file_path)
