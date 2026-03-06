@@ -17,22 +17,32 @@ from src.pipeline.downloader import download_track
 
 def test_download_track_returns_flac_path(tmp_path):
     """
-    yt-dlp 다운로드 성공 시 FLAC 파일 경로를 반환한다.
+    yt-dlp 다운로드 성공 시 (file_path, yt_metadata) 튜플을 반환한다.
     yt_dlp.YoutubeDL 자체를 mock해서 실제 네트워크 호출을 막는다.
     """
     mbid = "test-mbid-001"
-    # yt-dlp가 파일을 만들었다고 가정하기 위해 실제 파일 생성
     expected_file = tmp_path / f"{mbid}.flac"
     expected_file.touch()
 
-    mock_ydl_instance = MagicMock()
-    mock_ydl_instance.download.return_value = 0  # 성공
+    mock_info = {
+        "entries": [{"thumbnail": "http://example.com/thumb.jpg", "channel": "TestChannel"}]
+    }
 
-    with patch("src.pipeline.downloader.yt_dlp.YoutubeDL") as mock_ydl_cls:
-        mock_ydl_cls.return_value.__enter__ = MagicMock(return_value=mock_ydl_instance)
-        mock_ydl_cls.return_value.__exit__ = MagicMock(return_value=False)
+    class MockYDL:
+        def __init__(self, opts):
+            pass
 
-        result = download_track(
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            return mock_info
+
+    with patch("src.pipeline.downloader.yt_dlp.YoutubeDL", MockYDL):
+        file_path, yt_metadata = download_track(
             mbid=mbid,
             artist="Radiohead",
             track_name="Creep",
@@ -40,23 +50,35 @@ def test_download_track_returns_flac_path(tmp_path):
             prefer_flac=True,
         )
 
-    assert result == str(expected_file)
+    assert file_path == str(expected_file)
+    assert isinstance(yt_metadata, dict)
+    assert yt_metadata["thumbnail_url"] == "http://example.com/thumb.jpg"
+    assert yt_metadata["channel"] == "TestChannel"
 
 
 def test_download_track_returns_opus_path(tmp_path):
-    """prefer_flac=False 시 opus 경로를 반환한다."""
+    """prefer_flac=False 시 (opus_path, yt_metadata) 튜플을 반환한다."""
     mbid = "test-mbid-opus"
     expected_file = tmp_path / f"{mbid}.opus"
     expected_file.touch()
 
-    mock_ydl_instance = MagicMock()
-    mock_ydl_instance.download.return_value = 0
+    mock_info = {"thumbnail": "http://example.com/thumb.jpg", "channel": "QueenChannel"}
 
-    with patch("src.pipeline.downloader.yt_dlp.YoutubeDL") as mock_ydl_cls:
-        mock_ydl_cls.return_value.__enter__ = MagicMock(return_value=mock_ydl_instance)
-        mock_ydl_cls.return_value.__exit__ = MagicMock(return_value=False)
+    class MockYDL:
+        def __init__(self, opts):
+            pass
 
-        result = download_track(
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            return mock_info
+
+    with patch("src.pipeline.downloader.yt_dlp.YoutubeDL", MockYDL):
+        file_path, yt_metadata = download_track(
             mbid=mbid,
             artist="Queen",
             track_name="Bohemian Rhapsody",
@@ -64,7 +86,8 @@ def test_download_track_returns_opus_path(tmp_path):
             prefer_flac=False,
         )
 
-    assert result == str(expected_file)
+    assert file_path == str(expected_file)
+    assert isinstance(yt_metadata, dict)
 
 
 def test_download_track_flac_fallback_to_opus(tmp_path):
@@ -88,16 +111,15 @@ def test_download_track_flac_fallback_to_opus(tmp_path):
         def __exit__(self, *args):
             return False
 
-        def download(self, urls):
+        def extract_info(self, url, download=True):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                # FLAC 시도 실패
                 raise yt_dlp.utils.DownloadError("flac not available")
-            # Opus 성공
+            return {"thumbnail": "", "channel": "FallbackChannel"}
 
     with patch("src.pipeline.downloader.yt_dlp.YoutubeDL", MockYDL):
-        result = download_track(
+        file_path, yt_metadata = download_track(
             mbid=mbid,
             artist="Artist",
             track_name="Track",
@@ -105,14 +127,14 @@ def test_download_track_flac_fallback_to_opus(tmp_path):
             prefer_flac=True,
         )
 
-    assert result == str(expected_file)
+    assert file_path == str(expected_file)
     assert call_count == 2  # FLAC 시도 + Opus 시도
 
 
 # ── 실패 케이스 ───────────────────────────────────────────────────────────────
 
 def test_download_track_returns_none_when_all_fail(tmp_path):
-    """모든 다운로드 시도가 실패하면 None을 반환한다."""
+    """모든 다운로드 시도가 실패하면 (None, None)을 반환한다."""
 
     class AlwaysFailYDL:
         def __init__(self, opts):
@@ -124,7 +146,7 @@ def test_download_track_returns_none_when_all_fail(tmp_path):
         def __exit__(self, *args):
             return False
 
-        def download(self, urls):
+        def extract_info(self, url, download=True):
             raise yt_dlp.utils.DownloadError("network error")
 
     with patch("src.pipeline.downloader.yt_dlp.YoutubeDL", AlwaysFailYDL):
@@ -136,21 +158,29 @@ def test_download_track_returns_none_when_all_fail(tmp_path):
             prefer_flac=True,
         )
 
-    assert result is None
+    assert result == (None, None)
 
 
 def test_download_track_returns_none_when_no_file_created(tmp_path):
     """
-    yt-dlp가 예외 없이 종료했지만 파일이 없으면 None을 반환한다
+    yt-dlp가 예외 없이 종료했지만 파일이 없으면 (None, None)을 반환한다
     (다른 확장자로 저장되거나 download 자체가 0건인 경우).
     """
-    mock_ydl_instance = MagicMock()
-    mock_ydl_instance.download.return_value = 0  # 성공이지만 파일 없음
 
-    with patch("src.pipeline.downloader.yt_dlp.YoutubeDL") as mock_ydl_cls:
-        mock_ydl_cls.return_value.__enter__ = MagicMock(return_value=mock_ydl_instance)
-        mock_ydl_cls.return_value.__exit__ = MagicMock(return_value=False)
+    class NoFileYDL:
+        def __init__(self, opts):
+            pass
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            return None  # 파일 없이 성공
+
+    with patch("src.pipeline.downloader.yt_dlp.YoutubeDL", NoFileYDL):
         result = download_track(
             mbid="no-file-mbid",
             artist="Artist",
@@ -159,7 +189,7 @@ def test_download_track_returns_none_when_no_file_created(tmp_path):
             prefer_flac=True,
         )
 
-    assert result is None
+    assert result == (None, None)
 
 
 # ── staging_dir 생성 ──────────────────────────────────────────────────────────
@@ -169,13 +199,20 @@ def test_download_track_creates_staging_dir(tmp_path):
     staging = tmp_path / "nonexistent_staging"
     assert not staging.exists()
 
-    mock_ydl_instance = MagicMock()
-    mock_ydl_instance.download.return_value = 0
+    class NoFileYDL:
+        def __init__(self, opts):
+            pass
 
-    with patch("src.pipeline.downloader.yt_dlp.YoutubeDL") as mock_ydl_cls:
-        mock_ydl_cls.return_value.__enter__ = MagicMock(return_value=mock_ydl_instance)
-        mock_ydl_cls.return_value.__exit__ = MagicMock(return_value=False)
+        def __enter__(self):
+            return self
 
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            return None
+
+    with patch("src.pipeline.downloader.yt_dlp.YoutubeDL", NoFileYDL):
         download_track(
             mbid="dir-test",
             artist="Artist",
@@ -205,8 +242,9 @@ def test_download_track_uses_ytsearch1_query(tmp_path):
         def __exit__(self, *args):
             return False
 
-        def download(self, urls):
-            captured_urls.extend(urls)
+        def extract_info(self, url, download=True):
+            captured_urls.append(url)
+            return {"thumbnail": "", "channel": ""}
 
     with patch("src.pipeline.downloader.yt_dlp.YoutubeDL", CapturingYDL):
         download_track(
