@@ -26,11 +26,13 @@ _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
 def _mb_search_recording(artist: str, track_name: str) -> str:
     """Search MusicBrainz for a recording by artist and title.
 
+    Uses artistname: field (includes aliases) instead of artist: (canonical only).
+    Falls back to recording-only search if artistname+recording returns 0 results.
     Returns the first matched recording ID (UUID), or empty string on failure.
     """
     try:
         time.sleep(1)  # rate limit
-        query = f"artist:{artist} AND recording:{track_name}"
+        query = f"artistname:{artist} AND recording:{track_name}"
         r = requests.get(
             f"{_MB_API}/recording",
             params={"query": query, "fmt": "json", "limit": 5},
@@ -44,6 +46,32 @@ def _mb_search_recording(artist: str, track_name: str) -> str:
             if recording_id:
                 log.info(
                     "MB search found recording",
+                    artist=artist,
+                    track=track_name,
+                    recording_id=recording_id,
+                )
+            return recording_id
+
+        # Fallback: recording-only search (no artist filter) — first result used as-is
+        log.info(
+            "MB artistname+recording search returned 0 results, trying recording-only fallback",
+            artist=artist,
+            track=track_name,
+        )
+        time.sleep(1)  # rate limit
+        r2 = requests.get(
+            f"{_MB_API}/recording",
+            params={"query": f"recording:{track_name}", "fmt": "json", "limit": 5},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        r2.raise_for_status()
+        recordings2 = r2.json().get("recordings", [])
+        if recordings2:
+            recording_id = recordings2[0].get("id", "")
+            if recording_id:
+                log.info(
+                    "MB recording-only fallback found recording",
                     artist=artist,
                     track=track_name,
                     recording_id=recording_id,
@@ -202,6 +230,64 @@ def _beet(*args: str, timeout: int = 60) -> tuple[bool, str]:
     if result.returncode != 0:
         log.warning("beet subcommand failed", args=args, stderr=result.stderr.strip())
     return result.returncode == 0, output
+
+
+def _itunes_search(artist: str, track_name: str) -> dict:
+    """Search iTunes Search API for album name and cover art URL.
+
+    Returns {"album": str, "artwork_url": str} or empty dict on failure.
+    No API key required. No rate limit documented.
+    """
+    try:
+        term = f"{artist} {track_name}"
+        r = requests.get(
+            "https://itunes.apple.com/search",
+            params={"term": term, "entity": "song", "limit": 5},
+            timeout=10,
+        )
+        r.raise_for_status()
+        results = r.json().get("results", [])
+        if not results:
+            return {}
+        item = results[0]
+        album = item.get("collectionName", "")
+        artwork_url = item.get("artworkUrl100", "")
+        if artwork_url:
+            # Upgrade to 600x600 for better quality
+            artwork_url = artwork_url.replace("100x100bb", "600x600bb")
+        log.info("iTunes search result", artist=artist, track=track_name, album=album, artwork_url=artwork_url)
+        return {"album": album, "artwork_url": artwork_url}
+    except Exception as exc:
+        log.warning("iTunes search failed", artist=artist, track=track_name, error=str(exc))
+        return {}
+
+
+def _deezer_search(artist: str, track_name: str) -> dict:
+    """Search Deezer API for album name and cover art URL.
+
+    Returns {"album": str, "artwork_url": str} or empty dict on failure.
+    No API key required.
+    """
+    try:
+        q = f'artist:"{artist}" track:"{track_name}"'
+        r = requests.get(
+            "https://api.deezer.com/search",
+            params={"q": q, "limit": 5},
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        if not data:
+            return {}
+        item = data[0]
+        album_obj = item.get("album", {})
+        album = album_obj.get("title", "")
+        artwork_url = album_obj.get("cover_xl", "")
+        log.info("Deezer search result", artist=artist, track=track_name, album=album, artwork_url=artwork_url)
+        return {"album": album, "artwork_url": artwork_url}
+    except Exception as exc:
+        log.warning("Deezer search failed", artist=artist, track=track_name, error=str(exc))
+        return {}
 
 
 def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
@@ -402,7 +488,7 @@ def _enrich_track(
         else:
             _beet("modify", "-y", f"path:{primary_path}", f"album={album}")
 
-    # Bug 1: CAA에서 여러 release 후보를 순서대로 시도
+    # CAA에서 여러 release 후보를 순서대로 시도
     art_embedded = False
     successful_candidate = None
     if not has_art and mb_albumid_candidates:
@@ -412,51 +498,89 @@ def _enrich_track(
                 successful_candidate = candidate_id
                 break
 
-        # Bug 2: 나머지 매칭 파일에도 동일한 아트 임베딩 (성공한 candidate 기준)
+        # 나머지 매칭 파일에도 동일한 아트 임베딩 (성공한 candidate 기준)
         if art_embedded and successful_candidate and len(imported_paths) > 1:
             for extra_path in imported_paths[1:]:
                 _embed_cover_art(extra_path, successful_candidate)
 
-        # 아트 임베딩 후 has_art 갱신 (YouTube 폴백 진입 여부 결정용)
         if art_embedded:
             try:
                 has_art = bool(mediafile.MediaFile(primary_path).images)
             except Exception:
                 has_art = True  # 실패해도 폴백 시도 방지
 
-    # MB에서 앨범 정보를 찾지 못한 경우 YouTube 메타데이터로 폴백
-    # Bug 1: CAA 전부 실패 시 has_art가 False인 채로 이 분기에 진입 가능
-    if yt_metadata:
-        try:
-            if not album and not has_album:
-                channel = yt_metadata.get("channel", "")
-                if channel:
-                    log.info(
-                        "MB album not found, falling back to YouTube channel as album",
-                        artist=artist,
-                        track=track_name,
-                        channel=channel,
-                    )
-                    if artist and track_name:
-                        _beet("modify", "-y", f"artist:{artist}", f"title:{track_name}", f"album={channel}")
-                    else:
-                        _beet("modify", "-y", f"path:{primary_path}", f"album={channel}")
+    # iTunes/Deezer 결과 캐시 (앨범명·아트 양쪽에 재사용해 중복 API 호출 방지)
+    itunes_result: dict = {}
+    deezer_result: dict = {}
 
-            if not has_art:
-                thumbnail_url = yt_metadata.get("thumbnail_url", "")
-                if thumbnail_url:
-                    log.info(
-                        "no cover art, falling back to YouTube thumbnail",
-                        artist=artist,
-                        track=track_name,
-                        thumbnail_url=thumbnail_url,
-                    )
-                    _embed_art_from_url(primary_path, thumbnail_url)
-                    # Bug 2: 나머지 파일에도 YouTube 썸네일 임베딩
-                    for extra_path in imported_paths[1:]:
-                        _embed_art_from_url(extra_path, thumbnail_url)
-        except Exception as exc:
-            log.warning("YouTube metadata fallback failed", artist=artist, track=track_name, error=str(exc))
+    # 앨범명 fallback: MB 실패 → iTunes → Deezer → YouTube channel
+    if not album and not has_album and artist and track_name:
+        itunes_result = _itunes_search(artist, track_name)
+        album = itunes_result.get("album", "")
+        if album:
+            log.info("album resolved via iTunes", artist=artist, track=track_name, album=album)
+
+        if not album:
+            deezer_result = _deezer_search(artist, track_name)
+            album = deezer_result.get("album", "")
+            if album:
+                log.info("album resolved via Deezer", artist=artist, track=track_name, album=album)
+
+        if not album and yt_metadata:
+            album = yt_metadata.get("channel", "")
+            if album:
+                log.info(
+                    "MB album not found, falling back to YouTube channel as album",
+                    artist=artist,
+                    track=track_name,
+                    channel=album,
+                )
+
+        if album:
+            if artist and track_name:
+                _beet("modify", "-y", f"artist:{artist}", f"title:{track_name}", f"album={album}")
+            else:
+                _beet("modify", "-y", f"path:{primary_path}", f"album={album}")
+
+    # 커버아트 fallback: CAA 실패 → iTunes → Deezer → YouTube 썸네일
+    if not has_art:
+        # iTunes fallback
+        if not art_embedded:
+            if not itunes_result and artist and track_name:
+                itunes_result = _itunes_search(artist, track_name)
+            itunes_art = itunes_result.get("artwork_url", "")
+            if itunes_art:
+                log.info("embedding cover art from iTunes", artist=artist, track=track_name, url=itunes_art)
+                _embed_art_from_url(primary_path, itunes_art)
+                art_embedded = True
+                for extra_path in imported_paths[1:]:
+                    _embed_art_from_url(extra_path, itunes_art)
+
+        # Deezer fallback
+        if not art_embedded:
+            if not deezer_result and artist and track_name:
+                deezer_result = _deezer_search(artist, track_name)
+            deezer_art = deezer_result.get("artwork_url", "")
+            if deezer_art:
+                log.info("embedding cover art from Deezer", artist=artist, track=track_name, url=deezer_art)
+                _embed_art_from_url(primary_path, deezer_art)
+                art_embedded = True
+                for extra_path in imported_paths[1:]:
+                    _embed_art_from_url(extra_path, deezer_art)
+
+        # YouTube 썸네일 — 최후 수단
+        if not art_embedded and yt_metadata:
+            thumbnail_url = yt_metadata.get("thumbnail_url", "")
+            if thumbnail_url:
+                log.info(
+                    "no cover art from CAA/iTunes/Deezer, falling back to YouTube thumbnail",
+                    artist=artist,
+                    track=track_name,
+                    thumbnail_url=thumbnail_url,
+                )
+                _embed_art_from_url(primary_path, thumbnail_url)
+                for extra_path in imported_paths[1:]:
+                    _embed_art_from_url(extra_path, thumbnail_url)
 
 
 def tag_and_import(
