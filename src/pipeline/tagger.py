@@ -452,3 +452,41 @@ def _cleanup_staging(path: Path):
         log.debug("staging file removed", file=str(path))
     except OSError as exc:
         log.warning("could not remove staging file", error=str(exc))
+
+
+def beet_remove_track(mbid: str, artist: str = "", track_name: str = "") -> list[str]:
+    """Remove track(s) from beets library and disk. Returns list of removed file paths.
+
+    Query order:
+    1. mb_trackid:{mbid}  — works for real MB UUIDs (LB tracks)
+    2. artist:"{artist}" title:"{track_name}"  — fallback for manual downloads
+    """
+    removed: list[str] = []
+
+    # Collect candidate paths
+    paths: list[str] = []
+
+    # Try mb_trackid first (works for LB tracks with real MB UUIDs)
+    ok, output = _beet("list", "-f", "$path", f"mb_trackid:{mbid}")
+    if ok and output.strip():
+        paths = [p for p in output.strip().split("\n") if p.strip()]
+
+    # Fallback: artist + title query
+    if not paths and artist and track_name:
+        ok, output = _beet("list", "-f", "$path", f"artist:{artist}", f"title:{track_name}")
+        if ok and output.strip():
+            paths = [p for p in output.strip().split("\n") if p.strip()]
+
+    if not paths:
+        log.info("beet_remove_track: no library files found", mbid=mbid, artist=artist, track=track_name)
+        return removed
+
+    for file_path in paths:
+        ok, out = _beet("remove", "-d", "-y", file_path)
+        if ok:
+            log.info("beet remove succeeded", file=file_path)
+            removed.append(file_path)
+        else:
+            log.warning("beet remove failed", file=file_path, output=out)
+
+    return removed

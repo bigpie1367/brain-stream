@@ -1,6 +1,6 @@
 # API 명세서
 
-- **버전**: 1.0.0
+- **버전**: 1.1.0
 - **Base URL**: `http://localhost:8080`
 - **작성일**: 2026-03-04
 
@@ -14,6 +14,7 @@
 | POST | `/api/download` | 수동 다운로드 시작 |
 | GET | `/api/sse/{job_id}` | SSE 실시간 진행 스트림 |
 | GET | `/api/downloads` | 다운로드 이력 조회 |
+| DELETE | `/api/downloads/{mbid}` | 트랙 삭제 (파일 + beets + state.db) |
 | POST | `/api/pipeline/run` | LB 파이프라인 수동 트리거 |
 
 ---
@@ -164,6 +165,47 @@ data: {"status": "done", "message": "완료"}
 
 | Status | 설명 |
 |--------|------|
+| 503 | 서버 설정 미로드 |
+
+---
+
+## DELETE `/api/downloads/{mbid}`
+
+라이브러리에서 트랙을 삭제한다. beets 라이브러리에서 파일을 제거하고 state.db 레코드를 삭제한 후 Navidrome 재스캔을 트리거한다.
+
+**Path Parameters**
+
+| 파라미터 | 설명 |
+|---------|------|
+| mbid | state.db의 mbid (LB 트랙: MB UUID, 수동 트랙: `manual-{uuid8}`) |
+
+**Response** `200 OK`
+
+```json
+{
+  "deleted": true,
+  "files_removed": 1
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| deleted | boolean | state.db 레코드 삭제 여부 |
+| files_removed | integer | 실제 삭제된 파일 수 (파일이 없던 경우 0) |
+
+**동작 순서**
+
+1. state.db에서 mbid로 artist / track_name 조회
+2. `beet list -f $path` 로 파일 경로 목록 조회
+3. 파일이 존재하면 `beet remove -d` 로 파일 + beets DB 항목 제거
+4. state.db에서 레코드 삭제
+5. Navidrome 재스캔 트리거 (파일이 삭제된 경우)
+
+**Error Responses**
+
+| Status | 설명 |
+|--------|------|
+| 404 | mbid가 state.db에 없음 |
 | 503 | 서버 설정 미로드 |
 
 ---

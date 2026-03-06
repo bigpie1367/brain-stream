@@ -106,3 +106,19 @@ def get_all_downloads(db_path: str, limit: int = 100) -> List[dict]:
             LIMIT ?
         """, (limit,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_download_by_mbid(db_path: str, mbid: str) -> Optional[dict]:
+    with _conn(db_path) as conn:
+        row = conn.execute("""
+            SELECT mbid, track_name, artist, status, source,
+                   attempts, downloaded_at, error_msg
+            FROM downloads
+            WHERE mbid = ?
+        """, (mbid,)).fetchone()
+    return dict(row) if row is not None else None
+
+
+def delete_download(db_path: str, mbid: str):
+    with _conn(db_path) as conn:
+        conn.execute("DELETE FROM downloads WHERE mbid = ?", (mbid,))

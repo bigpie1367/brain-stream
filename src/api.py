@@ -13,8 +13,16 @@ from pydantic import BaseModel
 
 from src.pipeline.downloader import download_track
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
-from src.pipeline.tagger import tag_and_import
-from src.state import get_all_downloads, mark_done, mark_downloading, mark_failed, mark_pending
+from src.pipeline.tagger import beet_remove_track, tag_and_import
+from src.state import (
+    delete_download,
+    get_all_downloads,
+    get_download_by_mbid,
+    mark_done,
+    mark_downloading,
+    mark_failed,
+    mark_pending,
+)
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -31,12 +39,14 @@ _job_queues: dict[str, Queue] = {}
 
 # ── Models ──────────────────────────────────────────────────────────────────
 
+
 class DownloadRequest(BaseModel):
     artist: str
     track: str
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
 
 def _emit(job_id: str, status: str, message: str):
     q = _job_queues.get(job_id)
@@ -66,8 +76,11 @@ def _run_download_job(job_id: str, artist: str, track: str):
 
         _emit(job_id, "tagging", "beets 태깅 중...")
         success = tag_and_import(
-            file_path, cfg.beets.music_dir,
-            artist=artist, track_name=track, yt_metadata=yt_metadata
+            file_path,
+            cfg.beets.music_dir,
+            artist=artist,
+            track_name=track,
+            yt_metadata=yt_metadata,
         )
         if not success:
             mark_failed(cfg.state_db, mbid, "beets import failed")
@@ -92,6 +105,7 @@ def _run_download_job(job_id: str, artist: str, track: str):
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -164,12 +178,40 @@ async def list_downloads():
     return get_all_downloads(_cfg.state_db)
 
 
+@app.delete("/api/downloads/{mbid}")
+async def delete_download_entry(mbid: str):
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+
+    record = get_download_by_mbid(_cfg.state_db, mbid)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not found")
+
+    artist = record.get("artist", "")
+    track_name = record.get("track_name", "")
+
+    removed = beet_remove_track(mbid, artist=artist, track_name=track_name)
+
+    delete_download(_cfg.state_db, mbid)
+
+    if removed:
+        threading.Thread(
+            target=trigger_scan,
+            args=(_cfg.navidrome.url, _cfg.navidrome.username, _cfg.navidrome.password),
+            daemon=True,
+        ).start()
+
+    log.info("download entry deleted", mbid=mbid, files_removed=len(removed))
+    return {"deleted": True, "files_removed": len(removed)}
+
+
 @app.post("/api/pipeline/run")
 async def trigger_pipeline():
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
 
     from src.main import run_pipeline
+
     threading.Thread(target=run_pipeline, args=(_cfg,), daemon=True).start()
     return {"status": "started"}
 
@@ -177,10 +219,18 @@ async def trigger_pipeline():
 # ── Subsonic proxy ────────────────────────────────────────────────────────────
 
 # hop-by-hop 헤더는 프록시 시 포워딩하지 않는다 (RFC 2616 §13.5.1)
-_HOP_BY_HOP = frozenset([
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade",
-])
+_HOP_BY_HOP = frozenset(
+    [
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+    ]
+)
 
 # 응답 헤더 중 포워딩 제외 목록 (hop-by-hop + 프록시가 직접 관리하는 헤더)
 _HOP_BY_HOP_RESPONSE = _HOP_BY_HOP | frozenset(["content-length", "content-encoding"])
@@ -194,10 +244,7 @@ async def subsonic_proxy(path: str, request: Request):
     target_url = f"{_cfg.navidrome.url.rstrip('/')}/rest/{path}"
 
     # 포워딩할 요청 헤더 필터링 (hop-by-hop 제외)
-    forward_headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in _HOP_BY_HOP
-    }
+    forward_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
 
     request_body = await request.body()
 
@@ -223,8 +270,7 @@ async def subsonic_proxy(path: str, request: Request):
         raise HTTPException(status_code=503, detail="navidrome request timed out")
 
     response_headers = {
-        k: v for k, v in upstream.headers.items()
-        if k.lower() not in _HOP_BY_HOP_RESPONSE
+        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP_RESPONSE
     }
 
     async def generate():
@@ -267,8 +313,7 @@ async def subsonic_authed_proxy(path: str, request: Request):
 
     # 클라이언트 쿼리 파라미터에서 인증 관련 키 제거 후 auth_params와 합산
     client_params = {
-        k: v for k, v in request.query_params.items()
-        if k.lower() not in _SUBSONIC_AUTH_PARAMS
+        k: v for k, v in request.query_params.items() if k.lower() not in _SUBSONIC_AUTH_PARAMS
     }
     # 클라이언트가 f(format)를 명시하면 덮어쓰기 허용; 아니면 json 기본값 사용
     merged_params = {**auth_params, **client_params}
@@ -291,8 +336,7 @@ async def subsonic_authed_proxy(path: str, request: Request):
         raise HTTPException(status_code=503, detail="navidrome request timed out")
 
     response_headers = {
-        k: v for k, v in upstream.headers.items()
-        if k.lower() not in _HOP_BY_HOP_RESPONSE
+        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP_RESPONSE
     }
 
     async def generate():
@@ -329,10 +373,7 @@ async def navidrome_proxy(path: str, request: Request):
     """Navidrome 웹 UI 투명 프록시. 인증 주입 없이 요청을 그대로 전달한다."""
     target_url = f"{_NAVIDROME_BASE}/navidrome/{path}"
 
-    forward_headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in _HOP_BY_HOP
-    }
+    forward_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
 
     request_body = await request.body()
 
@@ -358,15 +399,14 @@ async def navidrome_proxy(path: str, request: Request):
         raise HTTPException(status_code=503, detail="navidrome request timed out")
 
     response_headers = {
-        k: v for k, v in upstream.headers.items()
-        if k.lower() not in _HOP_BY_HOP_RESPONSE
+        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP_RESPONSE
     }
 
     # 리다이렉트 응답: Location의 내부 주소를 /navidrome 경로로 재작성
     if upstream.status_code in (301, 302, 303, 307, 308):
         location = upstream.headers.get("location", "")
         if location.startswith(_NAVIDROME_BASE):
-            location = location[len(_NAVIDROME_BASE):]
+            location = location[len(_NAVIDROME_BASE) :]
         # strip 후에도 /navidrome으로 시작하지 않는 절대경로는 /navidrome prefix 보정
         # 예: /app → /navidrome/app
         if location.startswith("/") and not location.startswith("/navidrome"):

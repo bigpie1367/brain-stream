@@ -211,6 +211,95 @@
       display: none;
     }
 
+    /* 삭제 버튼 */
+    .btn-danger {
+      background: none;
+      border: 1px solid #4a2020;
+      border-radius: 4px;
+      color: #718096;
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 2px 8px;
+      white-space: nowrap;
+      align-self: auto;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      line-height: 1.5;
+    }
+    .btn-danger:hover { background: #3b1515; border-color: #fc8181; color: #fc8181; }
+    .btn-danger:disabled { background: none; border-color: #2d3147; color: #2d3147; cursor: not-allowed; }
+
+    /* 확인 모달 */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+    }
+    .modal-overlay.hidden { display: none; }
+
+    .modal-box {
+      background: #1a1d27;
+      border: 1px solid #2d3147;
+      border-radius: 10px;
+      padding: 24px 28px;
+      min-width: 320px;
+      max-width: 480px;
+      width: 90%;
+    }
+
+    .modal-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #e2e8f0;
+      margin-bottom: 10px;
+    }
+
+    .modal-msg {
+      font-size: 0.85rem;
+      color: #a0aec0;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .btn-modal-cancel {
+      background: #2d3147;
+      border: none;
+      border-radius: 6px;
+      color: #a0aec0;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 7px 16px;
+      transition: background 0.12s, color 0.12s;
+      align-self: auto;
+    }
+    .btn-modal-cancel:hover { background: #363b55; color: #e2e8f0; }
+
+    .btn-modal-confirm {
+      background: #7b2020;
+      border: none;
+      border-radius: 6px;
+      color: #fca5a5;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 7px 16px;
+      transition: background 0.12s, color 0.12s;
+      align-self: auto;
+    }
+    .btn-modal-confirm:hover { background: #991b1b; color: #fecaca; }
+    .btn-modal-confirm:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
+
     /* ── Library 탭 ── */
     .library-layout {
       display: flex;
@@ -642,6 +731,7 @@
             <th>Source</th>
             <th>Status</th>
             <th>Time</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="history-body">
@@ -697,6 +787,18 @@
     <span class="time-label" id="time-total">0:00</span>
   </div>
   <audio id="audio-player" preload="none"></audio>
+</div>
+
+<!-- 삭제 확인 모달 -->
+<div class="modal-overlay hidden" id="delete-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title-text">
+  <div class="modal-box">
+    <div class="modal-title" id="modal-title-text">트랙 삭제</div>
+    <p class="modal-msg" id="modal-msg"></p>
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" id="modal-cancel-btn" onclick="closeDeleteModal()">취소</button>
+      <button class="btn-modal-confirm" id="modal-confirm-btn" onclick="confirmDelete()">삭제</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -837,19 +939,136 @@
         return;
       }
       noData.style.display = 'none';
-      tbody.innerHTML = rows.map(r => `
-        <tr>
-          <td>${esc(r.artist)}</td>
-          <td>${esc(r.track_name)}</td>
-          <td>${sourceBadge(r.source)}</td>
-          <td>${statusBadge(r.status)}</td>
-          <td style="color:#718096;">${relativeTime(r.downloaded_at)}</td>
-        </tr>
-      `).join('');
+      tbody.innerHTML = '';
+
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        tr.dataset.mbid = r.mbid;
+
+        const tdArtist = document.createElement('td');
+        tdArtist.textContent = r.artist;
+
+        const tdTrack = document.createElement('td');
+        tdTrack.textContent = r.track_name;
+
+        const tdSource = document.createElement('td');
+        tdSource.innerHTML = sourceBadge(r.source);
+
+        const tdStatus = document.createElement('td');
+        tdStatus.innerHTML = statusBadge(r.status);
+
+        const tdTime = document.createElement('td');
+        tdTime.style.color = '#718096';
+        tdTime.textContent = relativeTime(r.downloaded_at);
+
+        const tdAction = document.createElement('td');
+        tdAction.style.textAlign = 'right';
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn-danger';
+        delBtn.textContent = '삭제';
+        delBtn.title = '이 항목을 이력에서 삭제합니다';
+        delBtn.addEventListener('click', () => openDeleteModal(r.mbid, r.artist, r.track_name, tr));
+        tdAction.appendChild(delBtn);
+
+        tr.appendChild(tdArtist);
+        tr.appendChild(tdTrack);
+        tr.appendChild(tdSource);
+        tr.appendChild(tdStatus);
+        tr.appendChild(tdTime);
+        tr.appendChild(tdAction);
+        tbody.appendChild(tr);
+      });
     } catch (e) {
       console.error('history load failed', e);
     }
   }
+
+  // ── 삭제 모달 ──────────────────────────────────────────────────────────────
+  let _pendingDeleteMbid = null;
+  let _pendingDeleteRow  = null;
+
+  function openDeleteModal(mbid, artist, trackName, rowEl) {
+    _pendingDeleteMbid = mbid;
+    _pendingDeleteRow  = rowEl;
+
+    const msgEl = document.getElementById('modal-msg');
+    // textContent로 삽입해 XSS 방지
+    msgEl.textContent = '';
+    const strong = document.createElement('strong');
+    strong.textContent = artist + ' - ' + trackName;
+    msgEl.appendChild(document.createTextNode(''));
+    msgEl.appendChild(strong);
+    msgEl.appendChild(document.createTextNode('을(를) 이력에서 삭제하시겠습니까?'));
+
+    const confirmBtn = document.getElementById('modal-confirm-btn');
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = '삭제';
+
+    document.getElementById('delete-modal').classList.remove('hidden');
+  }
+
+  function closeDeleteModal() {
+    document.getElementById('delete-modal').classList.add('hidden');
+    _pendingDeleteMbid = null;
+    _pendingDeleteRow  = null;
+  }
+
+  async function confirmDelete() {
+    if (!_pendingDeleteMbid) return;
+
+    const confirmBtn = document.getElementById('modal-confirm-btn');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '삭제 중...';
+
+    try {
+      const res = await fetch('/api/downloads/' + encodeURIComponent(_pendingDeleteMbid), {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'HTTP ' + res.status);
+      }
+
+      // 성공: 해당 행을 DOM에서 제거
+      if (_pendingDeleteRow && _pendingDeleteRow.parentNode) {
+        _pendingDeleteRow.parentNode.removeChild(_pendingDeleteRow);
+      }
+
+      // 남은 행이 없으면 "이력 없음" 표시
+      const tbody = document.getElementById('history-body');
+      if (!tbody.hasChildNodes()) {
+        document.getElementById('no-data').style.display = 'block';
+      }
+
+      closeDeleteModal();
+    } catch (e) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = '삭제';
+      // 모달은 열어둔 채로 에러 메시지 표시
+      const msgEl = document.getElementById('modal-msg');
+      const errSpan = document.createElement('span');
+      errSpan.style.color = '#fc8181';
+      errSpan.style.display = 'block';
+      errSpan.style.marginTop = '8px';
+      errSpan.style.fontSize = '0.8rem';
+      errSpan.textContent = '삭제 실패: ' + e.message;
+      // 이전 에러 메시지가 있으면 교체
+      const prevErr = msgEl.querySelector('.delete-err');
+      if (prevErr) prevErr.remove();
+      errSpan.className = 'delete-err';
+      msgEl.appendChild(errSpan);
+    }
+  }
+
+  // 모달 외부(오버레이) 클릭 시 닫기
+  document.getElementById('delete-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeDeleteModal();
+  });
+
+  // ESC 키로 모달 닫기
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeDeleteModal();
+  });
 
   function esc(str) {
     return String(str ?? '')
@@ -857,8 +1076,11 @@
   }
 
   // Initial load + auto-refresh every 5 s
+  // 모달이 열려 있는 동안은 자동 갱신을 건너뛰어 _pendingDeleteRow 참조 보호
   loadHistory();
-  setInterval(loadHistory, 5000);
+  setInterval(() => {
+    if (!_pendingDeleteMbid) loadHistory();
+  }, 5000);
 
   // ── Library ────────────────────────────────────────────────────────────────
   let libraryLoaded = false;
