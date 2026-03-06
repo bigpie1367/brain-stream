@@ -25,7 +25,7 @@ services:
       - TZ=Asia/Seoul
       - LB_USERNAME=${LB_USERNAME}
       - LB_TOKEN=${LB_TOKEN}
-      - NAVIDROME_USER={NAVIDROME_USER}
+      - NAVIDROME_USER=${NAVIDROME_USER}
       - NAVIDROME_PASSWORD=${NAVIDROME_PASSWORD}
       # - NAVIDROME_URL=http://navidrome:4533
     sysctls:

@@ -3,8 +3,7 @@ import json
 import secrets
 import threading
 import uuid
-from queue import Queue, Empty
-from typing import Optional
+from queue import Empty, Queue
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -12,12 +11,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.state import (
-    mark_pending, mark_downloading, mark_done, mark_failed, get_all_downloads
-)
 from src.pipeline.downloader import download_track
-from src.pipeline.tagger import tag_and_import
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
+from src.pipeline.tagger import tag_and_import
+from src.state import get_all_downloads, mark_done, mark_downloading, mark_failed, mark_pending
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -69,7 +66,8 @@ def _run_download_job(job_id: str, artist: str, track: str):
 
         _emit(job_id, "tagging", "beets 태깅 중...")
         success = tag_and_import(
-            file_path, cfg.beets.music_dir, artist=artist, track_name=track, yt_metadata=yt_metadata
+            file_path, cfg.beets.music_dir,
+            artist=artist, track_name=track, yt_metadata=yt_metadata
         )
         if not success:
             mark_failed(cfg.state_db, mbid, "beets import failed")
@@ -366,6 +364,10 @@ async def navidrome_proxy(path: str, request: Request):
         location = upstream.headers.get("location", "")
         if location.startswith(_NAVIDROME_BASE):
             location = location[len(_NAVIDROME_BASE):]
+        # strip 후에도 /navidrome으로 시작하지 않는 절대경로는 /navidrome prefix 보정
+        # 예: /app → /navidrome/app
+        if location.startswith("/") and not location.startswith("/navidrome"):
+            location = "/navidrome" + location
         await upstream.aclose()
         await client.aclose()
         return RedirectResponse(url=location, status_code=upstream.status_code)
