@@ -18,7 +18,7 @@ cp .env.example .env
 
 # 3. 접속
 # Web UI:    http://localhost:8080
-# Navidrome: http://localhost:4533
+# Navidrome: http://localhost:8080/navidrome/  (brainstream 프록시)
 ```
 
 ### 서버 배포 (이미지 전용)
@@ -63,8 +63,8 @@ cp .env.example .env
 
 | 서비스 | 포트 | 역할 |
 |--------|------|------|
-| brainstream | 8080 | Web UI + REST API + 파이프라인 |
-| navidrome | 4533 | 음악 스트리밍 (Subsonic 호환) |
+| brainstream | 8080 | Web UI + REST API + 파이프라인 + Navidrome 프록시 |
+| navidrome | 미노출 | 음악 스트리밍 (Docker 내부 전용, `/navidrome/` 경로로 접근) |
 
 ## 주요 명령어
 
