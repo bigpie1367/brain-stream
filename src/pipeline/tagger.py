@@ -477,8 +477,30 @@ def beet_remove_track(mbid: str, artist: str = "", track_name: str = "") -> list
         if ok and output.strip():
             paths = [p for p in output.strip().split("\n") if p.strip()]
 
+    # Filesystem fallback: beets DB가 비어있을 때 직접 탐색
     if not paths:
-        log.info("beet_remove_track: no library files found", mbid=mbid, artist=artist, track=track_name)
+        log.info(
+            "beet_remove_track: beet query returned nothing, falling back to filesystem scan",
+            mbid=mbid,
+            artist=artist,
+            track=track_name,
+        )
+        music_root = "/app/data/music"
+        track_lower = track_name.lower() if track_name else ""
+        artist_lower = artist.lower() if artist else ""
+        for dirpath, _dirnames, filenames in os.walk(music_root):
+            for fname in filenames:
+                if not fname.lower().endswith((".flac", ".opus")):
+                    continue
+                if track_lower and track_lower not in fname.lower():
+                    continue
+                full_path = os.path.join(dirpath, fname)
+                if artist_lower and artist_lower not in full_path.lower():
+                    continue
+                paths.append(full_path)
+
+    if not paths:
+        log.info("beet_remove_track: no files found (beet query + filesystem)", mbid=mbid, artist=artist, track=track_name)
         return removed
 
     for file_path in paths:
@@ -487,6 +509,13 @@ def beet_remove_track(mbid: str, artist: str = "", track_name: str = "") -> list
             log.info("beet remove succeeded", file=file_path)
             removed.append(file_path)
         else:
-            log.warning("beet remove failed", file=file_path, output=out)
+            log.warning("beet remove failed, attempting direct os.remove", file=file_path, output=out)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    log.info("direct os.remove succeeded", file=file_path)
+                    removed.append(file_path)
+                except OSError as exc:
+                    log.warning("direct os.remove failed", file=file_path, error=str(exc))
 
     return removed

@@ -1,5 +1,5 @@
 directory: /app/data/music
-library: /root/.config/beets/library.db
+library: /app/data/beets-library.db
 
 import:
   write: yes
