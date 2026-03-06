@@ -23,6 +23,66 @@ _MB_API = "https://musicbrainz.org/ws/2"
 _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
 
 
+def _mb_search_recording(artist: str, track_name: str) -> str:
+    """Search MusicBrainz for a recording by artist and title.
+
+    Returns the first matched recording ID (UUID), or empty string on failure.
+    """
+    try:
+        time.sleep(1)  # rate limit
+        query = f"artist:{artist} AND recording:{track_name}"
+        r = requests.get(
+            f"{_MB_API}/recording",
+            params={"query": query, "fmt": "json", "limit": 5},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        recordings = r.json().get("recordings", [])
+        if recordings:
+            recording_id = recordings[0].get("id", "")
+            if recording_id:
+                log.info(
+                    "MB search found recording",
+                    artist=artist,
+                    track=track_name,
+                    recording_id=recording_id,
+                )
+            return recording_id
+        return ""
+    except Exception as exc:
+        log.warning("MB recording search failed", artist=artist, track=track_name, error=str(exc))
+        return ""
+
+
+def _write_mb_trackid(file_path: str, mb_trackid: str):
+    """Write MusicBrainz recording ID to file tags to avoid re-searching next run."""
+    try:
+        suffix = Path(file_path).suffix.lower()
+        if suffix == ".flac":
+            f = mutagen.flac.FLAC(file_path)
+            f["musicbrainz_trackid"] = mb_trackid
+            f.save()
+        elif suffix in (".opus", ".ogg"):
+            f = mutagen.oggopus.OggOpus(file_path)
+            f["musicbrainz_trackid"] = [mb_trackid]
+            f.save()
+        elif suffix in (".m4a", ".mp4"):
+            f = mutagen.mp4.MP4(file_path)
+            f["----:com.apple.iTunes:MusicBrainz Track Id"] = [
+                mutagen.mp4.MP4FreeForm(mb_trackid.encode())
+            ]
+            f.save()
+        else:
+            f = mutagen.File(file_path)
+            if f is not None:
+                f["musicbrainz_trackid"] = mb_trackid
+                f.save()
+        log.debug("wrote mb_trackid to file", file=file_path, mb_trackid=mb_trackid)
+    except Exception as exc:
+        log.warning("could not write mb_trackid to file", file=file_path, error=str(exc))
+
+
 def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
     """Get (album_title, mb_albumid_candidates) from a MusicBrainz recording ID.
 
@@ -317,8 +377,19 @@ def _enrich_track(
         return
 
     # Resolve album using the exact MusicBrainz recording ID
+    # If beets import did not write mb_trackid (matching failed), search MB directly
     album = ""
     mb_albumid_candidates: list[str] = []
+    if not mb_trackid and artist and track_name:
+        log.info(
+            "mb_trackid missing after beet import, searching MB by artist+title",
+            artist=artist,
+            track=track_name,
+        )
+        mb_trackid = _mb_search_recording(artist, track_name)
+        if mb_trackid:
+            _write_mb_trackid(primary_path, mb_trackid)
+
     if mb_trackid:
         album, mb_albumid_candidates = _mb_album_from_recording_id(mb_trackid)
 
