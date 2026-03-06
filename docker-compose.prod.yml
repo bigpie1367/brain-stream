@@ -13,6 +13,7 @@ services:
 
   brainstream:
     image: ghcr.io/bigpie1367/brain-stream:latest
+    container_name: brainstream
     restart: unless-stopped
     ports:
       - "8080:8000"
