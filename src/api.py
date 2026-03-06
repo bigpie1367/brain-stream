@@ -55,7 +55,7 @@ def _run_download_job(job_id: str, artist: str, track: str):
         _emit(job_id, "downloading", "YouTube 검색 중...")
         mark_downloading(cfg.state_db, mbid)
 
-        file_path = download_track(
+        file_path, yt_metadata = download_track(
             mbid=mbid,
             artist=artist,
             track_name=track,
@@ -68,7 +68,9 @@ def _run_download_job(job_id: str, artist: str, track: str):
             return
 
         _emit(job_id, "tagging", "beets 태깅 중...")
-        success = tag_and_import(file_path, cfg.beets.music_dir, artist=artist, track_name=track)
+        success = tag_and_import(
+            file_path, cfg.beets.music_dir, artist=artist, track_name=track, yt_metadata=yt_metadata
+        )
         if not success:
             mark_failed(cfg.state_db, mbid, "beets import failed")
             _emit(job_id, "failed", "태깅 실패")

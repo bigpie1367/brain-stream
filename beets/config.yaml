@@ -8,6 +8,7 @@ import:
   log: /app/data/logs/beets-import.log
   timid: no
   quiet: no
+  quiet_fallback: asis
   autotag: yes
 
 match:

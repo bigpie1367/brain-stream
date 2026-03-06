@@ -23,8 +23,12 @@ _MB_API = "https://musicbrainz.org/ws/2"
 _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
 
 
-def _mb_album_from_recording_id(recording_id: str) -> tuple[str, str]:
-    """Get (album_title, mb_albumid) from a MusicBrainz recording ID."""
+def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
+    """Get (album_title, mb_albumid_candidates) from a MusicBrainz recording ID.
+
+    Returns up to 3 Official Album release IDs to try for Cover Art Archive.
+    Falls back to the first release if no Official Album found.
+    """
     try:
         time.sleep(1)  # rate limit
         r = requests.get(
@@ -36,38 +40,48 @@ def _mb_album_from_recording_id(recording_id: str) -> tuple[str, str]:
         r.raise_for_status()
         releases = r.json().get("releases", [])
         if not releases:
-            return "", ""
+            return "", []
 
-        # Prefer official studio albums; fall back to first release
+        # Collect Official Album releases (up to 3) for CAA fallback
+        official_album_releases = []
         for rel in releases:
             status = rel.get("status", "")
             rtype = rel.get("release-group", {}).get("primary-type", "")
             if status == "Official" and rtype == "Album":
-                album = rel.get("title", "")
                 mbid = rel.get("id", "")
-                if album:
-                    log.info(
-                        "resolved album from MB recording",
-                        recording_id=recording_id,
-                        album=album,
-                        mb_albumid=mbid,
-                    )
-                    return album, mbid
+                if mbid:
+                    official_album_releases.append(rel)
+                if len(official_album_releases) >= 3:
+                    break
 
+        if official_album_releases:
+            album = official_album_releases[0].get("title", "")
+            candidates = [rel.get("id", "") for rel in official_album_releases if rel.get("id")]
+            if album:
+                log.info(
+                    "resolved album from MB recording",
+                    recording_id=recording_id,
+                    album=album,
+                    mb_albumid_candidates=candidates,
+                )
+            return album, candidates
+
+        # Fallback: use the first release regardless of type
         album = releases[0].get("title", "")
         mbid = releases[0].get("id", "")
+        candidates = [mbid] if mbid else []
         if album:
             log.info(
                 "resolved album (fallback) from MB recording",
                 recording_id=recording_id,
                 album=album,
-                mb_albumid=mbid,
+                mb_albumid_candidates=candidates,
             )
-        return album, mbid
+        return album, candidates
 
     except Exception as exc:
         log.warning("MB recording lookup failed", recording_id=recording_id, error=str(exc))
-        return "", ""
+        return "", []
 
 
 def _pretag(path: Path, artist: str, track_name: str):
@@ -130,14 +144,17 @@ def _beet(*args: str, timeout: int = 60) -> tuple[bool, str]:
     return result.returncode == 0, output
 
 
-def _embed_cover_art(file_path: str, mb_albumid: str):
-    """Download front cover from Cover Art Archive and embed into audio file."""
+def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
+    """Download front cover from Cover Art Archive and embed into audio file.
+
+    Returns True on success, False on failure (404, network error, etc.).
+    """
     art_url = f"https://coverartarchive.org/release/{mb_albumid}/front"
     try:
         r = requests.get(art_url, timeout=15, allow_redirects=True)
         if r.status_code != 200:
             log.warning("cover art not found", mb_albumid=mb_albumid, status=r.status_code)
-            return
+            return False
         image_data = r.content
         content_type = r.headers.get("Content-Type", "image/jpeg")
         log.info("embedding cover art", file=file_path, size=len(image_data))
@@ -171,38 +188,127 @@ def _embed_cover_art(file_path: str, mb_albumid: str):
             f.save()
         else:
             log.warning("unsupported format for art embedding", file=file_path)
-            return
+            return False
 
         log.info("cover art embedded", file=file_path)
+        return True
     except Exception as exc:
         log.warning("cover art embedding failed", file=file_path, error=str(exc))
+        return False
 
 
-def _find_imported_file(music_dir: str, artist: str, track_name: str) -> str:
-    """Find the FLAC/Opus file beets imported for this track."""
+def _find_imported_files(artist: str, track_name: str) -> list[str]:
+    """Find all FLAC/Opus files beets imported for this track (artist+title query)."""
     ok, output = _beet("list", "-f", "$path", f"artist:{artist}", f"title:{track_name}")
     if ok and output.strip():
-        return output.strip().split("\n")[0]
+        return [p for p in output.strip().split("\n") if p.strip()]
+    return []
+
+
+def _find_imported_file_by_path(staging_path: str) -> str:
+    """Find the imported file using staging file path as a hint.
+
+    Uses beet list with a path: query derived from the filename stem,
+    falling back to empty string if not found.
+    This avoids relying on artist/track strings which may be empty.
+    """
+    stem = Path(staging_path).stem
+    ok, output = _beet("list", "-f", "$path", f"path:{stem}")
+    if ok and output.strip():
+        paths = [p for p in output.strip().split("\n") if p.strip()]
+        if paths:
+            return paths[0]
     return ""
 
 
-def _enrich_track(artist: str, track_name: str, music_dir: str):
-    """After singleton import: resolve album from MB and fetch art."""
-    # Find the imported file to get the mb_trackid beets wrote
-    imported_path = _find_imported_file(music_dir, artist, track_name)
-    if not imported_path:
+def _embed_art_from_url(file_path: str, url: str):
+    """Download image from URL and embed into audio file."""
+    try:
+        r = requests.get(url, timeout=15, allow_redirects=True)
+        if r.status_code != 200:
+            log.warning("thumbnail download failed", url=url, status=r.status_code)
+            return
+        image_data = r.content
+        content_type = r.headers.get("Content-Type", "image/jpeg")
+        log.info("embedding thumbnail as cover art", file=file_path, size=len(image_data))
+
+        suffix = Path(file_path).suffix.lower()
+        if suffix == ".flac":
+            f = mutagen.flac.FLAC(file_path)
+            pic = mutagen.flac.Picture()
+            pic.type = 3  # front cover
+            pic.mime = content_type
+            pic.data = image_data
+            f.clear_pictures()
+            f.add_picture(pic)
+            f.save()
+        elif suffix in (".opus", ".ogg"):
+            import base64
+            f = mutagen.oggopus.OggOpus(file_path)
+            pic = mutagen.flac.Picture()
+            pic.type = 3
+            pic.mime = content_type
+            pic.data = image_data
+            f["metadata_block_picture"] = [base64.b64encode(pic.write()).decode("ascii")]
+            f.save()
+        elif suffix in (".m4a", ".mp4"):
+            f = mutagen.mp4.MP4(file_path)
+            fmt = mutagen.mp4.MP4Cover.FORMAT_JPEG
+            if "png" in content_type:
+                fmt = mutagen.mp4.MP4Cover.FORMAT_PNG
+            f["covr"] = [mutagen.mp4.MP4Cover(image_data, imageformat=fmt)]
+            f.save()
+        else:
+            log.warning("unsupported format for art embedding", file=file_path)
+            return
+
+        log.info("thumbnail embedded as cover art", file=file_path)
+    except Exception as exc:
+        log.warning("thumbnail embedding failed", file=file_path, error=str(exc))
+
+
+def _enrich_track(
+    staging_path: str,
+    music_dir: str,
+    artist: str = "",
+    track_name: str = "",
+    yt_metadata: dict | None = None,
+):
+    """After singleton import: resolve album from MB and fetch art.
+
+    Uses artist/track to find imported files when available; falls back to
+    staging file path stem query so enrichment runs even when artist/track
+    are empty strings (e.g. some LB pipeline entries).
+    """
+    # Find all imported files matching this track (Bug 2: handle multiple paths)
+    imported_paths: list[str] = []
+    if artist and track_name:
+        imported_paths = _find_imported_files(artist, track_name)
+
+    # Bug 3 fallback: if artist/track empty or lookup returned nothing, use path stem
+    if not imported_paths:
+        fallback = _find_imported_file_by_path(staging_path)
+        if fallback:
+            imported_paths = [fallback]
+
+    if not imported_paths:
         log.warning(
-            "could not find imported track for enrichment", artist=artist, track=track_name
+            "could not find imported track for enrichment",
+            artist=artist,
+            track=track_name,
+            staging_path=staging_path,
         )
         return
 
+    # Read metadata from the first matched file to get mb_trackid and current state
+    primary_path = imported_paths[0]
     try:
-        mf = mediafile.MediaFile(imported_path)
+        mf = mediafile.MediaFile(primary_path)
         mb_trackid = mf.mb_trackid
         has_album = bool(mf.album)
         has_art = bool(mf.images)
     except Exception as exc:
-        log.warning("could not read imported file metadata", file=imported_path, error=str(exc))
+        log.warning("could not read imported file metadata", file=primary_path, error=str(exc))
         return
 
     # 이미 앨범과 아트가 모두 있으면 enrichment 불필요
@@ -211,18 +317,75 @@ def _enrich_track(artist: str, track_name: str, music_dir: str):
         return
 
     # Resolve album using the exact MusicBrainz recording ID
-    album, mb_albumid = "", ""
+    album = ""
+    mb_albumid_candidates: list[str] = []
     if mb_trackid:
-        album, mb_albumid = _mb_album_from_recording_id(mb_trackid)
+        album, mb_albumid_candidates = _mb_album_from_recording_id(mb_trackid)
 
     if album and not has_album:
         log.info("setting album tag via beet modify", artist=artist, track=track_name, album=album)
         # mb_albumid는 설정하지 않음: 트랙마다 다른 release를 매칭하면 Navidrome이 같은 앨범을 2개로 쪼갬
-        _beet("modify", "-y", f"artist:{artist}", f"title:{track_name}", f"album={album}")
+        # Bug 3: artist/track이 비어있을 때도 동작하도록 path: 조건으로 파일 특정
+        if artist and track_name:
+            _beet("modify", "-y", f"artist:{artist}", f"title:{track_name}", f"album={album}")
+        else:
+            _beet("modify", "-y", f"path:{primary_path}", f"album={album}")
 
-    # Fetch and embed album art directly from Cover Art Archive
-    if mb_albumid and not has_art:
-        _embed_cover_art(imported_path, mb_albumid)
+    # Bug 1: CAA에서 여러 release 후보를 순서대로 시도
+    art_embedded = False
+    successful_candidate = None
+    if not has_art and mb_albumid_candidates:
+        for candidate_id in mb_albumid_candidates:
+            if _embed_cover_art(primary_path, candidate_id):
+                art_embedded = True
+                successful_candidate = candidate_id
+                break
+
+        # Bug 2: 나머지 매칭 파일에도 동일한 아트 임베딩 (성공한 candidate 기준)
+        if art_embedded and successful_candidate and len(imported_paths) > 1:
+            for extra_path in imported_paths[1:]:
+                _embed_cover_art(extra_path, successful_candidate)
+
+        # 아트 임베딩 후 has_art 갱신 (YouTube 폴백 진입 여부 결정용)
+        if art_embedded:
+            try:
+                has_art = bool(mediafile.MediaFile(primary_path).images)
+            except Exception:
+                has_art = True  # 실패해도 폴백 시도 방지
+
+    # MB에서 앨범 정보를 찾지 못한 경우 YouTube 메타데이터로 폴백
+    # Bug 1: CAA 전부 실패 시 has_art가 False인 채로 이 분기에 진입 가능
+    if yt_metadata:
+        try:
+            if not album and not has_album:
+                channel = yt_metadata.get("channel", "")
+                if channel:
+                    log.info(
+                        "MB album not found, falling back to YouTube channel as album",
+                        artist=artist,
+                        track=track_name,
+                        channel=channel,
+                    )
+                    if artist and track_name:
+                        _beet("modify", "-y", f"artist:{artist}", f"title:{track_name}", f"album={channel}")
+                    else:
+                        _beet("modify", "-y", f"path:{primary_path}", f"album={channel}")
+
+            if not has_art:
+                thumbnail_url = yt_metadata.get("thumbnail_url", "")
+                if thumbnail_url:
+                    log.info(
+                        "no cover art, falling back to YouTube thumbnail",
+                        artist=artist,
+                        track=track_name,
+                        thumbnail_url=thumbnail_url,
+                    )
+                    _embed_art_from_url(primary_path, thumbnail_url)
+                    # Bug 2: 나머지 파일에도 YouTube 썸네일 임베딩
+                    for extra_path in imported_paths[1:]:
+                        _embed_art_from_url(extra_path, thumbnail_url)
+        except Exception as exc:
+            log.warning("YouTube metadata fallback failed", artist=artist, track=track_name, error=str(exc))
 
 
 def tag_and_import(
@@ -230,6 +393,7 @@ def tag_and_import(
     music_dir: str,
     artist: str = "",
     track_name: str = "",
+    yt_metadata: dict | None = None,
 ) -> bool:
     path = Path(staging_file)
     if not path.exists():
@@ -268,9 +432,8 @@ def tag_and_import(
         else:
             log.info("beets import succeeded", file=staging_file)
 
-        # enrichment: 신규 임포트든 duplicate든 앨범/아트가 없으면 실행
-        if artist and track_name:
-            _enrich_track(artist, track_name, music_dir)
+        # Bug 3: artist/track 유무와 관계없이 항상 enrichment 실행
+        _enrich_track(staging_file, music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata)
 
         _cleanup_staging(path)
         return True

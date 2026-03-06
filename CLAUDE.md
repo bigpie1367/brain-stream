@@ -80,9 +80,12 @@ ListenBrainz /cf/recommendation
   → mutagen pre-tag (write artist+title before beets sees the file)
   → beet import -q -s (singleton mode; serialized via threading.Lock)
   → import log offset-based skip detection (beet returns exit 0 on skip)
+  → download_track() returns (file_path, yt_metadata) — yt_metadata: {thumbnail_url, channel}
   → MusicBrainz API: recording/{mb_trackid}?inc=releases+release-groups
   → beet modify to set album= (mb_albumid NOT written — avoids Navidrome album duplication)
-  → Cover Art Archive direct download + mutagen embed
+  → Cover Art Archive: try up to 3 release candidates until one succeeds
+  → CAA all failed OR no MB album → YouTube fallback: channel as album, thumbnail as cover art
+  → all duplicate imported files get the same cover art embedded
   → Navidrome Subsonic API startScan + poll
 ```
 
@@ -119,6 +122,7 @@ POST /api/download {artist, track}
 - In beets 2.x, `musicbrainz` is a **plugin** that must be listed explicitly in `beets/config.yaml`; without it, no MusicBrainz lookups happen at all
 - `beet import` must use `-s` (singleton) flag for single-file imports — album mode skips files that don't match an album
 - `strong_rec_thresh: 0.15` is required; stricter values reject legitimate matches (e.g., 88.9% similarity = distance 0.111 exceeds a 0.04 threshold)
+- `quiet_fallback: asis` is required; without it, quiet mode skips any track that doesn't get a strong match (singles/covers with distance > 0.15 always get skipped)
 - beet returns exit code 0 on skip — detect skips by reading the import log before/after with byte offsets
 - Do **not** set `mb_albumid` in file tags via `beet modify`; doing so causes Navidrome to split same-album tracks into separate album entries (Navidrome groups by album name, not mb_albumid)
 

@@ -76,8 +76,8 @@ External APIs:
 | `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD |
 | `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회, `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계) |
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출 |
-| `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback) |
-| `src/pipeline/tagger.py` | mutagen 선-태깅 → beets import → MB enrichment → 앨범아트 임베딩 |
+| `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `(file_path, yt_metadata)` 튜플 반환 |
+| `src/pipeline/tagger.py` | mutagen 선-태깅 → beets import → MB enrichment → CAA 커버아트 임베딩 (최대 3 release 시도) → YouTube 썸네일/채널명 폴백 |
 | `src/pipeline/navidrome.py` | Subsonic API token-auth, startScan + getScanStatus 폴링 |
 | `src/utils/logger.py` | structlog 설정 (TTY: 컬러 콘솔, non-TTY: JSON) |
 | `src/static/index.html` | 다크 테마 단일 파일 Web UI |
@@ -121,13 +121,20 @@ state.db 중복 체크 (mbid 기준)
         │    dup-skip → 성공 처리
         │    success  → mark_done
         │
+        ├─ yt_metadata 수집 (download_track 반환)
+        │    thumbnail_url, channel (YouTube 채널명)
+        │
         ├─ _enrich_track()
-        │    imported_path = beet list -f $path
+        │    imported_paths = beet list -f $path (중복 파일 전체 리스트)
         │    mediafile → mb_trackid 읽기
         │    이미 album+art 있음 → 조기 리턴
         │    MB API /recording/{id}?inc=releases+release-groups
         │    → beet modify album= (mb_albumid는 기록 안 함)
-        │    → coverartarchive.org 다운로드 + mutagen 임베딩
+        │    → coverartarchive.org 최대 3개 release 순차 시도 + mutagen 임베딩
+        │         (모든 중복 파일에 동일하게 임베딩)
+        │    → CAA 전부 실패 or MB 앨범 없음 → YouTube 폴백:
+        │         album = yt_metadata.channel (채널명)
+        │         art   = yt_metadata.thumbnail_url 다운로드 + 임베딩
         │
         └─ (모든 트랙 완료 후)
            Navidrome startScan → getScanStatus 폴링 → 완료 대기

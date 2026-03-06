@@ -53,7 +53,7 @@ def run_pipeline(cfg):
         mark_pending(cfg.state_db, mbid, track_name, artist)
 
         # 4. Download
-        file_path = download_track(
+        file_path, yt_metadata = download_track(
             mbid=mbid,
             artist=artist,
             track_name=track_name,
@@ -66,7 +66,7 @@ def run_pipeline(cfg):
 
         # 5. Tag + import with beets
         success = tag_and_import(
-            file_path, cfg.beets.music_dir, artist=artist, track_name=track_name
+            file_path, cfg.beets.music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata
         )
         if success:
             mark_done(cfg.state_db, mbid)
