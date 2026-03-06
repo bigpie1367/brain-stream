@@ -321,7 +321,10 @@ async def navidrome_redirect():
     return RedirectResponse(url="/navidrome/", status_code=301)
 
 
-@app.api_route("/navidrome/{path:path}", methods=["GET", "POST", "HEAD"])
+_NAVIDROME_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+
+@app.api_route("/navidrome/{path:path}", methods=_NAVIDROME_METHODS)
 async def navidrome_proxy(path: str, request: Request):
     """Navidrome 웹 UI 투명 프록시. 인증 주입 없이 요청을 그대로 전달한다."""
     target_url = f"{_NAVIDROME_BASE}/navidrome/{path}"
