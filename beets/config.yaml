@@ -1,5 +1,5 @@
 directory: /app/data/music
-library: /app/data/beets-library.db
+library: /app/db/beets-library.db
 
 import:
   write: yes
