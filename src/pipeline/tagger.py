@@ -343,27 +343,60 @@ def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
         return False
 
 
+def _normalize_for_match(s: str) -> str:
+    """Lowercase and strip non-alphanumeric characters for fuzzy comparison."""
+    return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
+
+
 def _find_imported_files(artist: str, track_name: str) -> list[str]:
-    """Find all FLAC/Opus files beets imported for this track (artist+title query)."""
-    ok, output = _beet("list", "-f", "$path", f"artist:{artist}", f"title:{track_name}")
-    if ok and output.strip():
-        return [p for p in output.strip().split("\n") if p.strip()]
-    return []
+    """Find all FLAC/Opus files beets imported for this artist.
 
-
-def _find_imported_file_by_path(staging_path: str) -> str:
-    """Find the imported file using staging file path as a hint.
-
-    Uses beet list with a path: query derived from the filename stem,
-    falling back to empty string if not found.
-    This avoids relying on artist/track strings which may be empty.
+    Searches by artist only to avoid title mismatch (e.g. user input "butterfly"
+    vs beets-stored "Butter-Fly"). Selects the best match by track_name similarity,
+    falling back to the last item (most recently added) if no similarity found.
     """
-    stem = Path(staging_path).stem
-    ok, output = _beet("list", "-f", "$path", f"path:{stem}")
+    ok, output = _beet("list", "-f", "$path", f"artist:{artist}")
+    if not ok or not output.strip():
+        return []
+
+    all_paths = [p for p in output.strip().split("\n") if p.strip()]
+    if not all_paths:
+        return []
+
+    if not track_name:
+        return [all_paths[-1]]
+
+    # Select path whose filename best matches track_name (case-insensitive, no special chars)
+    norm_track = _normalize_for_match(track_name)
+    best_path = None
+    for p in all_paths:
+        norm_filename = _normalize_for_match(Path(p).stem)
+        if norm_track in norm_filename or norm_filename in norm_track:
+            best_path = p
+            break
+
+    if best_path is None:
+        # No similarity match: use the last item (most recently added)
+        best_path = all_paths[-1]
+
+    return [best_path]
+
+
+def _find_imported_file_by_path(staging_path: str, artist: str = "") -> str:
+    """Find the most recently imported file for the given artist.
+
+    The staging filename is not preserved in the beets library path, so
+    path-stem lookup is unreliable. Instead, search by artist and return
+    the last result (most recently added).
+    Falls back to empty string if not found.
+    """
+    if not artist:
+        return ""
+    ok, output = _beet("list", "-f", "$path", f"artist:{artist}")
     if ok and output.strip():
         paths = [p for p in output.strip().split("\n") if p.strip()]
         if paths:
-            return paths[0]
+            return paths[-1]
     return ""
 
 
@@ -431,9 +464,9 @@ def _enrich_track(
     if artist and track_name:
         imported_paths = _find_imported_files(artist, track_name)
 
-    # Bug 3 fallback: if artist/track empty or lookup returned nothing, use path stem
+    # Fallback: if artist/track empty or lookup returned nothing, search by artist only
     if not imported_paths:
-        fallback = _find_imported_file_by_path(staging_path)
+        fallback = _find_imported_file_by_path(staging_path, artist=artist)
         if fallback:
             imported_paths = [fallback]
 

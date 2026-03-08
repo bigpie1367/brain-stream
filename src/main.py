@@ -7,7 +7,7 @@ import uvicorn
 import src.api as api_module
 from src.config import load_config
 from src.pipeline.downloader import download_track
-from src.pipeline.listenbrainz import fetch_recommendations
+from src.pipeline.listenbrainz import _lookup_recording, fetch_recommendations
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
 from src.pipeline.tagger import tag_and_import
 from src.state import get_retryable, init_db, is_downloaded, mark_done, mark_failed, mark_pending
@@ -47,8 +47,20 @@ def run_pipeline(cfg):
     imported_any = False
     for track in new_tracks:
         mbid = track["mbid"]
-        artist = track["artist"]
-        track_name = track["track_name"]
+        artist = track.get("artist", "")
+        track_name = track.get("track_name", "")
+
+        # Retry tracks from state.db may have empty artist/track_name if the original
+        # LB lookup failed. Re-lookup from MB if mbid is a real UUID (not "manual-").
+        if (not artist or not track_name) and not mbid.startswith("manual-"):
+            log.info("retry track missing artist/track, re-looking up from MB", mbid=mbid)
+            meta = _lookup_recording(mbid)
+            artist = meta.get("artist", "")
+            track_name = meta.get("track_name", "")
+            if not artist or not track_name:
+                log.warning("MB lookup still empty after retry, skipping track", mbid=mbid)
+                mark_failed(cfg.state_db, mbid, "MB lookup returned empty artist/track")
+                continue
 
         mark_pending(cfg.state_db, mbid, track_name, artist)
 
