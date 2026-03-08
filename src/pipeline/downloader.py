@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -79,16 +80,40 @@ def _opus_opts(output_template: str) -> dict:
     }
 
 
+_LIVE_KEYWORDS = re.compile(
+    r"\b(live|concert|tour|festival|acoustic\s+version|unplugged)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_live(title: str) -> bool:
+    """Return True if the title contains a live-performance keyword (word-boundary match)."""
+    return bool(_LIVE_KEYWORDS.search(title))
+
+
 def _select_best_entry(entries: list[dict], mb_duration: Optional[float]) -> dict:
     """Select the best YouTube entry based on proximity to MB duration.
 
-    If mb_duration is None, returns the first entry.
+    Live-performance entries (title contains live/concert/tour/festival/
+    acoustic version/unplugged at word boundaries) are penalised so that
+    studio recordings are preferred.  If every candidate is a live entry,
+    the least-bad live entry is returned rather than failing.
+
+    If mb_duration is None, non-live entries are preferred; among ties the
+    first entry in the list wins.
     """
     if not entries:
         raise ValueError("entries list is empty")
+
+    non_live = [e for e in entries if not _is_live(e.get("title") or "")]
+    live_only = not non_live
+
+    candidates = entries if live_only else non_live
+
     if mb_duration is None:
-        return entries[0]
-    best = min(entries, key=lambda e: abs((e.get("duration") or 0) - mb_duration))
+        return candidates[0]
+
+    best = min(candidates, key=lambda e: abs((e.get("duration") or 0) - mb_duration))
     return best
 
 

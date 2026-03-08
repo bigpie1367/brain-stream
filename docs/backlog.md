@@ -60,6 +60,7 @@
 | US-33 | retry 대상 트랙에 artist/track이 없으면 _lookup_recording()으로 재조회하고 여전히 비면 mark_failed한다 | 2026-03-09 |
 | US-34 | beet list 파일 경로 조회 시 title 조건 제거 후 Python측 `_normalize_for_match()` fuzzy 비교로 정확도 향상 | 2026-03-09 |
 | US-35 | 모든 DB(state.db, beets-library.db)를 named volume `db-data:/app/db`으로 통합 이동 | 2026-03-09 |
+| US-36 | ytsearch5 후보 중 live/concert/tour/festival/acoustic version/unplugged 키워드 포함 영상을 최하위 우선순위로 처리 (단어 경계 기준, 전체가 live이면 그 중 최선 선택) | 2026-03-09 |
 
 ### Epic 7: 커버아트 및 싱글/커버곡 태깅 개선 (2026-03-06)
 
