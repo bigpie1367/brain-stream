@@ -51,6 +51,16 @@
 | US-18 | 구조화 로그(structlog)로 파이프라인 각 단계를 추적할 수 있다 | 2026-03-03 |
 | US-19 | Docker Compose 단일 명령으로 전체 스택을 실행할 수 있다 | 2026-03-03 |
 
+### Epic 8: 파이프라인 안정성 개선 (2026-03-09)
+
+| ID | User Story | 완료일 |
+|----|-----------|--------|
+| US-31 | LB CF API가 `recording_mbid`만 반환하므로 MB API `_lookup_recording(mbid)`로 artist/track을 조회한다 | 2026-03-09 |
+| US-32 | yt-dlp에서 결제/비공개/멤버십/접근불가 영상 감지 시 다음 후보로 자동 retry한다 (ytsearch5: 5개 후보) | 2026-03-09 |
+| US-33 | retry 대상 트랙에 artist/track이 없으면 _lookup_recording()으로 재조회하고 여전히 비면 mark_failed한다 | 2026-03-09 |
+| US-34 | beet list 파일 경로 조회 시 title 조건 제거 후 Python측 `_normalize_for_match()` fuzzy 비교로 정확도 향상 | 2026-03-09 |
+| US-35 | 모든 DB(state.db, beets-library.db)를 named volume `db-data:/app/db`으로 통합 이동 | 2026-03-09 |
+
 ### Epic 7: 커버아트 및 싱글/커버곡 태깅 개선 (2026-03-06)
 
 | ID | User Story | 완료일 |

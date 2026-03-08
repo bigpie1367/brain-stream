@@ -226,7 +226,8 @@ def test_download_track_creates_staging_dir(tmp_path):
 # ── 검색 쿼리 형식 ────────────────────────────────────────────────────────────
 
 def test_download_track_uses_ytsearch1_query(tmp_path):
-    """yt-dlp에 전달되는 URL이 'ytsearch1:{artist} {track}' 형식인지 확인한다."""
+    """yt-dlp에 전달되는 URL이 'ytsearch5:{artist} {track}' 형식으로 메타데이터 fetch를 시작한다.
+    entries가 없을 때 최종 폴백으로 'ytsearch1:{artist} {track}'을 사용한다."""
     mbid = "query-test"
     (tmp_path / f"{mbid}.flac").touch()
 
@@ -256,4 +257,5 @@ def test_download_track_uses_ytsearch1_query(tmp_path):
         )
 
     assert len(captured_urls) >= 1
-    assert captured_urls[0] == "ytsearch1:Radiohead Creep"
+    # 첫 번째 호출은 메타데이터 fetch용 ytsearch5 쿼리여야 한다
+    assert captured_urls[0] == "ytsearch5:Radiohead Creep"

@@ -28,25 +28,27 @@ def _make_mock_response(json_data: dict, status_code: int = 200, content: bytes 
 def test_fetch_recommendations_parses_recordings(monkeypatch):
     """
     LB API의 정상 응답을 파싱해 mbid/track_name/artist 딕셔너리 리스트를 반환한다.
+    LB 응답에는 recording_mbid만 포함되며, _lookup_recording()으로 MB API에서
+    artist/track_name을 조회한다.
     """
     fake_response = _make_mock_response({
         "payload": {
             "mbids": [
-                {
-                    "recording_mbid": "aaaa-0001",
-                    "recording_name": "Creep",
-                    "artist_name": "Radiohead",
-                },
-                {
-                    "recording_mbid": "bbbb-0002",
-                    "recording_name": "Karma Police",
-                    "artist_name": "Radiohead",
-                },
+                {"recording_mbid": "aaaa-0001"},
+                {"recording_mbid": "bbbb-0002"},
             ]
         }
     })
 
-    with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response):
+    def fake_lookup(mbid):
+        if mbid == "aaaa-0001":
+            return {"artist": "Radiohead", "track_name": "Creep"}
+        if mbid == "bbbb-0002":
+            return {"artist": "Radiohead", "track_name": "Karma Police"}
+        return {"artist": "", "track_name": ""}
+
+    with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response), \
+         patch("src.pipeline.listenbrainz._lookup_recording", side_effect=fake_lookup):
         results = fetch_recommendations("testuser", "testtoken", count=25)
 
     assert len(results) == 2
@@ -62,21 +64,21 @@ def test_fetch_recommendations_skips_entries_without_mbid(monkeypatch):
     fake_response = _make_mock_response({
         "payload": {
             "mbids": [
-                {
-                    "recording_mbid": "aaaa-0001",
-                    "recording_name": "Valid Track",
-                    "artist_name": "Artist",
-                },
+                {"recording_mbid": "aaaa-0001"},
                 {
                     # mbid 없음
-                    "recording_name": "No MBID Track",
-                    "artist_name": "Artist",
                 },
             ]
         }
     })
 
-    with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response):
+    def fake_lookup(mbid):
+        if mbid == "aaaa-0001":
+            return {"artist": "Artist", "track_name": "Valid Track"}
+        return {"artist": "", "track_name": ""}
+
+    with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response), \
+         patch("src.pipeline.listenbrainz._lookup_recording", side_effect=fake_lookup):
         results = fetch_recommendations("testuser", "testtoken")
 
     assert len(results) == 1

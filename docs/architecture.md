@@ -75,8 +75,8 @@ External APIs:
 | `src/config.py` | 환경변수로 설정 로드 (config 파일 불필요) |
 | `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD |
 | `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회, `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계) |
-| `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출 |
-| `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `(file_path, yt_metadata)` 튜플 반환 |
+| `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출; `recording_mbid`만 반환하므로 `_lookup_recording(mbid)`로 MB API에서 artist/track 조회 |
+| `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `ytsearch5:` 5개 후보 검색 후 차단 영상 감지 시 다음 후보 retry; `(file_path, yt_metadata)` 튜플 반환 |
 | `src/pipeline/tagger.py` | mutagen 선-태깅 → beets import → MB enrichment → CAA 커버아트 임베딩 (최대 3 release 시도) → YouTube 썸네일/채널명 폴백 |
 | `src/pipeline/navidrome.py` | Subsonic API token-auth, startScan + getScanStatus 폴링 |
 | `src/utils/logger.py` | structlog 설정 (TTY: 컬러 콘솔, non-TTY: JSON) |
@@ -95,6 +95,9 @@ External APIs:
         ▼
 ListenBrainz CF API
   GET /1/cf/recommendation/user/{username}/recording
+  → recording_mbid 목록만 반환
+  → _lookup_recording(mbid): MB API GET /ws/2/recording/{mbid}?inc=artist-credits
+       artist/track이 비어있으면 skip
         │
         ▼
 state.db 중복 체크 (mbid 기준)
@@ -105,9 +108,12 @@ state.db 중복 체크 (mbid 기준)
 [트랙별 처리 루프]
         │
         ├─ mark_pending(state.db)
+        │   retry 트랙 empty artist/track → _lookup_recording() 재조회, 여전히 비면 mark_failed
         │
         ├─ yt-dlp YouTube 검색
-        │    "ytsearch1:{artist} {track}"
+        │    "ytsearch5:{artist} {track}" (5개 후보)
+        │    결제/비공개/멤버십/접근불가 감지 → 다음 후보 retry
+        │    5개 모두 소진 시 "ytsearch1:" 폴백
         │    FLAC 우선 → Opus fallback
         │    출력: staging/{mbid}.flac
         │    실패 → mark_failed
@@ -203,6 +209,8 @@ YouTube
 ```
 
 staging 파일은 import 성공/실패 후 삭제됨.
+
+beets-library.db는 named volume `db-data:/app/db`에 위치함 (`/app/db/beets-library.db`).
 
 ---
 
