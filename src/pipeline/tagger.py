@@ -28,16 +28,134 @@ def _sanitize_filename(name: str) -> str:
     return sanitized[:255]
 
 
-def _mb_search_recording(artist: str, track_name: str) -> str:
-    """Search MusicBrainz for a recording by artist and title.
+def _pick_best_recording(recordings: list, track_name: str = "") -> str:
+    """Official Album (no secondary types) release를 가진 recording 우선 선택.
+
+    track_name이 주어지면 recording title과의 유사도(>= 0.8)를 검증한다.
+    1순위: title 유사도 >= 0.8 + Official Album release 있는 recording
+    2순위: title 유사도 >= 0.8인 첫 번째 recording
+    3순위: 유사도 무관 첫 번째 recording (fallback)
+    """
+    norm_target = _normalize_for_match(track_name) if track_name else ""
+
+    # 1순위: Official Album release 있고 title 유사도 >= 0.8
+    for rec in recordings:
+        if norm_target:
+            ratio = difflib.SequenceMatcher(
+                None, norm_target, _normalize_for_match(rec.get("title", ""))
+            ).ratio()
+            if ratio < 0.8:
+                continue
+        for rel in rec.get("releases", []):
+            rg = rel.get("release-group", {})
+            if (
+                rel.get("status") == "Official"
+                and rg.get("primary-type") == "Album"
+                and not rg.get("secondary-types")
+            ):
+                return rec.get("id", "")
+
+    # 2순위: title 유사도 >= 0.8이면 첫 번째 recording
+    if norm_target:
+        for rec in recordings:
+            ratio = difflib.SequenceMatcher(
+                None, norm_target, _normalize_for_match(rec.get("title", ""))
+            ).ratio()
+            if ratio >= 0.8:
+                return rec.get("id", "")
+
+    # 3순위: track_name이 주어졌는데 유사도 0.8 이상인 recording이 없으면 빈 문자열 반환
+    if norm_target:
+        return ""
+    return recordings[0].get("id", "") if recordings else ""
+
+
+def _collect_recording_candidates(recordings: list, track_name: str = "") -> list[str]:
+    """recordings 목록에서 title 유사도 >= 0.8인 후보 ID들을 반환한다 (최대 3개).
+
+    _pick_best_recording의 1순위 ID를 앞에 두고, 나머지 유사도 >= 0.8 후보를 이어붙인다.
+    중복 제거 후 최대 3개 반환.
+    """
+    best = _pick_best_recording(recordings, track_name)
+    norm_target = _normalize_for_match(track_name) if track_name else ""
+
+    candidates: list[str] = []
+    if best:
+        candidates.append(best)
+
+    if norm_target:
+        for rec in recordings:
+            rid = rec.get("id", "")
+            if not rid or rid == best:
+                continue
+            ratio = difflib.SequenceMatcher(
+                None, norm_target, _normalize_for_match(rec.get("title", ""))
+            ).ratio()
+            if ratio >= 0.8:
+                candidates.append(rid)
+                if len(candidates) >= 3:
+                    break
+    elif not norm_target and not best:
+        # track_name도 없고 best도 없으면 첫 번째
+        for rec in recordings[:3]:
+            rid = rec.get("id", "")
+            if rid and rid not in candidates:
+                candidates.append(rid)
+
+    return candidates[:3]
+
+
+def _mb_search_recording(artist: str, track_name: str) -> list[str]:
+    """Search MusicBrainz for recordings by artist and title.
 
     Uses artistname: field (includes aliases) instead of artist: (canonical only).
-    Falls back to recording-only search if artistname+recording returns 0 results.
-    Returns the first matched recording ID (UUID), or empty string on failure.
+    First tries a strict query (Official Album, no Live/Compilation/Soundtrack/
+    Mixtape/DJ-mix/Remix secondary-types) to prefer studio recordings over live
+    versions. Falls back to the plain artistname+recording query if the strict
+    query returns no results. Falls back further to a recording-only search if
+    that also returns 0 results.
+    Returns a list of candidate recording IDs (up to 3, deduplicated), or empty list on failure.
     """
     try:
+        # Attempt 1: strict query — Official Album, exclude Live/Compilation/Soundtrack/Mixtape/DJ-mix/Remix
         time.sleep(1)  # rate limit
-        query = f"artistname:{artist} AND recording:{track_name}"
+        strict_query = (
+            f'artistname:"{artist}" AND recording:"{track_name}"'
+            " AND primarytype:Album AND status:Official"
+            " AND NOT secondarytype:Live"
+            " AND NOT secondarytype:Compilation"
+            " AND NOT secondarytype:Soundtrack"
+            " AND NOT secondarytype:Mixtape/Street"
+            " AND NOT secondarytype:DJ-mix"
+            " AND NOT secondarytype:Remix"
+        )
+        r = requests.get(
+            f"{_MB_API}/recording",
+            params={"query": strict_query, "fmt": "json", "limit": 5},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        recordings = r.json().get("recordings", [])
+        if recordings:
+            candidates = _collect_recording_candidates(recordings, track_name)
+            if candidates:
+                log.info(
+                    "MB strict search found recordings",
+                    artist=artist,
+                    track=track_name,
+                    recording_ids=candidates,
+                )
+                return candidates
+
+        # Attempt 2: plain query (no release-type filter)
+        log.info(
+            "MB strict search returned 0 results, falling back to plain artistname+recording query",
+            artist=artist,
+            track=track_name,
+        )
+        time.sleep(1)  # rate limit
+        query = f'artistname:"{artist}" AND recording:"{track_name}"'
         r = requests.get(
             f"{_MB_API}/recording",
             params={"query": query, "fmt": "json", "limit": 5},
@@ -47,15 +165,15 @@ def _mb_search_recording(artist: str, track_name: str) -> str:
         r.raise_for_status()
         recordings = r.json().get("recordings", [])
         if recordings:
-            recording_id = recordings[0].get("id", "")
-            if recording_id:
+            candidates = _collect_recording_candidates(recordings, track_name)
+            if candidates:
                 log.info(
-                    "MB search found recording",
+                    "MB plain search found recordings",
                     artist=artist,
                     track=track_name,
-                    recording_id=recording_id,
+                    recording_ids=candidates,
                 )
-            return recording_id
+                return candidates
 
         # Fallback: recording-only search (no artist filter) — pick best artist match
         log.info(
@@ -66,7 +184,12 @@ def _mb_search_recording(artist: str, track_name: str) -> str:
         time.sleep(1)  # rate limit
         r2 = requests.get(
             f"{_MB_API}/recording",
-            params={"query": f"recording:{track_name}", "fmt": "json", "limit": 5},
+            params={
+                "query": f'recording:"{track_name}"',
+                "fmt": "json",
+                "limit": 5,
+                "inc": "artist-credits+aliases",
+            },
             headers=_MB_HEADERS,
             timeout=10,
         )
@@ -80,12 +203,25 @@ def _mb_search_recording(artist: str, track_name: str) -> str:
                 credits = rec.get("artist-credit", [])
                 for credit in credits:
                     credit_artist = credit.get("artist", {}) if isinstance(credit, dict) else {}
-                    candidate_name = credit_artist.get("name", "") or credit_artist.get("sort-name", "")
-                    if not candidate_name:
+                    candidate_names = []
+                    if credit_artist.get("name"):
+                        candidate_names.append(credit_artist["name"])
+                    if credit_artist.get("sort-name"):
+                        candidate_names.append(credit_artist["sort-name"])
+                    for alias in credit_artist.get("aliases", []):
+                        if alias.get("name"):
+                            candidate_names.append(alias["name"])
+                    if not candidate_names:
                         continue
-                    ratio = difflib.SequenceMatcher(
-                        None, norm_artist, _normalize_for_match(candidate_name)
-                    ).ratio()
+                    ratio = max(
+                        (
+                            difflib.SequenceMatcher(
+                                None, norm_artist, _normalize_for_match(n)
+                            ).ratio()
+                            for n in candidate_names
+                        ),
+                        default=0.0,
+                    )
                     if ratio > best_ratio:
                         best_ratio = ratio
                         best_id = rec.get("id", "")
@@ -97,17 +233,17 @@ def _mb_search_recording(artist: str, track_name: str) -> str:
                     recording_id=best_id,
                     artist_similarity=round(best_ratio, 3),
                 )
-                return best_id
+                return [best_id]
             log.info(
                 "MB recording-only fallback: no result met artist similarity threshold (0.3)",
                 artist=artist,
                 track=track_name,
                 best_ratio=round(best_ratio, 3),
             )
-        return ""
+        return []
     except Exception as exc:
         log.warning("MB recording search failed", artist=artist, track=track_name, error=str(exc))
-        return ""
+        return []
 
 
 def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = ""):
@@ -219,6 +355,18 @@ def _read_tags(file_path: str) -> dict:
     return result
 
 
+_LIVE_TITLE_RE = re.compile(r"\d{4}-\d{2}-\d{2}[,:]")
+_LIVE_TITLE_KEYWORDS = ("live", "concert", "festival", "bootleg", "unplugged")
+
+
+def _is_live_title(title: str) -> bool:
+    """Return True if the release title looks like a live event (date-prefixed or keyword match)."""
+    if _LIVE_TITLE_RE.search(title):
+        return True
+    lower = title.lower()
+    return any(kw in lower for kw in _LIVE_TITLE_KEYWORDS)
+
+
 def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
     """Get (album_title, mb_albumid_candidates) from a MusicBrainz recording ID.
 
@@ -242,12 +390,22 @@ def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
             d = rel.get("date", "") or ""
             return d if d else "9999"
 
+        def _has_secondary_types(rel):
+            return bool(rel.get("release-group", {}).get("secondary-types", []))
+
         # Collect Official Album releases for CAA fallback
+        # Exclude releases with secondary-types (e.g. Live, Compilation, Soundtrack)
+        # Also exclude releases whose title looks like a live event
         official_album_releases = []
         for rel in releases:
             status = rel.get("status", "")
             rtype = rel.get("release-group", {}).get("primary-type", "")
-            if status == "Official" and rtype == "Album":
+            if (
+                status == "Official"
+                and rtype == "Album"
+                and not _has_secondary_types(rel)
+                and not _is_live_title(rel.get("title", ""))
+            ):
                 mbid = rel.get("id", "")
                 if mbid:
                     official_album_releases.append(rel)
@@ -266,17 +424,56 @@ def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
                 )
             return album, candidates
 
-        # Fallback: use releases sorted by date, pick earliest
+        # Fallback: prefer Official releases without secondary-types, then title-filter,
+        # then any release — pick earliest by date.
         releases_with_id = [rel for rel in releases if rel.get("id")]
         if not releases_with_id:
             return "", []
         releases_with_id.sort(key=_release_date_key)
+
+        # Prefer: Official, no secondary-types, non-live title
+        for candidate in releases_with_id:
+            if (
+                candidate.get("status") == "Official"
+                and not _has_secondary_types(candidate)
+                and not _is_live_title(candidate.get("title", ""))
+            ):
+                album = candidate.get("title", "")
+                mbid = candidate.get("id", "")
+                candidates = [mbid] if mbid else []
+                if album:
+                    log.info(
+                        "resolved album (fallback: official non-live) from MB recording",
+                        recording_id=recording_id,
+                        album=album,
+                        mb_albumid_candidates=candidates,
+                    )
+                return album, candidates
+
+        # Prefer: no secondary-types, non-live title (any status)
+        for candidate in releases_with_id:
+            if not _has_secondary_types(candidate) and not _is_live_title(
+                candidate.get("title", "")
+            ):
+                album = candidate.get("title", "")
+                mbid = candidate.get("id", "")
+                candidates = [mbid] if mbid else []
+                if album:
+                    log.info(
+                        "resolved album (fallback: non-live any status) from MB recording",
+                        recording_id=recording_id,
+                        album=album,
+                        mb_albumid_candidates=candidates,
+                    )
+                return album, candidates
+
+        # Last resort: pick earliest release regardless of type
         album = releases_with_id[0].get("title", "")
         mbid = releases_with_id[0].get("id", "")
         candidates = [mbid] if mbid else []
         if album:
             log.info(
-                "resolved album (fallback) from MB recording",
+                "resolved album (fallback: any release) from MB recording",
                 recording_id=recording_id,
                 album=album,
                 mb_albumid_candidates=candidates,
@@ -333,7 +530,13 @@ def _itunes_search(artist: str, track_name: str) -> dict:
         if artwork_url:
             # Upgrade to 600x600 for better quality
             artwork_url = artwork_url.replace("100x100bb", "600x600bb")
-        log.info("iTunes search result", artist=artist, track=track_name, album=album, artwork_url=artwork_url)
+        log.info(
+            "iTunes search result",
+            artist=artist,
+            track=track_name,
+            album=album,
+            artwork_url=artwork_url,
+        )
         return {"album": album, "artwork_url": artwork_url}
     except Exception as exc:
         log.warning("iTunes search failed", artist=artist, track=track_name, error=str(exc))
@@ -378,7 +581,13 @@ def _deezer_search(artist: str, track_name: str) -> dict:
         album_obj = item.get("album", {})
         album = album_obj.get("title", "")
         artwork_url = album_obj.get("cover_xl", "")
-        log.info("Deezer search result", artist=artist, track=track_name, album=album, artwork_url=artwork_url)
+        log.info(
+            "Deezer search result",
+            artist=artist,
+            track=track_name,
+            album=album,
+            artwork_url=artwork_url,
+        )
         return {"album": album, "artwork_url": artwork_url}
     except Exception as exc:
         log.warning("Deezer search failed", artist=artist, track=track_name, error=str(exc))
@@ -466,6 +675,7 @@ def _embed_art_from_url(file_path: str, url: str):
             f.save()
         elif suffix in (".opus", ".ogg"):
             import base64
+
             f = mutagen.oggopus.OggOpus(file_path)
             pic = mutagen.flac.Picture()
             pic.type = 3
@@ -494,8 +704,13 @@ def _enrich_track(
     artist: str = "",
     track_name: str = "",
     yt_metadata: dict | None = None,
+    recording_ids: list[str] | None = None,
 ):
-    """Resolve album from MB and fetch cover art. Writes tags directly via mutagen."""
+    """Resolve album via iTunes/Deezer, then fetch cover art from CAA/iTunes/Deezer.
+
+    Album resolution priority: iTunes → Deezer → MB recording → YouTube channel.
+    Cover art priority: CAA → iTunes → Deezer → YouTube thumbnail.
+    """
     tags = _read_tags(dest_path)
     mb_trackid = tags.get("mb_trackid", "")
     has_album = bool(tags.get("album", ""))
@@ -505,89 +720,107 @@ def _enrich_track(
         log.info("track already enriched, skipping", artist=artist, track=track_name)
         return
 
-    # If mb_trackid not yet in file, search MB directly
-    if not mb_trackid and artist and track_name:
-        log.info(
-            "mb_trackid missing, searching MB by artist+title",
-            artist=artist,
-            track=track_name,
-        )
-        mb_trackid = _mb_search_recording(artist, track_name)
-        if mb_trackid:
-            _write_tags(dest_path, artist, track_name, mb_trackid)
-
+    # ── 1. Album resolution: iTunes → Deezer first ──────────────────────
     album = ""
-    mb_albumid_candidates: list[str] = []
-    if mb_trackid:
-        album, mb_albumid_candidates = _mb_album_from_recording_id(mb_trackid)
-
-    if album and not has_album:
-        log.info("setting album tag", artist=artist, track=track_name, album=album)
-        _write_album_tag(dest_path, album)
-
-    # CAA: try multiple release candidates in order
-    art_embedded = False
-    successful_candidate = None
-    if not has_art and mb_albumid_candidates:
-        for candidate_id in mb_albumid_candidates:
-            if _embed_cover_art(dest_path, candidate_id):
-                art_embedded = True
-                successful_candidate = candidate_id
-                break
-
-        if art_embedded:
-            # Re-read to confirm
-            has_art = _read_tags(dest_path).get("has_art", True)
-
-    # iTunes/Deezer result cache (avoid duplicate API calls)
     itunes_result: dict = {}
     deezer_result: dict = {}
 
-    # Album fallback: MB failed → iTunes → Deezer → YouTube channel
-    if not album and not has_album and artist and track_name:
+    if not has_album and artist and track_name:
+        # iTunes (most reliable for album names)
         itunes_result = _itunes_search(artist, track_name)
         album = itunes_result.get("album", "")
         if album:
             log.info("album resolved via iTunes", artist=artist, track=track_name, album=album)
 
+        # Deezer fallback
         if not album:
             deezer_result = _deezer_search(artist, track_name)
             album = deezer_result.get("album", "")
             if album:
                 log.info("album resolved via Deezer", artist=artist, track=track_name, album=album)
 
-        if not album and yt_metadata:
-            album = yt_metadata.get("channel", "")
-            if album:
+    # ── 2. Build MB recording IDs for cover art (CAA) ────────────────────
+    rids_to_try: list[str] = []
+    if recording_ids:
+        rids_to_try = list(recording_ids)
+    elif mb_trackid:
+        rids_to_try = [mb_trackid]
+
+    if not rids_to_try and artist and track_name:
+        log.info(
+            "mb_trackid missing, searching MB by artist+title",
+            artist=artist,
+            track=track_name,
+        )
+        rids_to_try = _mb_search_recording(artist, track_name)
+        if rids_to_try:
+            _write_tags(dest_path, artist, track_name, rids_to_try[0])
+    elif mb_trackid and recording_ids and mb_trackid not in rids_to_try:
+        rids_to_try = [mb_trackid] + rids_to_try
+
+    # ── 3. MB recording → album fallback (only if iTunes/Deezer failed) ──
+    mb_albumid_candidates: list[str] = []
+    if not album and not has_album:
+        for rid in rids_to_try:
+            mb_album, mb_albumid_candidates = _mb_album_from_recording_id(rid)
+            if mb_album and not _is_live_title(mb_album):
+                album = mb_album
+                if rid != mb_trackid:
+                    _write_tags(dest_path, artist, track_name, rid)
+                break
+            if mb_album:
                 log.info(
-                    "MB album not found, falling back to YouTube channel as album",
-                    artist=artist,
-                    track=track_name,
-                    channel=album,
+                    "MB recording yielded live/bad album, trying next candidate",
+                    recording_id=rid,
+                    album=mb_album,
                 )
+    # Note: when iTunes/Deezer resolved album, skip CAA — MB recordings
+    # are often from compilations/DJ-mixes and would fetch wrong cover art.
+    # iTunes/Deezer artwork is used instead (section 4 below).
 
+    # YouTube channel — last resort for album name
+    if not album and not has_album and yt_metadata:
+        album = yt_metadata.get("channel", "")
         if album:
-            _write_album_tag(dest_path, album)
+            log.info(
+                "falling back to YouTube channel as album",
+                artist=artist,
+                track=track_name,
+                channel=album,
+            )
 
-    # Cover art fallback: CAA failed → iTunes → Deezer → YouTube thumbnail
+    if album and not has_album:
+        log.info("setting album tag", artist=artist, track=track_name, album=album)
+        _write_album_tag(dest_path, album)
+
+    # ── 4. Cover art: CAA → iTunes → Deezer → YouTube thumbnail ─────────
+    art_embedded = False
+    if not has_art and mb_albumid_candidates:
+        for candidate_id in mb_albumid_candidates:
+            if _embed_cover_art(dest_path, candidate_id):
+                art_embedded = True
+                break
+        if art_embedded:
+            has_art = _read_tags(dest_path).get("has_art", True)
+
     if not has_art:
-        # iTunes fallback
+        # iTunes art
         if not art_embedded:
             if not itunes_result and artist and track_name:
                 itunes_result = _itunes_search(artist, track_name)
             itunes_art = itunes_result.get("artwork_url", "")
             if itunes_art:
-                log.info("embedding cover art from iTunes", artist=artist, track=track_name, url=itunes_art)
+                log.info("embedding cover art from iTunes", artist=artist, track=track_name)
                 _embed_art_from_url(dest_path, itunes_art)
                 art_embedded = True
 
-        # Deezer fallback
+        # Deezer art
         if not art_embedded:
             if not deezer_result and artist and track_name:
                 deezer_result = _deezer_search(artist, track_name)
             deezer_art = deezer_result.get("artwork_url", "")
             if deezer_art:
-                log.info("embedding cover art from Deezer", artist=artist, track=track_name, url=deezer_art)
+                log.info("embedding cover art from Deezer", artist=artist, track=track_name)
                 _embed_art_from_url(dest_path, deezer_art)
                 art_embedded = True
 
@@ -599,7 +832,6 @@ def _enrich_track(
                     "no cover art from CAA/iTunes/Deezer, falling back to YouTube thumbnail",
                     artist=artist,
                     track=track_name,
-                    thumbnail_url=thumbnail_url,
                 )
                 _embed_art_from_url(dest_path, thumbnail_url)
 
@@ -620,22 +852,22 @@ def tag_and_import(
         log.error("staging file not found", file=staging_file)
         return False, ""
 
-    # Search MB for recording ID
-    recording_id = ""
+    # Search MB for recording IDs (best-effort; failure does not abort import)
+    recording_ids: list[str] = []
     if artist and track_name:
-        recording_id = _mb_search_recording(artist, track_name)
-        if not recording_id:
-            log.error(
-                "MB recording not found, aborting import",
+        recording_ids = _mb_search_recording(artist, track_name)
+        if not recording_ids:
+            log.warning(
+                "MB recording not found, continuing with iTunes/Deezer",
                 artist=artist,
                 track=track_name,
             )
-            _cleanup_staging(path)
-            return False, ""
 
     # Build destination path: music_dir/{artist}/{Unknown Album}/{track}.ext
     sanitized_artist = _sanitize_filename(artist) if artist else "Unknown Artist"
-    sanitized_track = _sanitize_filename(track_name) if track_name else _sanitize_filename(path.stem)
+    sanitized_track = (
+        _sanitize_filename(track_name) if track_name else _sanitize_filename(path.stem)
+    )
     dest_dir = Path(music_dir) / sanitized_artist / "Unknown Album"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / (sanitized_track + path.suffix)
@@ -644,7 +876,13 @@ def tag_and_import(
     if dest_path.exists():
         log.info("file already exists in music_dir, treating as duplicate", dest=str(dest_path))
         _cleanup_staging(path)
-        _enrich_track(str(dest_path), artist=artist, track_name=track_name, yt_metadata=yt_metadata)
+        _enrich_track(
+            str(dest_path),
+            artist=artist,
+            track_name=track_name,
+            yt_metadata=yt_metadata,
+            recording_ids=recording_ids if recording_ids else None,
+        )
         return True, str(dest_path)
 
     # Copy staging file to destination
@@ -652,14 +890,25 @@ def tag_and_import(
         shutil.copy2(str(path), str(dest_path))
         log.info("copied file to music_dir", src=staging_file, dest=str(dest_path))
     except OSError as exc:
-        log.error("failed to copy file to music_dir", src=staging_file, dest=str(dest_path), error=str(exc))
+        log.error(
+            "failed to copy file to music_dir",
+            src=staging_file,
+            dest=str(dest_path),
+            error=str(exc),
+        )
         return False, ""
 
-    # Write initial tags (artist, title, mb_trackid)
-    _write_tags(str(dest_path), artist, track_name, recording_id)
+    # Write initial tags with first candidate recording ID
+    _write_tags(str(dest_path), artist, track_name, recording_ids[0] if recording_ids else "")
 
-    # Enrich: album from MB + cover art
-    _enrich_track(str(dest_path), artist=artist, track_name=track_name, yt_metadata=yt_metadata)
+    # Enrich: album from iTunes/Deezer + cover art (pass MB candidates for CAA)
+    _enrich_track(
+        str(dest_path),
+        artist=artist,
+        track_name=track_name,
+        yt_metadata=yt_metadata,
+        recording_ids=recording_ids if recording_ids else None,
+    )
 
     _cleanup_staging(path)
     return True, str(dest_path)

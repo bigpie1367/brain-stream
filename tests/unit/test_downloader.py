@@ -4,16 +4,15 @@ downloader.py의 download_track 함수 단위 테스트 (yt-dlp mock)
 
 yt-dlp는 Docker 컨테이너 안에서만 설치되므로, conftest.py에서 stub을 삽입한다.
 """
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+
+from unittest.mock import patch
 
 import pytest
 import yt_dlp
-
-from src.pipeline.downloader import download_track, _is_live, _select_best_entry
-
+from src.pipeline.downloader import _is_cover, _is_live, _select_best_entry, download_track
 
 # ── 성공 케이스 ───────────────────────────────────────────────────────────────
+
 
 def test_download_track_returns_flac_path(tmp_path):
     """
@@ -133,6 +132,7 @@ def test_download_track_flac_fallback_to_opus(tmp_path):
 
 # ── 실패 케이스 ───────────────────────────────────────────────────────────────
 
+
 def test_download_track_returns_none_when_all_fail(tmp_path):
     """모든 다운로드 시도가 실패하면 (None, None)을 반환한다."""
 
@@ -194,6 +194,7 @@ def test_download_track_returns_none_when_no_file_created(tmp_path):
 
 # ── staging_dir 생성 ──────────────────────────────────────────────────────────
 
+
 def test_download_track_creates_staging_dir(tmp_path):
     """staging_dir이 없으면 자동 생성해야 한다."""
     staging = tmp_path / "nonexistent_staging"
@@ -224,6 +225,7 @@ def test_download_track_creates_staging_dir(tmp_path):
 
 
 # ── 검색 쿼리 형식 ────────────────────────────────────────────────────────────
+
 
 def test_download_track_uses_ytsearch1_query(tmp_path):
     """yt-dlp에 전달되는 URL이 'ytsearch5:{artist} {track}' 형식으로 메타데이터 fetch를 시작한다.
@@ -258,37 +260,42 @@ def test_download_track_uses_ytsearch1_query(tmp_path):
 
     assert len(captured_urls) >= 1
     # 첫 번째 호출은 메타데이터 fetch용 ytsearch5 쿼리여야 한다
-    assert captured_urls[0] == "ytsearch5:Radiohead Creep"
+    assert captured_urls[0] == "ytsearch5:Radiohead Creep official audio"
 
 
 # ── _is_live 단위 테스트 ───────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("title,expected", [
-    # 감지되어야 하는 케이스
-    ("Radiohead - Creep (Live in Japan)", True),
-    ("Radiohead - Creep [Live]", True),
-    ("Radiohead - Creep LIVE at Glastonbury", True),
-    ("Coldplay - Yellow (Concert)", True),
-    ("BTS World Tour 2022", True),
-    ("Lollapalooza Festival Set", True),
-    ("Nirvana Unplugged", True),
-    ("Taylor Swift - Acoustic Version", True),
-    # 단어 경계 — 일부인 경우 감지되지 않아야 하는 케이스
-    ("Alive by Pearl Jam", False),
-    ("Liveliness of Music", False),
-    ("Oliver - Tourniquet", False),  # 'tour'는 포함되지 않음 (단어 경계)
-    ("Radiohead - Creep (Official Audio)", False),
-    ("Radiohead - Creep (Music Video)", False),
-    ("", False),
-])
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        # 감지되어야 하는 케이스
+        ("Radiohead - Creep (Live in Japan)", True),
+        ("Radiohead - Creep [Live]", True),
+        ("Radiohead - Creep LIVE at Glastonbury", True),
+        ("Coldplay - Yellow (Concert)", True),
+        ("BTS World Tour 2022", True),
+        ("Lollapalooza Festival Set", True),
+        ("Nirvana Unplugged", True),
+        ("Taylor Swift - Acoustic Version", True),
+        # 단어 경계 — 일부인 경우 감지되지 않아야 하는 케이스
+        ("Alive by Pearl Jam", False),
+        ("Liveliness of Music", False),
+        ("Oliver - Tourniquet", False),  # 'tour'는 포함되지 않음 (단어 경계)
+        ("Radiohead - Creep (Official Audio)", False),
+        ("Radiohead - Creep (Music Video)", False),
+        ("", False),
+    ],
+)
 def test_is_live(title, expected):
     assert _is_live(title) is expected
 
 
 # ── _select_best_entry 단위 테스트 ────────────────────────────────────────────
 
-def _entry(title: str, duration: float) -> dict:
-    return {"title": title, "duration": duration}
+
+def _entry(title: str, duration: float, channel: str = "") -> dict:
+    return {"title": title, "duration": duration, "channel": channel}
 
 
 def test_select_best_entry_prefers_studio_over_live_with_duration():
@@ -296,11 +303,55 @@ def test_select_best_entry_prefers_studio_over_live_with_duration():
     entries = [
         _entry("Radiohead - Creep (Live in Japan)", 230.0),  # 매우 가깝지만 live
         _entry("Radiohead - Creep (Official Audio)", 238.0),  # studio
-        _entry("Radiohead - Creep (Fan Cover)", 240.0),  # studio
     ]
     mb_duration = 232.0
     result = _select_best_entry(entries, mb_duration)
     assert result["title"] == "Radiohead - Creep (Official Audio)"
+
+
+def test_select_best_entry_penalizes_cover():
+    """cover 영상은 패널티를 받아서 원곡이 선택된다."""
+    entries = [
+        _entry("Radiohead - Creep (Fan Cover)", 232.0),  # 정확한 duration이지만 cover
+        _entry("Radiohead - Creep (Official Audio)", 238.0),  # studio
+    ]
+    mb_duration = 232.0
+    result = _select_best_entry(entries, mb_duration)
+    assert result["title"] == "Radiohead - Creep (Official Audio)"
+
+
+def test_select_best_entry_allows_cover_when_user_wants_it():
+    """track_name에 cover 키워드가 있으면 커버 패널티를 적용하지 않는다."""
+    entries = [
+        _entry("Radiohead - Creep (Fan Cover)", 232.0),
+        _entry("Radiohead - Creep (Official Audio)", 238.0),
+    ]
+    mb_duration = 232.0
+    # track_name에 "cover"가 있으므로 Fan Cover가 duration 기준으로 선택됨
+    result = _select_best_entry(entries, mb_duration, track_name="Creep cover")
+    assert result["title"] == "Radiohead - Creep (Fan Cover)"
+
+
+def test_select_best_entry_prefers_official_channel():
+    """공식 채널의 영상이 우선 선택된다."""
+    entries = [
+        _entry("Radiohead - Creep", 238.0, channel="RandomUploader"),
+        _entry("Radiohead - Creep", 240.0, channel="Radiohead"),
+    ]
+    mb_duration = 232.0
+    result = _select_best_entry(entries, mb_duration, artist="Radiohead")
+    assert result["channel"] == "Radiohead"
+
+
+def test_select_best_entry_prefers_vevo_channel():
+    """VEVO 채널의 영상이 우선 선택된다."""
+    entries = [
+        _entry("Eminem - Without Me", 238.0, channel="RandomUser"),
+        _entry("Eminem - Without Me", 240.0, channel="EminemVEVO"),
+    ]
+    mb_duration = 232.0
+    result = _select_best_entry(entries, mb_duration, artist="Eminem")
+    assert result["channel"] == "EminemVEVO"
 
 
 def test_select_best_entry_falls_back_to_live_when_all_live():
@@ -337,7 +388,7 @@ def test_select_best_entry_no_mb_duration_all_live_returns_first():
 
 
 def test_select_best_entry_single_live_entry_is_returned():
-    """후보가 live 영상 하나뿐이면 그것을 선택한다 (아예 제외하지 않음)."""
+    """후보가 live 영상 하나뿐이면 그것을 선택한다."""
     entries = [_entry("Coldplay - Yellow Live at Glastonbury", 250.0)]
     result = _select_best_entry(entries, mb_duration=245.0)
     assert result["title"] == "Coldplay - Yellow Live at Glastonbury"
@@ -352,9 +403,29 @@ def test_select_best_entry_raises_on_empty():
 def test_select_best_entry_duration_none_treated_as_zero():
     """entry의 duration이 None이면 0으로 처리한다."""
     entries = [
-        _entry("Radiohead - Creep (Live)", None),   # live, duration=None → 거리 200
-        _entry("Radiohead - Creep (Official)", None),  # studio, duration=None → 거리 200
+        _entry("Radiohead - Creep (Live)", None),
+        _entry("Radiohead - Creep (Official)", None),
     ]
-    # studio 후보가 있으므로 studio를 반환해야 한다
     result = _select_best_entry(entries, mb_duration=200.0)
     assert result["title"] == "Radiohead - Creep (Official)"
+
+
+# ── _is_cover 단위 테스트 ──────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        ("Eminem - Without Me (Cover)", True),
+        ("Without Me - Piano Version", True),
+        ("Eminem Without Me Karaoke", True),
+        ("Without Me (Remix)", True),
+        ("Without Me Instrumental", True),
+        ("Without Me 8-bit", True),
+        ("Eminem - Without Me (Official Audio)", False),
+        ("Eminem - Without Me", False),
+        ("", False),
+    ],
+)
+def test_is_cover(title, expected):
+    assert _is_cover(title) is expected

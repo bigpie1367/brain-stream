@@ -1,3 +1,4 @@
+import difflib
 import os
 import re
 import time
@@ -85,36 +86,80 @@ _LIVE_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+_COVER_KEYWORDS = re.compile(
+    r"\b(cover|remix|karaoke|instrumental|rendition|tribute|parody"
+    r"|8[- ]?bit|piano\s+version|violin\s+version)\b",
+    re.IGNORECASE,
+)
+
 
 def _is_live(title: str) -> bool:
-    """Return True if the title contains a live-performance keyword (word-boundary match)."""
+    """Return True if the title contains a live-performance keyword."""
     return bool(_LIVE_KEYWORDS.search(title))
 
 
-def _select_best_entry(entries: list[dict], mb_duration: Optional[float]) -> dict:
-    """Select the best YouTube entry based on proximity to MB duration.
+def _is_cover(title: str) -> bool:
+    """Return True if the title suggests a cover/remix/karaoke version."""
+    return bool(_COVER_KEYWORDS.search(title))
 
-    Live-performance entries (title contains live/concert/tour/festival/
-    acoustic version/unplugged at word boundaries) are penalised so that
-    studio recordings are preferred.  If every candidate is a live entry,
-    the least-bad live entry is returned rather than failing.
 
-    If mb_duration is None, non-live entries are preferred; among ties the
-    first entry in the list wins.
+def _normalize(s: str) -> str:
+    return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
+
+
+def _channel_score(entry: dict, artist: str) -> float:
+    """Return a bonus score (negative = better) for official channels."""
+    channel = (entry.get("channel") or entry.get("uploader") or "").lower()
+    norm_artist = _normalize(artist)
+
+    # Artist's official channel or VEVO
+    if (
+        norm_artist
+        and difflib.SequenceMatcher(None, norm_artist, _normalize(channel)).ratio() >= 0.8
+    ):
+        return -200
+    if "vevo" in channel:
+        return -150
+    # YouTube "Topic" auto-generated channels (e.g. "Eminem - Topic")
+    if "topic" in channel:
+        return -100
+    return 0
+
+
+def _select_best_entry(
+    entries: list[dict],
+    mb_duration: Optional[float],
+    artist: str = "",
+    track_name: str = "",
+) -> dict:
+    """Select the best YouTube entry using a scoring system.
+
+    Scoring factors (lower = better):
+    - Cover/remix/karaoke title: +1000 penalty (skipped if user explicitly
+      searched for a cover/remix in track_name)
+    - Live performance title: +500 penalty
+    - Official channel (artist/VEVO/Topic): -200 to -100 bonus
+    - Duration proximity to MB: abs difference in seconds
     """
     if not entries:
         raise ValueError("entries list is empty")
 
-    non_live = [e for e in entries if not _is_live(e.get("title") or "")]
-    live_only = not non_live
+    # If user explicitly wants a cover/remix, don't penalize those
+    user_wants_cover = _is_cover(track_name)
 
-    candidates = entries if live_only else non_live
+    def score(e: dict) -> float:
+        s = 0.0
+        title = e.get("title") or ""
+        if not user_wants_cover and _is_cover(title):
+            s += 1000
+        if _is_live(title):
+            s += 500
+        s += _channel_score(e, artist)
+        if mb_duration is not None:
+            s += abs((e.get("duration") or 0) - mb_duration)
+        return s
 
-    if mb_duration is None:
-        return candidates[0]
-
-    best = min(candidates, key=lambda e: abs((e.get("duration") or 0) - mb_duration))
-    return best
+    return min(entries, key=score)
 
 
 def download_track(
@@ -132,7 +177,7 @@ def download_track(
     mb_duration = _mb_recording_duration(artist, track_name)
 
     # Step 1: fetch metadata for top 5 results without downloading to pick the best entry
-    search_query = f"ytsearch5:{artist} {track_name}"
+    search_query = f"ytsearch5:{artist} {track_name} official audio"
     entries: list[dict] = []
     try:
         meta_opts = {
@@ -147,7 +192,7 @@ def download_track(
                 raw_entries = info.get("entries") or [info]
                 entries = [e for e in raw_entries if e]
                 if entries:
-                    selected_entry = _select_best_entry(entries, mb_duration)
+                    selected_entry = _select_best_entry(entries, mb_duration, artist, track_name)
                     yt_dur = selected_entry.get("duration")
                     log.info(
                         "selected YouTube result",
@@ -183,13 +228,18 @@ def download_track(
     download_target: Optional[str] = None
     attempted_urls: list[str] = []
 
-    opts_list = [_flac_opts(output_template), _opus_opts(output_template)] if prefer_flac \
+    opts_list = (
+        [_flac_opts(output_template), _opus_opts(output_template)]
+        if prefer_flac
         else [_opus_opts(output_template)]
+    )
 
     while True:
         # Pick next candidate from remaining entries
         if remaining_entries:
-            candidate_entry = _select_best_entry(remaining_entries, mb_duration)
+            candidate_entry = _select_best_entry(
+                remaining_entries, mb_duration, artist, track_name
+            )
             url = _entry_url(candidate_entry)
             if not url or url in attempted_urls:
                 remaining_entries = [e for e in remaining_entries if e is not candidate_entry]
@@ -197,7 +247,7 @@ def download_track(
             download_target = url
         else:
             # All entries exhausted (or no entries from the start) — final fallback
-            download_target = f"ytsearch1:{artist} {track_name}"
+            download_target = f"ytsearch1:{artist} {track_name} official audio"
 
         attempted_urls.append(download_target)
 
@@ -236,14 +286,17 @@ def download_track(
         if blocked:
             # Remove the blocked entry and retry with next candidate
             remaining_entries = [e for e in remaining_entries if _entry_url(e) != download_target]
-            if not remaining_entries and download_target == f"ytsearch1:{artist} {track_name}":
+            if (
+                not remaining_entries
+                and download_target == f"ytsearch1:{artist} {track_name} official audio"
+            ):
                 # ytsearch1 fallback also blocked — give up
                 break
             continue
 
         # If we reach here without returning, all format opts failed for this target
         # and it was not a blocked error — break out to avoid infinite loop
-        if download_target == f"ytsearch1:{artist} {track_name}":
+        if download_target == f"ytsearch1:{artist} {track_name} official audio":
             break
         remaining_entries = [e for e in remaining_entries if _entry_url(e) != download_target]
         if not remaining_entries:

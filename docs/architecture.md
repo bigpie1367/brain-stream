@@ -30,7 +30,7 @@
 │  │  │   SSE          │  │   LB Fetcher             │   │   │
 │  │  │   /rest/* ─────┼──┼──▶ Subsonic Proxy        │   │   │
 │  │  │   proxy        │  │   Downloader (yt-dlp)    │   │   │
-│  │  └───────┬────────┘  │   Tagger (beets/mutagen) │   │   │
+│  │  └───────┬────────┘  │   Tagger (mutagen)        │   │   │
 │  │          │           │   Navidrome (scan)        │   │   │
 │  │          └───────────┤                          │   │   │
 │  │                      └──────────┬───────────────┘   │   │
@@ -58,6 +58,8 @@ External APIs:
   YouTube       → yt-dlp
   MusicBrainz   → musicbrainz.org/ws/2
   Cover Art     → coverartarchive.org
+  iTunes        → itunes.apple.com/search (앨범명/커버아트)
+  Deezer        → api.deezer.com/search/track (앨범명/커버아트 폴백)
 
 접근 경로 요약:
   외부 (인터넷)  → stream.example.com (nginx → brainstream:8080)
@@ -117,32 +119,41 @@ state.db 중복 체크 (mbid 기준)
         │    출력: staging/{mbid}.flac
         │    실패 → mark_failed
         │
-        ├─ _mb_search_recording(artist, track_name)
-        │    primary:  artistname:{artist} AND recording:{track_name}
-        │    fallback: recording:{track_name} + artist-credit 유사도 검증 (0.3 미만 → mark_failed)
+        ├─ _mb_search_recording(artist, track_name)  ← 다운로드 전에 실행
+        │    stage 1 (strict):  artistname:{a} AND recording:{t}
+        │                       + primarytype:Album + status:Official
+        │                       + NOT secondarytype:Live/Compilation/Soundtrack/...
+        │    stage 2 (plain):   artistname:{a} AND recording:{t}  (release-type 필터 없음)
+        │    stage 3 (fallback): recording:{t} 만 검색,
+        │                        artist-credit + aliases 유사도 0.3 이상인 것 선택
         │    recording_id 없으면 → mark_failed
         │
-        ├─ shutil.copy2: staging → data/music/{Artist}/{Album}/{Track}.flac
+        ├─ shutil.copy2: staging → data/music/{Artist}/Unknown Album/{Track}.ext
         │    파일명 sanitize (특수문자 제거)
         │    state.db: file_path 저장
         │    mark_done
         │
-        ├─ mutagen: artist / title / mb_trackid 태그 쓰기
+        ├─ mutagen: artist / title / mb_trackid 초기 태그 쓰기
         │
         ├─ yt_metadata 수집 (download_track 반환)
         │    thumbnail_url, channel (YouTube 채널명)
         │
         ├─ _enrich_track()
-        │    file_path = state.db에서 mbid로 직접 조회
-        │    mb_trackid = mutagen으로 읽기
         │    이미 album+art 있음 → 조기 리턴
-        │    MB API /recording/{id}?inc=releases+release-groups
-        │    → release-date 오름차순 정렬, Official Album 중 최초 release 선택
-        │    → mutagen으로 album 태그 쓰기 (mb_albumid는 기록 안 함)
-        │    → coverartarchive.org 최대 3개 release 순차 시도 + mutagen 임베딩
-        │    → CAA 실패 → iTunes (artist 유사도 검증) → Deezer (artist 유사도 검증) → YouTube 폴백:
-        │         album = yt_metadata.channel (채널명)
-        │         art   = yt_metadata.thumbnail_url 다운로드 + 임베딩
+        │
+        │    [앨범명 결정 순서]
+        │    1. iTunes Search API (artist 유사도 0.4 이상) → album 태그 쓰기
+        │    2. Deezer API (artist 유사도 0.4 이상) → album 태그 쓰기
+        │    3. MB API /recording/{id}?inc=releases+release-groups
+        │       → Official Album 중 최초 release 선택 → album 태그 쓰기
+        │       → mb_albumid는 기록 안 함 (Navidrome 앨범 분리 방지)
+        │    4. YouTube channel → album 태그 쓰기 (최후 수단)
+        │
+        │    [커버아트 결정 순서]
+        │    1. Cover Art Archive: mb_albumid_candidates 최대 3개 순차 시도 + mutagen 임베딩
+        │    2. iTunes artwork URL → mutagen 임베딩
+        │    3. Deezer artwork URL → mutagen 임베딩
+        │    4. YouTube thumbnail_url → mutagen 임베딩 (최후 수단)
         │
         └─ (모든 트랙 완료 후)
            Navidrome startScan → getScanStatus 폴링 → 완료 대기

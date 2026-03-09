@@ -47,7 +47,7 @@ docker compose up --build -d
 # View logs (music-bot only)
 docker compose logs -f music-bot
 
-# Restart music-bot after code changes (no rebuild needed for beets/config changes)
+# Restart music-bot after code changes (no rebuild needed for config changes)
 docker restart music-bot-temp-music-bot-1
 
 # Rebuild and restart after Python source changes
@@ -55,13 +55,6 @@ docker compose up --build -d
 
 # Inspect SQLite state DB
 sqlite3 data/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
-
-# Tail beets import log
-tail -f data/logs/beets-import.log
-
-# Run a beet command inside the container
-docker exec music-bot-temp-music-bot-1 beet list -f '$artist - $title [$album]'
-docker exec music-bot-temp-music-bot-1 beet list -f '$path' artist:Radiohead
 
 # Manually trigger the LB pipeline via API
 curl -X POST http://localhost:8080/api/pipeline/run
@@ -76,16 +69,27 @@ curl http://localhost:8080/api/downloads | python3 -m json.tool
 ```
 ListenBrainz /cf/recommendation
   → state.db dedup (skip already done; retry failed < 3 attempts)
-  → yt-dlp YouTube search ("ytsearch1:{artist} {track}")
-  → mutagen pre-tag (write artist+title before beets sees the file)
-  → beet import -q -s (singleton mode; serialized via threading.Lock)
-  → import log offset-based skip detection (beet returns exit 0 on skip)
+  → _mb_search_recording(artist, track): MB API 3단계 검색
+      1. strict:  artistname:{a} AND recording:{t} + primarytype:Album + NOT Live/Compilation/...
+      2. plain:   artistname:{a} AND recording:{t}  (release-type 필터 없음)
+      3. fallback: recording:{t} 만으로 검색, artist-credit/alias 유사도 0.3 이상인 것 선택
+  → yt-dlp YouTube 검색 ("ytsearch5:{artist} {track}")
+      차단 영상(payment/private/members-only) 감지 → 다음 후보 retry
+      5개 소진 시 "ytsearch1:" 폴백 / FLAC 우선 → Opus fallback
   → download_track() returns (file_path, yt_metadata) — yt_metadata: {thumbnail_url, channel}
-  → MusicBrainz API: recording/{mb_trackid}?inc=releases+release-groups
-  → beet modify to set album= (mb_albumid NOT written — avoids Navidrome album duplication)
-  → Cover Art Archive: try up to 3 release candidates until one succeeds
-  → CAA all failed OR no MB album → YouTube fallback: channel as album, thumbnail as cover art
-  → all duplicate imported files get the same cover art embedded
+  → shutil.copy2: staging → data/music/{Artist}/Unknown Album/{Track}.ext
+  → mutagen: artist / title / mb_trackid 초기 태그 쓰기
+  → _enrich_track():
+      앨범명 결정 순서:
+        1. iTunes Search API (artist 유사도 0.4 이상)
+        2. Deezer API (artist 유사도 0.4 이상)
+        3. MB recording → release 조회 (Official Album, 최초 release 선택)
+        4. YouTube channel 이름 (최후 수단)
+      커버아트 결정 순서:
+        1. Cover Art Archive (mb_albumid_candidates가 있을 때, 최대 3개 시도)
+        2. iTunes artwork URL
+        3. Deezer artwork URL
+        4. YouTube thumbnail (최후 수단)
   → Navidrome Subsonic API startScan + poll
 ```
 
@@ -103,7 +107,7 @@ POST /api/download {artist, track}
 - LB pipeline runs in a **daemon thread** on startup
 - Scheduler loop runs in a **daemon thread** (`schedule` library, 60s tick)
 - Each manual download job runs in its own **daemon thread**
-- `_beet_lock` (threading.Lock) serializes all `beet import` calls to prevent import log cross-contamination
+- 각 잡은 고유한 mbid 기반 파일명을 사용하므로 별도 lock 불필요
 
 ## Key Files and their Roles
 
@@ -113,18 +117,14 @@ POST /api/download {artist, track}
 | `src/api.py` | FastAPI app; `_cfg` injected by main.py at startup |
 | `src/state.py` | SQLite wrapper; `mbid` is PK (real MB UUID for LB tracks, `manual-{uuid8}` for manual) |
 | `src/config.py` | Env-var only config (no file needed); `LB_USERNAME`, `LB_TOKEN`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`, `NAVIDROME_URL` |
-| `src/pipeline/tagger.py` | Most complex module; handles pre-tagging, beets import, enrichment, art embedding |
-| `beets/config.yaml` | Bundled in Docker image via Dockerfile COPY; changes require rebuild + push |
+| `src/pipeline/tagger.py` | Most complex module; beets 없이 직접 구현: MB 3단계 검색 → shutil 파일 복사 → mutagen 태깅 → iTunes/Deezer/MB 앨범 enrichment → CAA/iTunes/Deezer/YouTube 커버아트 임베딩 |
 
-## Critical beets Constraints
+## Tagger Constraints
 
-- beets **must** be installed via pip (in `requirements.txt`), not apt — apt beets uses system Python and can't access app's pip packages
-- In beets 2.x, `musicbrainz` is a **plugin** that must be listed explicitly in `beets/config.yaml`; without it, no MusicBrainz lookups happen at all
-- `beet import` must use `-s` (singleton) flag for single-file imports — album mode skips files that don't match an album
-- `strong_rec_thresh: 0.15` is required; stricter values reject legitimate matches (e.g., 88.9% similarity = distance 0.111 exceeds a 0.04 threshold)
-- `quiet_fallback: asis` is required; without it, quiet mode skips any track that doesn't get a strong match (singles/covers with distance > 0.15 always get skipped)
-- beet returns exit code 0 on skip — detect skips by reading the import log before/after with byte offsets
-- Do **not** set `mb_albumid` in file tags via `beet modify`; doing so causes Navidrome to split same-album tracks into separate album entries (Navidrome groups by album name, not mb_albumid)
+- **mb_albumid는 파일 태그에 쓰지 않는다**: Navidrome은 album name으로 그룹핑하므로, mb_albumid가 다르면 같은 앨범이 2개로 분리됨
+- **iTunes/Deezer artist 유사도 임계값 0.4**: 너무 낮으면 동명 아티스트의 앨범이 매칭될 위험
+- **MB 검색 3단계 폴백**: strict → plain → recording-only 순서로 점점 완화. recording-only 단계에서는 artist 유사도 0.3 미만 시 실패 처리
+- **CAA 커버아트는 mb_albumid_candidates가 있을 때만 시도**: iTunes/Deezer로만 앨범이 결정된 경우 CAA를 건너뜀
 
 ## Volume Mounts (docker-compose.prod.yml)
 
