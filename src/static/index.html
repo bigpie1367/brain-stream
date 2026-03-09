@@ -669,6 +669,176 @@
       border: none;
       cursor: pointer;
     }
+
+    /* ── 재매칭 버튼 ── */
+    .rematch-btn {
+      background: none;
+      border: 1px solid #2d3147;
+      border-radius: 4px;
+      color: #718096;
+      cursor: pointer;
+      font-size: 0.68rem;
+      padding: 2px 7px;
+      white-space: nowrap;
+      align-self: auto;
+      flex-shrink: 0;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      line-height: 1.5;
+    }
+    .rematch-btn:hover { background: #2d3147; border-color: #a78bfa; color: #a78bfa; }
+
+    /* ── 재매칭 모달 ── */
+    .rematch-modal-box {
+      background: #1a1d27;
+      border: 1px solid #2d3147;
+      border-radius: 10px;
+      padding: 24px 28px;
+      width: 92%;
+      max-width: 560px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .rematch-fields {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .rematch-fields .field { flex: 1; min-width: 140px; }
+
+    .rematch-search-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .rematch-search-row .field { flex: 1; min-width: 140px; }
+
+    .btn-rematch-search {
+      background: #4a3f6b;
+      border: none;
+      border-radius: 6px;
+      color: #d6bcfa;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 8px 16px;
+      white-space: nowrap;
+      align-self: flex-end;
+      transition: background 0.12s;
+    }
+    .btn-rematch-search:hover { background: #5a4d82; }
+    .btn-rematch-search:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
+
+    .rematch-candidates {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 80px;
+      max-height: 320px;
+      border: 1px solid #2d3147;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      background: #0f1117;
+    }
+
+    .rematch-placeholder {
+      text-align: center;
+      color: #4a5568;
+      padding: 32px 20px;
+      font-size: 0.85rem;
+    }
+
+    .rematch-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid #1e2235;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .rematch-card:last-child { border-bottom: none; }
+    .rematch-card:hover { background: #1e2235; }
+    .rematch-card.selected {
+      background: #1e2a4a;
+      outline: 2px solid #4299e1;
+      outline-offset: -2px;
+    }
+
+    .rematch-thumb {
+      width: 56px;
+      height: 56px;
+      border-radius: 4px;
+      background: #2d3147;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .rematch-thumb-placeholder {
+      width: 56px;
+      height: 56px;
+      border-radius: 4px;
+      background: #2d3147;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #4a5568;
+      font-size: 1.4rem;
+      flex-shrink: 0;
+    }
+
+    .rematch-card-info { flex: 1; min-width: 0; }
+    .rematch-card-album {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rematch-card-artist {
+      font-size: 0.78rem;
+      color: #718096;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rematch-card-badges {
+      margin-top: 5px;
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+
+    .badge-mb { background: #1a2a3a; color: #63b3ed; }
+    .badge-source { font-size: 0.68rem; padding: 1px 6px; }
+
+    .rematch-feedback {
+      font-size: 0.82rem;
+      min-height: 20px;
+      margin-bottom: 10px;
+    }
+    .rematch-feedback.error { color: #fc8181; }
+    .rematch-feedback.success { color: #68d391; }
+
+    .btn-modal-apply {
+      background: #2b4fa8;
+      border: none;
+      border-radius: 6px;
+      color: #90cdf4;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 7px 16px;
+      transition: background 0.12s, color 0.12s;
+      align-self: auto;
+    }
+    .btn-modal-apply:hover { background: #2b6cb0; color: #bee3f8; }
+    .btn-modal-apply:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -797,6 +967,36 @@
     <div class="modal-actions">
       <button class="btn-modal-cancel" id="modal-cancel-btn" onclick="closeDeleteModal()">취소</button>
       <button class="btn-modal-confirm" id="modal-confirm-btn" onclick="confirmDelete()">삭제</button>
+    </div>
+  </div>
+</div>
+
+<!-- 재매칭 모달 -->
+<div class="modal-overlay hidden" id="rematch-modal" role="dialog" aria-modal="true" aria-labelledby="rematch-modal-title">
+  <div class="rematch-modal-box">
+    <div class="modal-title" id="rematch-modal-title" style="margin-bottom:16px;">앨범 재매칭</div>
+
+    <div class="rematch-search-row">
+      <div class="field">
+        <label for="rematch-artist">아티스트</label>
+        <input type="text" id="rematch-artist" placeholder="아티스트명">
+      </div>
+      <div class="field">
+        <label for="rematch-track">트랙명</label>
+        <input type="text" id="rematch-track" placeholder="트랙명">
+      </div>
+      <button class="btn-rematch-search" id="rematch-search-btn" onclick="searchRematch()">검색</button>
+    </div>
+
+    <div class="rematch-candidates" id="rematch-candidates">
+      <div class="rematch-placeholder">아티스트와 트랙명을 입력 후 검색하세요.</div>
+    </div>
+
+    <div class="rematch-feedback" id="rematch-feedback"></div>
+
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeRematchModal()">취소</button>
+      <button class="btn-modal-apply" id="rematch-apply-btn" onclick="applyRematch()">적용</button>
     </div>
   </div>
 </div>
@@ -1067,7 +1267,10 @@
 
   // ESC 키로 모달 닫기
   document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeDeleteModal();
+    if (e.key === 'Escape') {
+      closeDeleteModal();
+      closeRematchModal();
+    }
   });
 
   function esc(str) {
@@ -1327,10 +1530,20 @@
         playSong(song);
       });
 
+      const rematchBtn = document.createElement('button');
+      rematchBtn.className = 'rematch-btn';
+      rematchBtn.title = '앨범 재매칭';
+      rematchBtn.textContent = '재매칭';
+      rematchBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openRematchModal(song.id, song.artist ?? '', song.title ?? '');
+      });
+
       item.appendChild(numSpan);
       item.appendChild(titleSpan);
       item.appendChild(durSpan);
       item.appendChild(playBtn);
+      item.appendChild(rematchBtn);
       trackListEl.appendChild(item);
     });
 
@@ -1586,6 +1799,254 @@
     const sec = s % 60;
     return m + ':' + String(sec).padStart(2, '0');
   }
+
+  // ── 재매칭 모달 ────────────────────────────────────────────────────────────
+  let _rematchSongId = null;
+  let _selectedCandidate = null;
+
+  function openRematchModal(songId, artist, title) {
+    _rematchSongId = songId;
+    _selectedCandidate = null;
+
+    document.getElementById('rematch-artist').value = artist;
+    document.getElementById('rematch-track').value = title;
+
+    // 후보 목록 초기화
+    const candidatesEl = document.getElementById('rematch-candidates');
+    candidatesEl.innerHTML = '<div class="rematch-placeholder">아티스트와 트랙명을 입력 후 검색하세요.</div>';
+
+    // 피드백 초기화
+    const feedbackEl = document.getElementById('rematch-feedback');
+    feedbackEl.textContent = '';
+    feedbackEl.className = 'rematch-feedback';
+
+    const applyBtn = document.getElementById('rematch-apply-btn');
+    applyBtn.disabled = false;
+    applyBtn.textContent = '적용';
+
+    document.getElementById('rematch-modal').classList.remove('hidden');
+    document.getElementById('rematch-artist').focus();
+  }
+
+  function closeRematchModal() {
+    document.getElementById('rematch-modal').classList.add('hidden');
+    _rematchSongId = null;
+    _selectedCandidate = null;
+  }
+
+  async function searchRematch() {
+    const artist = document.getElementById('rematch-artist').value.trim();
+    const track  = document.getElementById('rematch-track').value.trim();
+
+    if (!artist && !track) {
+      setRematchFeedback('error', '아티스트 또는 트랙명을 입력하세요.');
+      return;
+    }
+
+    const searchBtn = document.getElementById('rematch-search-btn');
+    searchBtn.disabled = true;
+    searchBtn.textContent = '검색 중...';
+
+    _selectedCandidate = null;
+
+    const feedbackEl = document.getElementById('rematch-feedback');
+    feedbackEl.textContent = '';
+    feedbackEl.className = 'rematch-feedback';
+
+    const candidatesEl = document.getElementById('rematch-candidates');
+    candidatesEl.innerHTML = '<div class="rematch-placeholder"><span class="loading-spinner"></span>검색 중...</div>';
+
+    try {
+      const params = new URLSearchParams();
+      if (artist) params.set('artist', artist);
+      if (track)  params.set('track', track);
+      params.set('source', 'musicbrainz');
+
+      const res = await fetch('/api/rematch/search?' + params.toString());
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'HTTP ' + res.status);
+      }
+      const candidates = await res.json();
+      renderRematchCandidates(candidates);
+    } catch (e) {
+      candidatesEl.innerHTML = '';
+      setRematchFeedback('error', '검색 실패: ' + e.message);
+    } finally {
+      searchBtn.disabled = false;
+      searchBtn.textContent = '검색';
+    }
+  }
+
+  function renderRematchCandidates(candidates) {
+    const candidatesEl = document.getElementById('rematch-candidates');
+    candidatesEl.innerHTML = '';
+
+    if (!candidates || !candidates.length) {
+      candidatesEl.innerHTML = '<div class="rematch-placeholder">검색 결과가 없습니다.</div>';
+      return;
+    }
+
+    candidates.forEach(c => {
+      const card = document.createElement('div');
+      card.className = 'rematch-card';
+
+      // 커버 썸네일
+      if (c.cover_url) {
+        const img = document.createElement('img');
+        img.className = 'rematch-thumb';
+        img.alt = '';
+        img.src = c.cover_url;
+        img.onerror = function() {
+          this.style.display = 'none';
+          phDiv.style.display = 'flex';
+        };
+        const phDiv = document.createElement('div');
+        phDiv.className = 'rematch-thumb-placeholder';
+        phDiv.style.display = 'none';
+        phDiv.textContent = '\u266B';
+        card.appendChild(img);
+        card.appendChild(phDiv);
+      } else {
+        const phDiv = document.createElement('div');
+        phDiv.className = 'rematch-thumb-placeholder';
+        phDiv.textContent = '\u266B';
+        card.appendChild(phDiv);
+      }
+
+      // 정보 영역
+      const info = document.createElement('div');
+      info.className = 'rematch-card-info';
+
+      const albumDiv = document.createElement('div');
+      albumDiv.className = 'rematch-card-album';
+      albumDiv.textContent = c.album_name || '(앨범명 없음)';
+      if (c.year) {
+        const yearSpan = document.createElement('span');
+        yearSpan.style.color = '#718096';
+        yearSpan.style.fontWeight = '400';
+        yearSpan.style.fontSize = '0.78rem';
+        yearSpan.textContent = ' (' + c.year + ')';
+        albumDiv.appendChild(yearSpan);
+      }
+
+      const artistDiv = document.createElement('div');
+      artistDiv.className = 'rematch-card-artist';
+      artistDiv.textContent = c.artist_name || '';
+
+      const badgesDiv = document.createElement('div');
+      badgesDiv.className = 'rematch-card-badges';
+
+      if (c.source) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-mb badge-source';
+        badge.textContent = c.source;
+        badgesDiv.appendChild(badge);
+      }
+      if (c.mb_recording_id) {
+        const recBadge = document.createElement('span');
+        recBadge.className = 'badge badge-source';
+        recBadge.style.background = '#2d2a54';
+        recBadge.style.color = '#b794f4';
+        recBadge.textContent = 'mbid: ' + c.mb_recording_id.slice(0, 8) + '...';
+        badgesDiv.appendChild(recBadge);
+      }
+
+      info.appendChild(albumDiv);
+      info.appendChild(artistDiv);
+      info.appendChild(badgesDiv);
+      card.appendChild(info);
+
+      // 클릭 시 선택 상태 토글
+      card.addEventListener('click', () => {
+        document.querySelectorAll('#rematch-candidates .rematch-card').forEach(el => {
+          el.classList.remove('selected');
+        });
+        card.classList.add('selected');
+        _selectedCandidate = c;
+
+        const feedbackEl = document.getElementById('rematch-feedback');
+        feedbackEl.textContent = '';
+        feedbackEl.className = 'rematch-feedback';
+      });
+
+      candidatesEl.appendChild(card);
+    });
+  }
+
+  async function applyRematch() {
+    if (!_selectedCandidate) {
+      setRematchFeedback('error', '적용할 후보를 선택하세요.');
+      return;
+    }
+    if (!_rematchSongId) {
+      setRematchFeedback('error', '대상 트랙 정보가 없습니다. 모달을 다시 열어주세요.');
+      return;
+    }
+
+    const applyBtn = document.getElementById('rematch-apply-btn');
+    applyBtn.disabled = true;
+    applyBtn.textContent = '적용 중...';
+
+    const searchBtn = document.getElementById('rematch-search-btn');
+    searchBtn.disabled = true;
+
+    try {
+      const res = await fetch('/api/rematch/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          song_id:         _rematchSongId,
+          mb_recording_id: _selectedCandidate.mb_recording_id ?? null,
+          mb_album_id:     _selectedCandidate.mb_album_id ?? null,
+        }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'HTTP ' + res.status);
+      }
+
+      setRematchFeedback('success', '재매칭 적용 완료. 라이브러리를 새로고침합니다...');
+
+      // 모달 닫고 현재 아티스트 다시 로드
+      setTimeout(() => {
+        closeRematchModal();
+        if (selectedArtistId) {
+          // 현재 선택된 아티스트를 다시 로드해 트랙 목록 갱신
+          const activeItem = document.querySelector('.artist-item.active');
+          const artistName = activeItem ? activeItem.querySelector('span')?.textContent ?? '' : '';
+          // albumCache 무효화 (재매칭 후 앨범 정보가 바뀔 수 있음)
+          Object.keys(albumCache).forEach(k => delete albumCache[k]);
+          openAlbums.clear();
+          selectArtist(selectedArtistId, artistName, activeItem ?? document.createElement('div'));
+        }
+      }, 1200);
+    } catch (e) {
+      setRematchFeedback('error', '적용 실패: ' + e.message);
+      applyBtn.disabled = false;
+      applyBtn.textContent = '적용';
+      searchBtn.disabled = false;
+    }
+  }
+
+  function setRematchFeedback(type, msg) {
+    const el = document.getElementById('rematch-feedback');
+    el.textContent = msg;
+    el.className = 'rematch-feedback ' + (type === 'error' ? 'error' : 'success');
+  }
+
+  // 재매칭 모달 Enter 키 지원
+  ['rematch-artist', 'rematch-track'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); searchRematch(); }
+    });
+  });
+
+  // 재매칭 모달 외부(오버레이) 클릭 시 닫기
+  document.getElementById('rematch-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeRematchModal();
+  });
 </script>
 </body>
 </html>

@@ -3,10 +3,12 @@ import json
 import os
 import secrets
 import threading
+import time
 import uuid
 from queue import Empty, Queue
 
 import httpx
+import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,7 +16,14 @@ from pydantic import BaseModel
 
 from src.pipeline.downloader import download_track
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
-from src.pipeline.tagger import tag_and_import
+from src.pipeline.tagger import (
+    embed_art_from_url,
+    embed_cover_art,
+    mb_album_from_recording_id,
+    mb_search_recording,
+    tag_and_import,
+    write_album_tag,
+)
 from src.state import (
     delete_download,
     get_all_downloads,
@@ -44,6 +53,12 @@ _job_queues: dict[str, Queue] = {}
 class DownloadRequest(BaseModel):
     artist: str
     track: str
+
+
+class RematchApplyRequest(BaseModel):
+    song_id: str
+    mb_recording_id: str
+    mb_album_id: str
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -211,6 +226,158 @@ async def delete_download_entry(mbid: str):
 
     log.info("download entry deleted", mbid=mbid, files_removed=files_removed)
     return {"deleted": True, "files_removed": files_removed}
+
+
+@app.get("/api/rematch/search")
+async def rematch_search(artist: str, track: str, source: str = "musicbrainz"):
+    """Search for album candidates to rematch a track.
+
+    Currently supports source=musicbrainz only.
+    Returns up to 3 album candidates with cover art URLs.
+    """
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+
+    if source != "musicbrainz":
+        raise HTTPException(status_code=400, detail=f"unsupported source: {source}")
+
+    recording_ids = mb_search_recording(artist, track)
+    if not recording_ids:
+        return {"candidates": []}
+
+    recording_id = recording_ids[0]
+    album_name, mb_albumid_candidates = mb_album_from_recording_id(recording_id)
+
+    if not album_name:
+        return {"candidates": []}
+
+    candidates = []
+    for album_id in mb_albumid_candidates:
+        candidates.append(
+            {
+                "source": "musicbrainz",
+                "mb_recording_id": recording_id,
+                "mb_album_id": album_id,
+                "album_name": album_name,
+                "artist_name": artist,
+                "year": None,
+                "cover_url": f"https://coverartarchive.org/release/{album_id}/front",
+            }
+        )
+
+    return {"candidates": candidates}
+
+
+def _navidrome_get_song(url: str, username: str, password: str, song_id: str) -> dict:
+    """Call Navidrome getSong and return the song dict, or raise on failure."""
+    salt = secrets.token_hex(6)
+    token = hashlib.md5(f"{password}{salt}".encode()).hexdigest()
+    params = {
+        "u": username,
+        "t": token,
+        "s": salt,
+        "v": "1.16.1",
+        "c": "brainstream",
+        "f": "json",
+        "id": song_id,
+    }
+    endpoint = f"{url.rstrip('/')}/rest/getSong"
+    resp = requests.get(endpoint, params=params, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    subsonic = data.get("subsonic-response", {})
+    if subsonic.get("status") != "ok":
+        raise RuntimeError(f"getSong failed: {subsonic.get('error', data)}")
+    return subsonic.get("song", {})
+
+
+@app.post("/api/rematch/apply")
+async def rematch_apply(req: RematchApplyRequest):
+    """Apply a manual album rematch to a song file.
+
+    1. Resolves the file path via Navidrome getSong.
+    2. Fetches album name from MusicBrainz release.
+    3. Rewrites album tag (mb_albumid is NOT written to avoid Navidrome album split).
+    4. Embeds cover art from Cover Art Archive.
+    5. Triggers Navidrome rescan.
+    """
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+
+    # 1. Resolve file path via Navidrome getSong
+    try:
+        song = _navidrome_get_song(
+            _cfg.navidrome.url,
+            _cfg.navidrome.username,
+            _cfg.navidrome.password,
+            req.song_id,
+        )
+    except Exception as exc:
+        log.error("rematch_apply: getSong failed", song_id=req.song_id, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"getSong failed: {exc}")
+
+    relative_path = song.get("path", "")
+    if not relative_path:
+        raise HTTPException(status_code=500, detail="getSong returned no path")
+
+    # Navidrome path is relative to music root inside the container
+    file_path = f"/app/data/music/{relative_path.lstrip('/')}"
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"audio file not found: {file_path}")
+
+    # 2. Fetch album name from MusicBrainz release
+    _MB_API = "https://musicbrainz.org/ws/2"
+    _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
+
+    try:
+        time.sleep(1)  # rate limit
+        r = requests.get(
+            f"{_MB_API}/release/{req.mb_album_id}",
+            params={"fmt": "json"},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        album_name = r.json().get("title", "")
+    except Exception as exc:
+        log.error(
+            "rematch_apply: MB release lookup failed", mb_album_id=req.mb_album_id, error=str(exc)
+        )
+        raise HTTPException(status_code=500, detail=f"MB release lookup failed: {exc}")
+
+    if not album_name:
+        raise HTTPException(status_code=500, detail="MB release returned no title")
+
+    # 3. Rewrite album tag (mb_albumid NOT written — prevents Navidrome album split)
+    try:
+        write_album_tag(file_path, album_name)
+    except Exception as exc:
+        log.error("rematch_apply: write_album_tag failed", file=file_path, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"tag write failed: {exc}")
+
+    # 4. Embed cover art from Cover Art Archive
+    art_ok = embed_cover_art(file_path, req.mb_album_id)
+    if not art_ok:
+        log.warning(
+            "rematch_apply: CAA cover art not available, skipping",
+            mb_album_id=req.mb_album_id,
+        )
+
+    # 5. Trigger Navidrome rescan (fire-and-forget)
+    threading.Thread(
+        target=trigger_scan,
+        args=(_cfg.navidrome.url, _cfg.navidrome.username, _cfg.navidrome.password),
+        daemon=True,
+    ).start()
+
+    log.info(
+        "rematch applied",
+        song_id=req.song_id,
+        mb_album_id=req.mb_album_id,
+        album_name=album_name,
+        file=file_path,
+    )
+    return {"status": "ok", "album_name": album_name}
 
 
 @app.post("/api/pipeline/run")

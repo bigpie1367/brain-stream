@@ -1,8 +1,8 @@
 # API 명세서
 
-- **버전**: 1.1.0
+- **버전**: 1.2.0
 - **Base URL**: `http://localhost:8080`
-- **작성일**: 2026-03-04
+- **작성일**: 2026-03-10
 
 ---
 
@@ -14,8 +14,10 @@
 | POST | `/api/download` | 수동 다운로드 시작 |
 | GET | `/api/sse/{job_id}` | SSE 실시간 진행 스트림 |
 | GET | `/api/downloads` | 다운로드 이력 조회 |
-| DELETE | `/api/downloads/{mbid}` | 트랙 삭제 (파일 + beets + state.db) |
+| DELETE | `/api/downloads/{mbid}` | 트랙 삭제 (파일 + state.db) |
 | POST | `/api/pipeline/run` | LB 파이프라인 수동 트리거 |
+| GET | `/api/rematch/search` | 앨범 재매칭 후보 검색 |
+| POST | `/api/rematch/apply` | 선택한 앨범으로 재태깅 |
 
 ---
 
@@ -100,7 +102,7 @@ data: {"status": "done", "message": "완료"}
 | status | 설명 |
 |--------|------|
 | `downloading` | YouTube 검색 및 다운로드 중 |
-| `tagging` | beets 태깅 및 라이브러리 임포트 중 |
+| `tagging` | mutagen 태깅 중 |
 | `scanning` | Navidrome 라이브러리 스캔 중 |
 | `done` | 모든 단계 완료 |
 | `failed` | 처리 중 오류 발생 |
@@ -171,7 +173,7 @@ data: {"status": "done", "message": "완료"}
 
 ## DELETE `/api/downloads/{mbid}`
 
-라이브러리에서 트랙을 삭제한다. beets 라이브러리에서 파일을 제거하고 state.db 레코드를 삭제한 후 Navidrome 재스캔을 트리거한다.
+라이브러리에서 트랙을 삭제한다. 파일을 제거하고 state.db 레코드를 삭제한 후 Navidrome 재스캔을 트리거한다.
 
 **Path Parameters**
 
@@ -195,11 +197,10 @@ data: {"status": "done", "message": "완료"}
 
 **동작 순서**
 
-1. state.db에서 mbid로 artist / track_name 조회
-2. `beet list -f $path` 로 파일 경로 목록 조회
-3. 파일이 존재하면 `beet remove -d` 로 파일 + beets DB 항목 제거
-4. state.db에서 레코드 삭제
-5. Navidrome 재스캔 트리거 (파일이 삭제된 경우)
+1. state.db에서 mbid로 file_path 조회
+2. 파일이 존재하면 삭제
+3. state.db에서 레코드 삭제
+4. Navidrome 재스캔 트리거 (파일이 삭제된 경우)
 
 **Error Responses**
 
@@ -230,6 +231,104 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 
 | Status | 설명 |
 |--------|------|
+| 503 | 서버 설정 미로드 |
+
+---
+
+## GET `/api/rematch/search`
+
+라이브러리 트랙의 앨범 재매칭을 위해 MusicBrainz에서 후보 앨범 목록을 검색한다.
+
+**Query Parameters**
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|---------|------|------|------|
+| artist | string | Y | 아티스트명 |
+| track | string | Y | 트랙명 |
+| source | string | N | 검색 소스. 현재 `musicbrainz`만 지원 (기본값: `musicbrainz`) |
+
+**Response** `200 OK`
+
+```json
+{
+  "candidates": [
+    {
+      "source": "musicbrainz",
+      "mb_recording_id": "3c3e5e5c-1234-5678-abcd-ef0123456789",
+      "mb_album_id": "7a1b2c3d-abcd-ef01-2345-678901234567",
+      "album_name": "OK Computer",
+      "artist_name": "Radiohead",
+      "year": 1997,
+      "cover_url": "https://coverartarchive.org/release/7a1b2c3d-abcd-ef01-2345-678901234567/front"
+    }
+  ]
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| source | string | 검색 소스 (`musicbrainz`) |
+| mb_recording_id | string \| null | MusicBrainz recording UUID |
+| mb_album_id | string \| null | MusicBrainz release UUID (커버아트 조회에 사용) |
+| album_name | string | 앨범명 |
+| artist_name | string | 아티스트명 |
+| year | integer \| null | 발매 연도 |
+| cover_url | string \| null | Cover Art Archive 커버아트 URL |
+
+매칭 결과가 없으면 `candidates: []` 반환.
+
+**Error Responses**
+
+| Status | 설명 |
+|--------|------|
+| 400 | 지원하지 않는 source |
+| 503 | 서버 설정 미로드 |
+
+---
+
+## POST `/api/rematch/apply`
+
+선택한 앨범 후보로 트랙을 재태깅한다. 앨범명 + 커버아트를 파일에 임베딩하고 Navidrome 재스캔을 트리거한다.
+
+**Request Body** (`application/json`)
+
+```json
+{
+  "song_id": "navidrome-song-id",
+  "mb_recording_id": "3c3e5e5c-1234-5678-abcd-ef0123456789",
+  "mb_album_id": "7a1b2c3d-abcd-ef01-2345-678901234567"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| song_id | string | Y | Navidrome Subsonic song ID (라이브러리 탭에서 획득) |
+| mb_recording_id | string | Y | `/api/rematch/search` 응답의 `mb_recording_id` |
+| mb_album_id | string | Y | `/api/rematch/search` 응답의 `mb_album_id` |
+
+**동작 순서**
+
+1. Navidrome `getSong(song_id)` → `path` 필드로 파일 절대경로 획득
+2. MB API로 release 정보 조회 → 앨범명 확인
+3. mutagen으로 `album` 태그 재기록 (`mb_albumid`는 기록하지 않음 — Navidrome 앨범 분리 방지)
+4. Cover Art Archive에서 커버아트 다운로드 → mutagen 임베딩 (실패 시 warning만, 전체 실패 아님)
+5. Navidrome `startScan` 트리거
+
+**Response** `200 OK`
+
+```json
+{
+  "status": "ok",
+  "album_name": "OK Computer"
+}
+```
+
+**Error Responses**
+
+| Status | 설명 |
+|--------|------|
+| 404 | song_id가 Navidrome에 없음 |
+| 500 | 파일 재태깅 실패 |
 | 503 | 서버 설정 미로드 |
 
 ---

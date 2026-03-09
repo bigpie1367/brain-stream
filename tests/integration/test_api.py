@@ -243,3 +243,179 @@ def test_get_index_returns_html(client):
         resp = client.get("/")
     assert resp.status_code == 200
     assert "html" in resp.headers.get("content-type", "").lower()
+
+
+# ── GET /api/rematch/search ───────────────────────────────────────────────────
+
+def test_rematch_search_returns_candidates(client):
+    """MB 검색이 성공하면 candidates 목록이 반환된다."""
+    with patch("src.api.mb_search_recording", return_value=["rec-id-001"]):
+        with patch(
+            "src.api.mb_album_from_recording_id",
+            return_value=("OK Computer", ["album-id-001"]),
+        ):
+            resp = client.get(
+                "/api/rematch/search",
+                params={"artist": "Radiohead", "track": "Karma Police"},
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "candidates" in data
+    assert len(data["candidates"]) == 1
+    c = data["candidates"][0]
+    assert c["source"] == "musicbrainz"
+    assert c["mb_recording_id"] == "rec-id-001"
+    assert c["mb_album_id"] == "album-id-001"
+    assert c["album_name"] == "OK Computer"
+    assert c["artist_name"] == "Radiohead"
+    assert c["cover_url"] == "https://coverartarchive.org/release/album-id-001/front"
+
+
+def test_rematch_search_empty_when_no_recording(client):
+    """MB 검색 결과가 없으면 빈 candidates를 반환한다."""
+    with patch("src.api.mb_search_recording", return_value=[]):
+        resp = client.get(
+            "/api/rematch/search",
+            params={"artist": "Unknown", "track": "Nonexistent"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"candidates": []}
+
+
+def test_rematch_search_empty_when_no_album(client):
+    """recording_id는 있지만 앨범 조회 실패 시 빈 candidates를 반환한다."""
+    with patch("src.api.mb_search_recording", return_value=["rec-id-002"]):
+        with patch("src.api.mb_album_from_recording_id", return_value=("", [])):
+            resp = client.get(
+                "/api/rematch/search",
+                params={"artist": "Artist", "track": "Track"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"candidates": []}
+
+
+def test_rematch_search_unsupported_source_returns_400(client):
+    """source가 musicbrainz가 아니면 400을 반환한다."""
+    resp = client.get(
+        "/api/rematch/search",
+        params={"artist": "Artist", "track": "Track", "source": "itunes"},
+    )
+    assert resp.status_code == 400
+
+
+def test_rematch_search_multiple_album_candidates(client):
+    """앨범 후보가 여러 개일 때 모두 반환한다."""
+    album_ids = ["album-a", "album-b", "album-c"]
+    with patch("src.api.mb_search_recording", return_value=["rec-001"]):
+        with patch(
+            "src.api.mb_album_from_recording_id",
+            return_value=("The Bends", album_ids),
+        ):
+            resp = client.get(
+                "/api/rematch/search",
+                params={"artist": "Radiohead", "track": "Fake Plastic Trees"},
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["candidates"]) == 3
+    returned_ids = [c["mb_album_id"] for c in data["candidates"]]
+    assert returned_ids == album_ids
+
+
+# ── POST /api/rematch/apply ───────────────────────────────────────────────────
+
+def test_rematch_apply_success(client, tmp_path):
+    """정상 흐름: 파일 존재 + getSong 성공 + MB release 조회 성공 → 200 반환."""
+    dummy_audio = tmp_path / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    # Navidrome getSong이 반환하는 path는 music root 기준 상대경로
+    # client fixture의 music_dir은 tmp_path/"music" 이지만
+    # rematch_apply는 /app/data/music/{path}로 절대경로를 구성하므로
+    # 파일을 /app/data/music/... 에 생성하는 대신 os.path.exists를 mock한다.
+    song_relative_path = "Artist/Album/track.flac"
+
+    with patch("src.api._navidrome_get_song", return_value={"path": song_relative_path}):
+        with patch("src.api.os.path.exists", return_value=True):
+            with patch("src.api.requests.get") as mock_get:
+                mock_get.return_value = MagicMock(
+                    status_code=200,
+                    json=MagicMock(return_value={"title": "OK Computer"}),
+                    raise_for_status=MagicMock(),
+                )
+                with patch("src.api.write_album_tag") as mock_write:
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "song_id": "nav-song-123",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                },
+                            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["album_name"] == "OK Computer"
+    mock_write.assert_called_once()
+
+
+def test_rematch_apply_song_not_found_returns_500(client):
+    """getSong 실패 시 500을 반환한다."""
+    with patch("src.api._navidrome_get_song", side_effect=RuntimeError("getSong error")):
+        resp = client.post(
+            "/api/rematch/apply",
+            json={
+                "song_id": "bad-id",
+                "mb_recording_id": "rec-001",
+                "mb_album_id": "album-001",
+            },
+        )
+    assert resp.status_code == 500
+
+
+def test_rematch_apply_file_not_found_returns_404(client):
+    """getSong 성공 but 파일이 없으면 404를 반환한다."""
+    with patch("src.api._navidrome_get_song", return_value={"path": "Artist/track.flac"}):
+        with patch("src.api.os.path.exists", return_value=False):
+            resp = client.post(
+                "/api/rematch/apply",
+                json={
+                    "song_id": "nav-song-123",
+                    "mb_recording_id": "rec-001",
+                    "mb_album_id": "album-001",
+                },
+            )
+    assert resp.status_code == 404
+
+
+def test_rematch_apply_mb_release_lookup_fails_returns_500(client):
+    """MB release 조회 실패 시 500을 반환한다."""
+    with patch("src.api._navidrome_get_song", return_value={"path": "Artist/track.flac"}):
+        with patch("src.api.os.path.exists", return_value=True):
+            with patch("src.api.requests.get", side_effect=Exception("network error")):
+                resp = client.post(
+                    "/api/rematch/apply",
+                    json={
+                        "song_id": "nav-song-123",
+                        "mb_recording_id": "rec-001",
+                        "mb_album_id": "album-001",
+                    },
+                )
+    assert resp.status_code == 500
+
+
+def test_rematch_apply_missing_song_id_returns_422(client):
+    """필수 필드 누락 시 422를 반환한다."""
+    resp = client.post(
+        "/api/rematch/apply",
+        json={"mb_recording_id": "rec-001", "mb_album_id": "album-001"},
+    )
+    assert resp.status_code == 422

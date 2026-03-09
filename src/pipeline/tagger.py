@@ -920,3 +920,11 @@ def _cleanup_staging(path: Path):
         log.debug("staging file removed", file=str(path))
     except OSError as exc:
         log.warning("could not remove staging file", error=str(exc))
+
+
+# Public aliases for use by api.py (rematch endpoints)
+mb_search_recording = _mb_search_recording
+mb_album_from_recording_id = _mb_album_from_recording_id
+embed_cover_art = _embed_cover_art
+embed_art_from_url = _embed_art_from_url
+write_album_tag = _write_album_tag
