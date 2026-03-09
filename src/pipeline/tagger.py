@@ -1,3 +1,4 @@
+import difflib
 import os
 import subprocess
 import threading
@@ -52,7 +53,7 @@ def _mb_search_recording(artist: str, track_name: str) -> str:
                 )
             return recording_id
 
-        # Fallback: recording-only search (no artist filter) — first result used as-is
+        # Fallback: recording-only search (no artist filter) — pick best artist match
         log.info(
             "MB artistname+recording search returned 0 results, trying recording-only fallback",
             artist=artist,
@@ -68,15 +69,37 @@ def _mb_search_recording(artist: str, track_name: str) -> str:
         r2.raise_for_status()
         recordings2 = r2.json().get("recordings", [])
         if recordings2:
-            recording_id = recordings2[0].get("id", "")
-            if recording_id:
+            norm_artist = _normalize_for_match(artist)
+            best_id = ""
+            best_ratio = 0.0
+            for rec in recordings2:
+                credits = rec.get("artist-credit", [])
+                for credit in credits:
+                    credit_artist = credit.get("artist", {}) if isinstance(credit, dict) else {}
+                    candidate_name = credit_artist.get("name", "") or credit_artist.get("sort-name", "")
+                    if not candidate_name:
+                        continue
+                    ratio = difflib.SequenceMatcher(
+                        None, norm_artist, _normalize_for_match(candidate_name)
+                    ).ratio()
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_id = rec.get("id", "")
+            if best_ratio >= 0.3 and best_id:
                 log.info(
                     "MB recording-only fallback found recording",
                     artist=artist,
                     track=track_name,
-                    recording_id=recording_id,
+                    recording_id=best_id,
+                    artist_similarity=round(best_ratio, 3),
                 )
-            return recording_id
+                return best_id
+            log.info(
+                "MB recording-only fallback: no result met artist similarity threshold (0.3)",
+                artist=artist,
+                track=track_name,
+                best_ratio=round(best_ratio, 3),
+            )
         return ""
     except Exception as exc:
         log.warning("MB recording search failed", artist=artist, track=track_name, error=str(exc))
@@ -130,7 +153,11 @@ def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
         if not releases:
             return "", []
 
-        # Collect Official Album releases (up to 3) for CAA fallback
+        def _release_date_key(rel):
+            d = rel.get("date", "") or ""
+            return d if d else "9999"
+
+        # Collect Official Album releases for CAA fallback
         official_album_releases = []
         for rel in releases:
             status = rel.get("status", "")
@@ -139,12 +166,12 @@ def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
                 mbid = rel.get("id", "")
                 if mbid:
                     official_album_releases.append(rel)
-                if len(official_album_releases) >= 3:
-                    break
 
         if official_album_releases:
-            album = official_album_releases[0].get("title", "")
-            candidates = [rel.get("id", "") for rel in official_album_releases if rel.get("id")]
+            official_album_releases.sort(key=_release_date_key)
+            top = official_album_releases[:3]
+            album = top[0].get("title", "")
+            candidates = [rel.get("id", "") for rel in top if rel.get("id")]
             if album:
                 log.info(
                     "resolved album from MB recording",
@@ -154,9 +181,13 @@ def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
                 )
             return album, candidates
 
-        # Fallback: use the first release regardless of type
-        album = releases[0].get("title", "")
-        mbid = releases[0].get("id", "")
+        # Fallback: use releases sorted by date, pick earliest
+        releases_with_id = [rel for rel in releases if rel.get("id")]
+        if not releases_with_id:
+            return "", []
+        releases_with_id.sort(key=_release_date_key)
+        album = releases_with_id[0].get("title", "")
+        mbid = releases_with_id[0].get("id", "")
         candidates = [mbid] if mbid else []
         if album:
             log.info(
@@ -237,6 +268,7 @@ def _itunes_search(artist: str, track_name: str) -> dict:
 
     Returns {"album": str, "artwork_url": str} or empty dict on failure.
     No API key required. No rate limit documented.
+    Validates artistName similarity (>= 0.4) before accepting a result.
     """
     try:
         term = f"{artist} {track_name}"
@@ -249,7 +281,23 @@ def _itunes_search(artist: str, track_name: str) -> dict:
         results = r.json().get("results", [])
         if not results:
             return {}
-        item = results[0]
+        norm_artist = _normalize_for_match(artist)
+        item = None
+        for candidate in results:
+            candidate_artist = candidate.get("artistName", "")
+            ratio = difflib.SequenceMatcher(
+                None, norm_artist, _normalize_for_match(candidate_artist)
+            ).ratio()
+            if ratio >= 0.4:
+                item = candidate
+                break
+        if item is None:
+            log.info(
+                "iTunes search: no result met artist similarity threshold (0.4)",
+                artist=artist,
+                track=track_name,
+            )
+            return {}
         album = item.get("collectionName", "")
         artwork_url = item.get("artworkUrl100", "")
         if artwork_url:
@@ -267,6 +315,7 @@ def _deezer_search(artist: str, track_name: str) -> dict:
 
     Returns {"album": str, "artwork_url": str} or empty dict on failure.
     No API key required.
+    Validates artist.name similarity (>= 0.4) before accepting a result.
     """
     try:
         q = f'artist:"{artist}" track:"{track_name}"'
@@ -279,7 +328,23 @@ def _deezer_search(artist: str, track_name: str) -> dict:
         data = r.json().get("data", [])
         if not data:
             return {}
-        item = data[0]
+        norm_artist = _normalize_for_match(artist)
+        item = None
+        for candidate in data:
+            candidate_artist = candidate.get("artist", {}).get("name", "")
+            ratio = difflib.SequenceMatcher(
+                None, norm_artist, _normalize_for_match(candidate_artist)
+            ).ratio()
+            if ratio >= 0.4:
+                item = candidate
+                break
+        if item is None:
+            log.info(
+                "Deezer search: no result met artist similarity threshold (0.4)",
+                artist=artist,
+                track=track_name,
+            )
+            return {}
         album_obj = item.get("album", {})
         album = album_obj.get("title", "")
         artwork_url = album_obj.get("cover_xl", "")

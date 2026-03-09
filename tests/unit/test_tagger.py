@@ -3,6 +3,9 @@ tests/unit/test_tagger.py
 tagger.py 단위 테스트
 - _pretag: 실제 FLAC 더미 파일에 mutagen으로 태그 쓰기 검증
 - beet import 결과 파싱 로직: skip → False, duplicate-skip → True
+- _mb_search_recording fallback: artist 유사도 기반 선택
+- _mb_album_from_recording_id: 날짜 기준 오름차순 정렬
+- _itunes_search / _deezer_search: artist 검증 (유사도 0.4 미만 skip)
 - 외부 프로세스(_beet subprocess, requests)는 mock 처리
 """
 import os
@@ -17,6 +20,10 @@ from src.pipeline.tagger import (
     _import_log_size,
     _import_log_tail,
     tag_and_import,
+    _mb_search_recording,
+    _mb_album_from_recording_id,
+    _itunes_search,
+    _deezer_search,
 )
 
 
@@ -306,3 +313,327 @@ def test_tag_and_import_returns_false_when_beet_not_found(tmp_path, monkeypatch)
         track_name="Track",
     )
     assert result is False
+
+
+# ── _mb_search_recording fallback: artist 유사도 기반 선택 ─────────────────────
+
+def test_mb_search_recording_fallback_picks_best_artist_match(monkeypatch):
+    """
+    수정 1: fallback 재검색 결과에서 artist-credits를 비교해 가장 유사한 recording을 반환한다.
+    """
+    call_count = [0]
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        if call_count[0] == 1:
+            # 첫 번째 호출(artistname+recording): 결과 없음
+            resp.json.return_value = {"recordings": []}
+        else:
+            # 두 번째 호출(recording-only): 2개 후보
+            resp.json.return_value = {
+                "recordings": [
+                    {
+                        "id": "wrong-id-001",
+                        "artist-credit": [
+                            {"artist": {"name": "Mariah Carey", "sort-name": "Carey, Mariah"}}
+                        ],
+                    },
+                    {
+                        "id": "correct-id-002",
+                        "artist-credit": [
+                            {"artist": {"name": "Butterfly Jones", "sort-name": "Butterfly Jones"}}
+                        ],
+                    },
+                ]
+            }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_search_recording("Butterfly Jones", "butterfly")
+    assert result == "correct-id-002"
+
+
+def test_mb_search_recording_fallback_returns_empty_when_below_threshold(monkeypatch):
+    """
+    수정 1: fallback 결과의 모든 artist 유사도가 0.3 미만이면 빈 문자열을 반환한다.
+    """
+    call_count = [0]
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        if call_count[0] == 1:
+            resp.json.return_value = {"recordings": []}
+        else:
+            resp.json.return_value = {
+                "recordings": [
+                    {
+                        "id": "unrelated-id-001",
+                        "artist-credit": [
+                            {"artist": {"name": "XYZ Totally Different", "sort-name": "Different, XYZ"}}
+                        ],
+                    }
+                ]
+            }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_search_recording("Radiohead", "butterfly")
+    assert result == ""
+
+
+def test_mb_search_recording_fallback_returns_empty_when_no_results(monkeypatch):
+    """
+    수정 1: fallback 재검색 결과도 없으면 빈 문자열을 반환한다.
+    """
+    call_count = [0]
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {"recordings": []}
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_search_recording("Artist", "track")
+    assert result == ""
+
+
+# ── _mb_album_from_recording_id: 날짜 기준 오름차순 정렬 ─────────────────────────
+
+def test_mb_album_picks_earliest_official_album_release(monkeypatch):
+    """
+    수정 2: Official Album release 중 date 오름차순으로 정렬해 가장 오래된 것을 선택한다.
+    """
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "releases": [
+                {
+                    "id": "remaster-2005",
+                    "title": "Pablo Honey (Remastered)",
+                    "status": "Official",
+                    "date": "2005-03-15",
+                    "release-group": {"primary-type": "Album"},
+                },
+                {
+                    "id": "original-1993",
+                    "title": "Pablo Honey",
+                    "status": "Official",
+                    "date": "1993-02-22",
+                    "release-group": {"primary-type": "Album"},
+                },
+                {
+                    "id": "jp-edition-1993",
+                    "title": "Pablo Honey (Japan Edition)",
+                    "status": "Official",
+                    "date": "1993-04-01",
+                    "release-group": {"primary-type": "Album"},
+                },
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    album, candidates = _mb_album_from_recording_id("some-recording-id")
+    assert album == "Pablo Honey"
+    assert candidates[0] == "original-1993"
+    # 날짜순으로 최대 3개
+    assert "remaster-2005" in candidates
+    assert "jp-edition-1993" in candidates
+
+
+def test_mb_album_fallback_picks_earliest_release(monkeypatch):
+    """
+    수정 2: Official Album이 없을 때 fallback releases도 date 오름차순으로 정렬한다.
+    """
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "releases": [
+                {
+                    "id": "single-2010",
+                    "title": "Creep (Single 2010)",
+                    "status": "Official",
+                    "date": "2010-01-01",
+                    "release-group": {"primary-type": "Single"},
+                },
+                {
+                    "id": "single-1992",
+                    "title": "Creep (Single 1992)",
+                    "status": "Official",
+                    "date": "1992-09-21",
+                    "release-group": {"primary-type": "Single"},
+                },
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    album, candidates = _mb_album_from_recording_id("some-recording-id")
+    assert album == "Creep (Single 1992)"
+    assert candidates[0] == "single-1992"
+
+
+def test_mb_album_releases_without_date_sorted_last(monkeypatch):
+    """
+    수정 2: date가 없는 release는 맨 뒤로 정렬된다.
+    """
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "releases": [
+                {
+                    "id": "no-date-id",
+                    "title": "Album (No Date)",
+                    "status": "Official",
+                    "date": "",
+                    "release-group": {"primary-type": "Album"},
+                },
+                {
+                    "id": "dated-id",
+                    "title": "Album (With Date)",
+                    "status": "Official",
+                    "date": "2000-01-01",
+                    "release-group": {"primary-type": "Album"},
+                },
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    album, candidates = _mb_album_from_recording_id("some-recording-id")
+    assert album == "Album (With Date)"
+    assert candidates[0] == "dated-id"
+
+
+# ── _itunes_search: artist 검증 ───────────────────────────────────────────────
+
+def test_itunes_search_skips_low_similarity_artist(monkeypatch):
+    """
+    수정 3: iTunes 결과의 artistName 유사도가 0.4 미만이면 해당 결과를 skip한다.
+    모두 미달이면 빈 dict를 반환한다.
+    """
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "results": [
+                {
+                    "artistName": "Totally Unrelated Artist",
+                    "collectionName": "Wrong Album",
+                    "artworkUrl100": "http://example.com/art.jpg",
+                }
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+
+    result = _itunes_search("Radiohead", "Creep")
+    assert result == {}
+
+
+def test_itunes_search_returns_first_matching_artist(monkeypatch):
+    """
+    수정 3: iTunes 결과 중 유사도 0.4 이상인 첫 번째 결과를 반환한다.
+    첫 번째 결과의 artistName이 임계값 미만(XYZ)이고 두 번째 결과가 일치할 때
+    두 번째 결과를 반환한다.
+    """
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "results": [
+                {
+                    "artistName": "XYZ",
+                    "collectionName": "Wrong Album",
+                    "artworkUrl100": "http://example.com/wrong.jpg",
+                },
+                {
+                    "artistName": "Radiohead",
+                    "collectionName": "Pablo Honey",
+                    "artworkUrl100": "http://example.com/pablo100x100bb.jpg",
+                },
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+
+    result = _itunes_search("Radiohead", "Creep")
+    assert result.get("album") == "Pablo Honey"
+    assert "artwork_url" in result
+
+
+# ── _deezer_search: artist 검증 ───────────────────────────────────────────────
+
+def test_deezer_search_skips_low_similarity_artist(monkeypatch):
+    """
+    수정 3: Deezer 결과의 artist.name 유사도가 0.4 미만이면 해당 결과를 skip한다.
+    모두 미달이면 빈 dict를 반환한다.
+    """
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "data": [
+                {
+                    "artist": {"name": "Completely Different Artist"},
+                    "album": {"title": "Wrong Album", "cover_xl": "http://example.com/wrong.jpg"},
+                }
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+
+    result = _deezer_search("Radiohead", "Creep")
+    assert result == {}
+
+
+def test_deezer_search_returns_first_matching_artist(monkeypatch):
+    """
+    수정 3: Deezer 결과 중 유사도 0.4 이상인 첫 번째 결과를 반환한다.
+    """
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "data": [
+                {
+                    "artist": {"name": "Unrelated Act"},
+                    "album": {"title": "Wrong Album", "cover_xl": "http://example.com/wrong.jpg"},
+                },
+                {
+                    "artist": {"name": "Radiohead"},
+                    "album": {"title": "Pablo Honey", "cover_xl": "http://example.com/correct.jpg"},
+                },
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+
+    result = _deezer_search("Radiohead", "Creep")
+    assert result.get("album") == "Pablo Honey"
+    assert result.get("artwork_url") == "http://example.com/correct.jpg"

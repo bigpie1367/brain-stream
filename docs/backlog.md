@@ -93,6 +93,9 @@
 | BUG-02 | Low | Navidrome 자동 스캔 비활성화 설정(`ND_SCANSCHEDULE: "0"`)이 docker-compose.yml에 하드코딩됨 | 미해결 |
 | BUG-03 | Low | 수동 다운로드 잡의 SSE Queue가 메모리에만 존재하여 컨테이너 재시작 시 in-progress 잡 상태 유실 | 미해결 |
 | BUG-04 | Low | beet list로 파일 경로 조회 시 artist/title 특수문자 포함 쿼리 일부 실패 가능 | 미해결 |
+| ~~BUG-05~~ | ~~Medium~~ | ~~MB recording-only fallback 재검색 시 동명이곡의 다른 아티스트 recording이 반환됨~~ | **수정 완료 (2026-03-09)** |
+| ~~BUG-06~~ | ~~Medium~~ | ~~MB release 선택 시 리마스터판/다른 나라 에디션이 원본보다 앞에 선택될 수 있음~~ | **수정 완료 (2026-03-09)** |
+| ~~BUG-07~~ | ~~Medium~~ | ~~iTunes/Deezer 결과 검증 없이 첫 번째 결과를 사용하여 관련 없는 아티스트의 앨범아트가 사용됨~~ | **수정 완료 (2026-03-09)** |
 
 ---
 
