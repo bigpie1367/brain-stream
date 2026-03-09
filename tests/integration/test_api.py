@@ -174,6 +174,62 @@ def test_get_sse_existing_job_returns_200(client):
         api_module._job_queues.pop(job_id, None)
 
 
+# ── DELETE /api/downloads/{mbid} ─────────────────────────────────────────────
+
+def test_delete_download_returns_404_when_not_found(client):
+    """존재하지 않는 mbid 삭제 시 404를 반환해야 한다."""
+    resp = client.delete("/api/downloads/nonexistent-mbid")
+    assert resp.status_code == 404
+
+
+def test_delete_download_removes_db_record(client, tmp_state_db):
+    """삭제 후 state DB에서 레코드가 제거된다."""
+    from src.state import mark_done
+
+    mark_pending(tmp_state_db, "mbid-del", "Track", "Artist")
+    mark_done(tmp_state_db, "mbid-del")
+
+    resp = client.delete("/api/downloads/mbid-del")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["deleted"] is True
+
+    rows = get_all_downloads(tmp_state_db)
+    assert not any(r["mbid"] == "mbid-del" for r in rows)
+
+
+def test_delete_download_removes_file_when_file_path_set(client, tmp_state_db, tmp_path):
+    """file_path가 DB에 저장돼 있으면 실제 파일을 삭제한다."""
+    from src.state import mark_done
+
+    # 실제 파일 생성
+    dummy_file = tmp_path / "dummy.flac"
+    dummy_file.write_bytes(b"fake audio data")
+
+    mark_pending(tmp_state_db, "mbid-file", "Track", "Artist")
+    mark_done(tmp_state_db, "mbid-file", file_path=str(dummy_file))
+
+    with patch("src.api.threading.Thread") as mock_thread_cls:
+        mock_thread_cls.return_value = MagicMock()
+        resp = client.delete("/api/downloads/mbid-file")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["files_removed"] == 1
+    assert not dummy_file.exists()
+
+
+def test_delete_download_no_file_path_removes_only_db(client, tmp_state_db):
+    """file_path가 None이면 파일 삭제 없이 DB 레코드만 삭제한다."""
+    mark_pending(tmp_state_db, "mbid-nofile", "Track", "Artist")
+
+    resp = client.delete("/api/downloads/mbid-nofile")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["deleted"] is True
+    assert data["files_removed"] == 0
+
+
 # ── GET / (index.html) ────────────────────────────────────────────────────────
 
 def test_get_index_returns_html(client):

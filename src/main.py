@@ -76,15 +76,15 @@ def run_pipeline(cfg):
             mark_failed(cfg.state_db, mbid, "download failed")
             continue
 
-        # 5. Tag + import with beets
-        success = tag_and_import(
+        # 5. Tag + import
+        success, dest_path = tag_and_import(
             file_path, cfg.beets.music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata
         )
         if success:
-            mark_done(cfg.state_db, mbid)
+            mark_done(cfg.state_db, mbid, file_path=dest_path)
             imported_any = True
         else:
-            mark_failed(cfg.state_db, mbid, "beets import failed")
+            mark_failed(cfg.state_db, mbid, "tagging failed")
 
     # 6. Trigger Navidrome scan if anything was imported
     if imported_any:

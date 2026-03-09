@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS downloads (
     attempts      INTEGER NOT NULL DEFAULT 0,
     downloaded_at TEXT,                   -- UTC ISO 8601, 완료 시 기록
     error_msg     TEXT,                   -- 실패 사유
-    source        TEXT DEFAULT 'listenbrainz'  -- 'listenbrainz' | 'manual'
+    source        TEXT DEFAULT 'listenbrainz',  -- 'listenbrainz' | 'manual'
+    file_path     TEXT                    -- 임포트된 파일 경로 (beets 제거 후 직접 관리)
 );
 ```
 
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS downloads (
 | downloaded_at | TEXT | 성공 완료 시각 (UTC) | `2026-03-04T10:23:45` |
 | error_msg | TEXT | 마지막 실패 사유 | `download failed` |
 | source | TEXT | 트랙 출처 | `listenbrainz` / `manual` |
+| file_path | TEXT | 임포트된 파일 경로. 삭제 API 및 enrichment에서 사용 | `/app/data/music/Radiohead/Pablo Honey/Creep.flac` |
 
 ---
 
@@ -73,55 +75,24 @@ CREATE TABLE IF NOT EXISTS downloads (
 
 ---
 
-## 3. beets.db (SQLite)
-
-beets가 자체적으로 관리하는 음악 라이브러리 DB.
-
-**경로**: `data/beets.db` (컨테이너 내 `/app/data/beets.db`)
-
-beets 내부 포맷이므로 직접 수정하지 않음. beets CLI로만 접근:
-
-```bash
-# beets 라이브러리 목록
-docker exec music-bot-temp-music-bot-1 beet list -f '$artist - $title [$album]'
-
-# 특정 아티스트 파일 경로 확인
-docker exec music-bot-temp-music-bot-1 beet list -f '$path' artist:Radiohead
-```
-
----
-
-## 4. 파일시스템 구조
+## 3. 파일시스템 구조
 
 ```
 data/
-├── state.db                    # 다운로드 상태 DB (music-bot 관리)
-├── beets.db                    # beets 라이브러리 DB (beets 관리)
+├── state.db                    # 다운로드 상태 DB (file_path 컬럼 포함)
 ├── staging/                    # 임시 다운로드 디렉토리
 │   └── {mbid}.flac             # 처리 완료 후 자동 삭제
 ├── music/                      # 최종 음악 라이브러리 (Navidrome이 읽음)
 │   ├── {Artist}/
 │   │   └── {Album}/
 │   │       └── {Track}.flac
-│   └── Non-Album/              # 앨범 정보 없는 경우 fallback
-│       └── {Artist}/
-│           └── {Track}.flac
+│   └── Unknown Artist/         # artist 정보 없는 경우 fallback
+│       └── {Track}.flac
 ├── navidrome/                  # Navidrome 자체 DB 및 캐시
 │   ├── navidrome.db
 │   └── cache/
 │       ├── images/             # 앨범아트 캐시
 │       └── backgrounds/
 └── logs/
-    ├── beets-import.log        # beets import 로그 (offset 기반 skip 감지에 사용)
     └── music-bot.log           # music-bot 애플리케이션 로그
 ```
-
----
-
-## 5. beets/state.pickle
-
-beets 임포트 세션 상태. `beets/` 디렉토리 볼륨에 저장.
-
-**경로**: `beets/state.pickle`
-
-자동 관리되는 파일이므로 직접 수정 불필요. 문제 발생 시 삭제 후 재임포트 가능.

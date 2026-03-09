@@ -71,6 +71,22 @@ def test_mark_done_changes_status(tmp_state_db):
     assert rows[0]["downloaded_at"] is not None
 
 
+def test_mark_done_stores_file_path(tmp_state_db):
+    """mark_done에 file_path를 전달하면 DB에 저장된다."""
+    mark_pending(tmp_state_db, "mbid-fp", "Song", "Artist")
+    mark_done(tmp_state_db, "mbid-fp", file_path="/app/data/music/Artist/Album/Song.flac")
+    rows = get_all_downloads(tmp_state_db)
+    assert rows[0]["file_path"] == "/app/data/music/Artist/Album/Song.flac"
+
+
+def test_mark_done_file_path_defaults_to_none(tmp_state_db):
+    """file_path를 전달하지 않으면 None으로 저장된다."""
+    mark_pending(tmp_state_db, "mbid-fp2", "Song", "Artist")
+    mark_done(tmp_state_db, "mbid-fp2")
+    rows = get_all_downloads(tmp_state_db)
+    assert rows[0]["file_path"] is None
+
+
 def test_is_downloaded_true_after_mark_done(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-chk", "Song", "Artist")
     mark_done(tmp_state_db, "mbid-chk")

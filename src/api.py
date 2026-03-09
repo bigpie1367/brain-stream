@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import secrets
 import threading
 import uuid
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 
 from src.pipeline.downloader import download_track
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
-from src.pipeline.tagger import beet_remove_track, tag_and_import
+from src.pipeline.tagger import tag_and_import
 from src.state import (
     delete_download,
     get_all_downloads,
@@ -74,8 +75,8 @@ def _run_download_job(job_id: str, artist: str, track: str):
             _emit(job_id, "failed", "다운로드 실패")
             return
 
-        _emit(job_id, "tagging", "beets 태깅 중...")
-        success = tag_and_import(
+        _emit(job_id, "tagging", "태깅 중...")
+        success, dest_path = tag_and_import(
             file_path,
             cfg.beets.music_dir,
             artist=artist,
@@ -83,11 +84,11 @@ def _run_download_job(job_id: str, artist: str, track: str):
             yt_metadata=yt_metadata,
         )
         if not success:
-            mark_failed(cfg.state_db, mbid, "beets import failed")
+            mark_failed(cfg.state_db, mbid, "tagging failed")
             _emit(job_id, "failed", "태깅 실패")
             return
 
-        mark_done(cfg.state_db, mbid)
+        mark_done(cfg.state_db, mbid, file_path=dest_path)
 
         _emit(job_id, "scanning", "Navidrome 스캔 중...")
         if trigger_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password):
@@ -187,22 +188,29 @@ async def delete_download_entry(mbid: str):
     if record is None:
         raise HTTPException(status_code=404, detail="not found")
 
-    artist = record.get("artist", "")
-    track_name = record.get("track_name", "")
-
-    removed = beet_remove_track(mbid, artist=artist, track_name=track_name)
+    file_path = record.get("file_path") or ""
+    files_removed = 0
+    if file_path:
+        try:
+            os.remove(file_path)
+            files_removed = 1
+            log.info("removed file", file=file_path)
+        except FileNotFoundError:
+            log.info("file already gone, skipping removal", file=file_path)
+        except OSError as exc:
+            log.warning("could not remove file", file=file_path, error=str(exc))
 
     delete_download(_cfg.state_db, mbid)
 
-    if removed:
+    if files_removed:
         threading.Thread(
             target=trigger_scan,
             args=(_cfg.navidrome.url, _cfg.navidrome.username, _cfg.navidrome.password),
             daemon=True,
         ).start()
 
-    log.info("download entry deleted", mbid=mbid, files_removed=len(removed))
-    return {"deleted": True, "files_removed": len(removed)}
+    log.info("download entry deleted", mbid=mbid, files_removed=files_removed)
+    return {"deleted": True, "files_removed": files_removed}
 
 
 @app.post("/api/pipeline/run")

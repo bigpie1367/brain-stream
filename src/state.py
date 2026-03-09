@@ -40,6 +40,11 @@ def init_db(db_path: str):
             conn.execute("ALTER TABLE downloads ADD COLUMN source TEXT DEFAULT 'listenbrainz'")
         except sqlite3.OperationalError:
             pass  # already exists
+        # Migrate: add file_path column if missing
+        try:
+            conn.execute("ALTER TABLE downloads ADD COLUMN file_path TEXT")
+        except sqlite3.OperationalError:
+            pass  # already exists
     log.info("state.db initialised", path=db_path)
 
 
@@ -66,13 +71,13 @@ def mark_downloading(db_path: str, mbid: str):
         """, (mbid,))
 
 
-def mark_done(db_path: str, mbid: str):
+def mark_done(db_path: str, mbid: str, file_path: str = None):
     with _conn(db_path) as conn:
         conn.execute("""
             UPDATE downloads
-            SET status = 'done', downloaded_at = ?
+            SET status = 'done', downloaded_at = ?, file_path = ?
             WHERE mbid = ?
-        """, (datetime.utcnow().isoformat(), mbid))
+        """, (datetime.utcnow().isoformat(), file_path, mbid))
 
 
 def mark_failed(db_path: str, mbid: str, error: str):
@@ -100,7 +105,7 @@ def get_all_downloads(db_path: str, limit: int = 100) -> List[dict]:
     with _conn(db_path) as conn:
         rows = conn.execute("""
             SELECT mbid, track_name, artist, status, source,
-                   attempts, downloaded_at, error_msg
+                   attempts, downloaded_at, error_msg, file_path
             FROM downloads
             ORDER BY rowid DESC
             LIMIT ?
@@ -112,7 +117,7 @@ def get_download_by_mbid(db_path: str, mbid: str) -> Optional[dict]:
     with _conn(db_path) as conn:
         row = conn.execute("""
             SELECT mbid, track_name, artist, status, source,
-                   attempts, downloaded_at, error_msg
+                   attempts, downloaded_at, error_msg, file_path
             FROM downloads
             WHERE mbid = ?
         """, (mbid,)).fetchone()

@@ -1,11 +1,10 @@
 import difflib
 import os
-import subprocess
-import threading
+import re
+import shutil
 import time
 from pathlib import Path
 
-import mediafile
 import mutagen
 import mutagen.flac
 import mutagen.mp4
@@ -16,12 +15,17 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-_IMPORT_LOG = "/app/data/logs/beets-import.log"
-_beet_lock = threading.Lock()  # beet import는 동시 실행 시 log가 오염되므로 직렬화
-_BEET_IMPORT_RETRIES = 3  # skip 감지 시 최대 재시도 횟수
-_BEET_IMPORT_RETRY_DELAY = 10  # 재시도 전 대기 시간(초) — MB API 타임아웃 회복용
 _MB_API = "https://musicbrainz.org/ws/2"
 _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
+
+
+def _sanitize_filename(name: str) -> str:
+    """Remove filesystem-unsafe characters and limit length to 255."""
+    sanitized = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "_", name)
+    sanitized = sanitized.strip(". ")
+    if not sanitized:
+        sanitized = "_"
+    return sanitized[:255]
 
 
 def _mb_search_recording(artist: str, track_name: str) -> str:
@@ -106,32 +110,113 @@ def _mb_search_recording(artist: str, track_name: str) -> str:
         return ""
 
 
-def _write_mb_trackid(file_path: str, mb_trackid: str):
-    """Write MusicBrainz recording ID to file tags to avoid re-searching next run."""
+def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = ""):
+    """Write artist, title, and optionally mb_trackid tags to audio file."""
     try:
         suffix = Path(file_path).suffix.lower()
         if suffix == ".flac":
             f = mutagen.flac.FLAC(file_path)
-            f["musicbrainz_trackid"] = mb_trackid
+            f["artist"] = artist
+            f["title"] = track_name
+            if mb_trackid:
+                f["musicbrainz_trackid"] = mb_trackid
             f.save()
         elif suffix in (".opus", ".ogg"):
             f = mutagen.oggopus.OggOpus(file_path)
-            f["musicbrainz_trackid"] = [mb_trackid]
+            f["artist"] = [artist]
+            f["title"] = [track_name]
+            if mb_trackid:
+                f["musicbrainz_trackid"] = [mb_trackid]
             f.save()
         elif suffix in (".m4a", ".mp4"):
             f = mutagen.mp4.MP4(file_path)
-            f["----:com.apple.iTunes:MusicBrainz Track Id"] = [
-                mutagen.mp4.MP4FreeForm(mb_trackid.encode())
-            ]
+            f["\xa9ART"] = [artist]
+            f["\xa9nam"] = [track_name]
+            if mb_trackid:
+                f["----:com.apple.iTunes:MusicBrainz Track Id"] = [
+                    mutagen.mp4.MP4FreeForm(mb_trackid.encode())
+                ]
             f.save()
         else:
             f = mutagen.File(file_path)
             if f is not None:
-                f["musicbrainz_trackid"] = mb_trackid
+                f["artist"] = artist
+                f["title"] = track_name
+                if mb_trackid:
+                    f["musicbrainz_trackid"] = mb_trackid
                 f.save()
-        log.debug("wrote mb_trackid to file", file=file_path, mb_trackid=mb_trackid)
+        log.debug("wrote tags to file", file=file_path, artist=artist, title=track_name)
     except Exception as exc:
-        log.warning("could not write mb_trackid to file", file=file_path, error=str(exc))
+        log.warning("could not write tags to file", file=file_path, error=str(exc))
+
+
+def _write_album_tag(file_path: str, album: str):
+    """Write album tag to audio file using mutagen."""
+    try:
+        suffix = Path(file_path).suffix.lower()
+        if suffix == ".flac":
+            f = mutagen.flac.FLAC(file_path)
+            f["album"] = album
+            f.save()
+        elif suffix in (".opus", ".ogg"):
+            f = mutagen.oggopus.OggOpus(file_path)
+            f["album"] = [album]
+            f.save()
+        elif suffix in (".m4a", ".mp4"):
+            f = mutagen.mp4.MP4(file_path)
+            f["\xa9alb"] = [album]
+            f.save()
+        else:
+            f = mutagen.File(file_path)
+            if f is not None:
+                f["album"] = album
+                f.save()
+        log.debug("wrote album tag", file=file_path, album=album)
+    except Exception as exc:
+        log.warning("could not write album tag", file=file_path, error=str(exc))
+
+
+def _read_tags(file_path: str) -> dict:
+    """Read artist, title, album, mb_trackid from audio file tags.
+
+    Returns dict with keys: artist, title, album, mb_trackid, has_art.
+    """
+    result = {"artist": "", "title": "", "album": "", "mb_trackid": "", "has_art": False}
+    try:
+        suffix = Path(file_path).suffix.lower()
+        if suffix == ".flac":
+            f = mutagen.flac.FLAC(file_path)
+            result["artist"] = (f.get("artist") or [""])[0]
+            result["title"] = (f.get("title") or [""])[0]
+            result["album"] = (f.get("album") or [""])[0]
+            result["mb_trackid"] = (f.get("musicbrainz_trackid") or [""])[0]
+            result["has_art"] = bool(f.pictures)
+        elif suffix in (".opus", ".ogg"):
+            f = mutagen.oggopus.OggOpus(file_path)
+            result["artist"] = (f.get("artist") or [""])[0]
+            result["title"] = (f.get("title") or [""])[0]
+            result["album"] = (f.get("album") or [""])[0]
+            result["mb_trackid"] = (f.get("musicbrainz_trackid") or [""])[0]
+            result["has_art"] = bool(f.get("metadata_block_picture"))
+        elif suffix in (".m4a", ".mp4"):
+            f = mutagen.mp4.MP4(file_path)
+            result["artist"] = (f.get("\xa9ART") or [""])[0]
+            result["title"] = (f.get("\xa9nam") or [""])[0]
+            result["album"] = (f.get("\xa9alb") or [""])[0]
+            raw_mb = f.get("----:com.apple.iTunes:MusicBrainz Track Id")
+            if raw_mb:
+                result["mb_trackid"] = bytes(raw_mb[0]).decode("utf-8", errors="replace")
+            result["has_art"] = bool(f.get("covr"))
+        else:
+            f = mutagen.File(file_path)
+            if f is not None:
+                result["artist"] = str((f.get("artist") or [""])[0])
+                result["title"] = str((f.get("title") or [""])[0])
+                result["album"] = str((f.get("album") or [""])[0])
+                result["mb_trackid"] = str((f.get("musicbrainz_trackid") or [""])[0])
+    except Exception as exc:
+        log.warning("could not read tags from file", file=file_path, error=str(exc))
+    return result
 
 
 def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
@@ -204,63 +289,8 @@ def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
 
 
 def _pretag(path: Path, artist: str, track_name: str):
-    """Write artist/title tags so beets can match against MusicBrainz."""
-    try:
-        suffix = path.suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(path)
-            f["artist"] = artist
-            f["title"] = track_name
-            f.save()
-        elif suffix in (".opus", ".ogg"):
-            f = mutagen.oggopus.OggOpus(path)
-            f["artist"] = [artist]
-            f["title"] = [track_name]
-            f.save()
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(path)
-            f["\xa9ART"] = [artist]
-            f["\xa9nam"] = [track_name]
-            f.save()
-        else:
-            f = mutagen.File(path)
-            if f is not None:
-                f["artist"] = artist
-                f["title"] = track_name
-                f.save()
-        log.debug("pre-tagged file", file=str(path), artist=artist, title=track_name)
-    except Exception as exc:
-        log.warning("pre-tag failed (continuing anyway)", file=str(path), error=str(exc))
-
-
-def _import_log_size() -> int:
-    try:
-        return os.path.getsize(_IMPORT_LOG)
-    except OSError:
-        return 0
-
-
-def _import_log_tail(offset: int) -> str:
-    try:
-        with open(_IMPORT_LOG, "r", errors="replace") as f:
-            f.seek(offset)
-            return f.read()
-    except OSError:
-        return ""
-
-
-def _beet(*args: str, timeout: int = 60) -> tuple[bool, str]:
-    """Run a beet subcommand. Returns (success, combined_output)."""
-    result = subprocess.run(
-        ["beet"] + list(args),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    output = result.stdout + result.stderr
-    if result.returncode != 0:
-        log.warning("beet subcommand failed", args=args, stderr=result.stderr.strip())
-    return result.returncode == 0, output
+    """Write artist/title tags before enrichment."""
+    _write_tags(str(path), artist, track_name)
 
 
 def _itunes_search(artist: str, track_name: str) -> dict:
@@ -381,9 +411,9 @@ def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
             f.add_picture(pic)
             f.save()
         elif suffix in (".opus", ".ogg"):
-            f = mutagen.oggopus.OggOpus(file_path)
             import base64
 
+            f = mutagen.oggopus.OggOpus(file_path)
             pic = mutagen.flac.Picture()
             pic.type = 3
             pic.mime = content_type
@@ -411,58 +441,6 @@ def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
 def _normalize_for_match(s: str) -> str:
     """Lowercase and strip non-alphanumeric characters for fuzzy comparison."""
     return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
-
-
-def _find_imported_files(artist: str, track_name: str) -> list[str]:
-    """Find all FLAC/Opus files beets imported for this artist.
-
-    Searches by artist only to avoid title mismatch (e.g. user input "butterfly"
-    vs beets-stored "Butter-Fly"). Selects the best match by track_name similarity,
-    falling back to the last item (most recently added) if no similarity found.
-    """
-    ok, output = _beet("list", "-f", "$path", f"artist:{artist}")
-    if not ok or not output.strip():
-        return []
-
-    all_paths = [p for p in output.strip().split("\n") if p.strip()]
-    if not all_paths:
-        return []
-
-    if not track_name:
-        return [all_paths[-1]]
-
-    # Select path whose filename best matches track_name (case-insensitive, no special chars)
-    norm_track = _normalize_for_match(track_name)
-    best_path = None
-    for p in all_paths:
-        norm_filename = _normalize_for_match(Path(p).stem)
-        if norm_track in norm_filename or norm_filename in norm_track:
-            best_path = p
-            break
-
-    if best_path is None:
-        # No similarity match: use the last item (most recently added)
-        best_path = all_paths[-1]
-
-    return [best_path]
-
-
-def _find_imported_file_by_path(staging_path: str, artist: str = "") -> str:
-    """Find the most recently imported file for the given artist.
-
-    The staging filename is not preserved in the beets library path, so
-    path-stem lookup is unreliable. Instead, search by artist and return
-    the last result (most recently added).
-    Falls back to empty string if not found.
-    """
-    if not artist:
-        return ""
-    ok, output = _beet("list", "-f", "$path", f"artist:{artist}")
-    if ok and output.strip():
-        paths = [p for p in output.strip().split("\n") if p.strip()]
-        if paths:
-            return paths[-1]
-    return ""
 
 
 def _embed_art_from_url(file_path: str, url: str):
@@ -512,106 +490,60 @@ def _embed_art_from_url(file_path: str, url: str):
 
 
 def _enrich_track(
-    staging_path: str,
-    music_dir: str,
+    dest_path: str,
     artist: str = "",
     track_name: str = "",
     yt_metadata: dict | None = None,
 ):
-    """After singleton import: resolve album from MB and fetch art.
+    """Resolve album from MB and fetch cover art. Writes tags directly via mutagen."""
+    tags = _read_tags(dest_path)
+    mb_trackid = tags.get("mb_trackid", "")
+    has_album = bool(tags.get("album", ""))
+    has_art = tags.get("has_art", False)
 
-    Uses artist/track to find imported files when available; falls back to
-    staging file path stem query so enrichment runs even when artist/track
-    are empty strings (e.g. some LB pipeline entries).
-    """
-    # Find all imported files matching this track (Bug 2: handle multiple paths)
-    imported_paths: list[str] = []
-    if artist and track_name:
-        imported_paths = _find_imported_files(artist, track_name)
-
-    # Fallback: if artist/track empty or lookup returned nothing, search by artist only
-    if not imported_paths:
-        fallback = _find_imported_file_by_path(staging_path, artist=artist)
-        if fallback:
-            imported_paths = [fallback]
-
-    if not imported_paths:
-        log.warning(
-            "could not find imported track for enrichment",
-            artist=artist,
-            track=track_name,
-            staging_path=staging_path,
-        )
-        return
-
-    # Read metadata from the first matched file to get mb_trackid and current state
-    primary_path = imported_paths[0]
-    try:
-        mf = mediafile.MediaFile(primary_path)
-        mb_trackid = mf.mb_trackid
-        has_album = bool(mf.album)
-        has_art = bool(mf.images)
-    except Exception as exc:
-        log.warning("could not read imported file metadata", file=primary_path, error=str(exc))
-        return
-
-    # 이미 앨범과 아트가 모두 있으면 enrichment 불필요
     if has_album and has_art:
         log.info("track already enriched, skipping", artist=artist, track=track_name)
         return
 
-    # Resolve album using the exact MusicBrainz recording ID
-    # If beets import did not write mb_trackid (matching failed), search MB directly
-    album = ""
-    mb_albumid_candidates: list[str] = []
+    # If mb_trackid not yet in file, search MB directly
     if not mb_trackid and artist and track_name:
         log.info(
-            "mb_trackid missing after beet import, searching MB by artist+title",
+            "mb_trackid missing, searching MB by artist+title",
             artist=artist,
             track=track_name,
         )
         mb_trackid = _mb_search_recording(artist, track_name)
         if mb_trackid:
-            _write_mb_trackid(primary_path, mb_trackid)
+            _write_tags(dest_path, artist, track_name, mb_trackid)
 
+    album = ""
+    mb_albumid_candidates: list[str] = []
     if mb_trackid:
         album, mb_albumid_candidates = _mb_album_from_recording_id(mb_trackid)
 
     if album and not has_album:
-        log.info("setting album tag via beet modify", artist=artist, track=track_name, album=album)
-        # mb_albumid는 설정하지 않음: 트랙마다 다른 release를 매칭하면 Navidrome이 같은 앨범을 2개로 쪼갬
-        # Bug 3: artist/track이 비어있을 때도 동작하도록 path: 조건으로 파일 특정
-        if artist and track_name:
-            _beet("modify", "-y", f"artist:{artist}", f"title:{track_name}", f"album={album}")
-        else:
-            _beet("modify", "-y", f"path:{primary_path}", f"album={album}")
+        log.info("setting album tag", artist=artist, track=track_name, album=album)
+        _write_album_tag(dest_path, album)
 
-    # CAA에서 여러 release 후보를 순서대로 시도
+    # CAA: try multiple release candidates in order
     art_embedded = False
     successful_candidate = None
     if not has_art and mb_albumid_candidates:
         for candidate_id in mb_albumid_candidates:
-            if _embed_cover_art(primary_path, candidate_id):
+            if _embed_cover_art(dest_path, candidate_id):
                 art_embedded = True
                 successful_candidate = candidate_id
                 break
 
-        # 나머지 매칭 파일에도 동일한 아트 임베딩 (성공한 candidate 기준)
-        if art_embedded and successful_candidate and len(imported_paths) > 1:
-            for extra_path in imported_paths[1:]:
-                _embed_cover_art(extra_path, successful_candidate)
-
         if art_embedded:
-            try:
-                has_art = bool(mediafile.MediaFile(primary_path).images)
-            except Exception:
-                has_art = True  # 실패해도 폴백 시도 방지
+            # Re-read to confirm
+            has_art = _read_tags(dest_path).get("has_art", True)
 
-    # iTunes/Deezer 결과 캐시 (앨범명·아트 양쪽에 재사용해 중복 API 호출 방지)
+    # iTunes/Deezer result cache (avoid duplicate API calls)
     itunes_result: dict = {}
     deezer_result: dict = {}
 
-    # 앨범명 fallback: MB 실패 → iTunes → Deezer → YouTube channel
+    # Album fallback: MB failed → iTunes → Deezer → YouTube channel
     if not album and not has_album and artist and track_name:
         itunes_result = _itunes_search(artist, track_name)
         album = itunes_result.get("album", "")
@@ -635,12 +567,9 @@ def _enrich_track(
                 )
 
         if album:
-            if artist and track_name:
-                _beet("modify", "-y", f"artist:{artist}", f"title:{track_name}", f"album={album}")
-            else:
-                _beet("modify", "-y", f"path:{primary_path}", f"album={album}")
+            _write_album_tag(dest_path, album)
 
-    # 커버아트 fallback: CAA 실패 → iTunes → Deezer → YouTube 썸네일
+    # Cover art fallback: CAA failed → iTunes → Deezer → YouTube thumbnail
     if not has_art:
         # iTunes fallback
         if not art_embedded:
@@ -649,10 +578,8 @@ def _enrich_track(
             itunes_art = itunes_result.get("artwork_url", "")
             if itunes_art:
                 log.info("embedding cover art from iTunes", artist=artist, track=track_name, url=itunes_art)
-                _embed_art_from_url(primary_path, itunes_art)
+                _embed_art_from_url(dest_path, itunes_art)
                 art_embedded = True
-                for extra_path in imported_paths[1:]:
-                    _embed_art_from_url(extra_path, itunes_art)
 
         # Deezer fallback
         if not art_embedded:
@@ -661,12 +588,10 @@ def _enrich_track(
             deezer_art = deezer_result.get("artwork_url", "")
             if deezer_art:
                 log.info("embedding cover art from Deezer", artist=artist, track=track_name, url=deezer_art)
-                _embed_art_from_url(primary_path, deezer_art)
+                _embed_art_from_url(dest_path, deezer_art)
                 art_embedded = True
-                for extra_path in imported_paths[1:]:
-                    _embed_art_from_url(extra_path, deezer_art)
 
-        # YouTube 썸네일 — 최후 수단
+        # YouTube thumbnail — last resort
         if not art_embedded and yt_metadata:
             thumbnail_url = yt_metadata.get("thumbnail_url", "")
             if thumbnail_url:
@@ -676,9 +601,7 @@ def _enrich_track(
                     track=track_name,
                     thumbnail_url=thumbnail_url,
                 )
-                _embed_art_from_url(primary_path, thumbnail_url)
-                for extra_path in imported_paths[1:]:
-                    _embed_art_from_url(extra_path, thumbnail_url)
+                _embed_art_from_url(dest_path, thumbnail_url)
 
 
 def tag_and_import(
@@ -687,56 +610,59 @@ def tag_and_import(
     artist: str = "",
     track_name: str = "",
     yt_metadata: dict | None = None,
-) -> bool:
+) -> tuple[bool, str]:
+    """Tag staging file, copy to music_dir, enrich with MB metadata and cover art.
+
+    Returns (success, dest_path). dest_path is empty string on failure.
+    """
     path = Path(staging_file)
     if not path.exists():
         log.error("staging file not found", file=staging_file)
-        return False
+        return False, ""
 
+    # Search MB for recording ID
+    recording_id = ""
     if artist and track_name:
-        _pretag(path, artist, track_name)
-
-    log.info("running beets import", file=staging_file)
-
-    try:
-        # Lock: beet import를 직렬화해 import log 오염 방지
-        with _beet_lock:
-            log_offset = _import_log_size()
-            ok, _ = _beet("import", "-q", "-s", str(path), timeout=120)
-            new_log = _import_log_tail(log_offset)
-
-        if not ok:
-            log.error("beets import command failed", file=staging_file)
-            return False
-
-        already_in_library = new_log and "duplicate-skip" in new_log.lower()
-        skipped = new_log and "skip" in new_log.lower() and not already_in_library
-
-        if skipped:
+        recording_id = _mb_search_recording(artist, track_name)
+        if not recording_id:
             log.error(
-                "beets skipped the file (no match found)",
-                file=staging_file,
-                beets_log=new_log.strip(),
+                "MB recording not found, aborting import",
+                artist=artist,
+                track=track_name,
             )
-            return False
+            _cleanup_staging(path)
+            return False, ""
 
-        if already_in_library:
-            log.info("track already in library", file=staging_file)
-        else:
-            log.info("beets import succeeded", file=staging_file)
+    # Build destination path: music_dir/{artist}/{Unknown Album}/{track}.ext
+    sanitized_artist = _sanitize_filename(artist) if artist else "Unknown Artist"
+    sanitized_track = _sanitize_filename(track_name) if track_name else _sanitize_filename(path.stem)
+    dest_dir = Path(music_dir) / sanitized_artist / "Unknown Album"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / (sanitized_track + path.suffix)
 
-        # Bug 3: artist/track 유무와 관계없이 항상 enrichment 실행
-        _enrich_track(staging_file, music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata)
-
+    # If file already exists at dest, treat as already in library
+    if dest_path.exists():
+        log.info("file already exists in music_dir, treating as duplicate", dest=str(dest_path))
         _cleanup_staging(path)
-        return True
+        _enrich_track(str(dest_path), artist=artist, track_name=track_name, yt_metadata=yt_metadata)
+        return True, str(dest_path)
 
-    except subprocess.TimeoutExpired:
-        log.error("beets import timed out", file=staging_file)
-        return False
-    except FileNotFoundError:
-        log.error("beet command not found — is beets installed?")
-        return False
+    # Copy staging file to destination
+    try:
+        shutil.copy2(str(path), str(dest_path))
+        log.info("copied file to music_dir", src=staging_file, dest=str(dest_path))
+    except OSError as exc:
+        log.error("failed to copy file to music_dir", src=staging_file, dest=str(dest_path), error=str(exc))
+        return False, ""
+
+    # Write initial tags (artist, title, mb_trackid)
+    _write_tags(str(dest_path), artist, track_name, recording_id)
+
+    # Enrich: album from MB + cover art
+    _enrich_track(str(dest_path), artist=artist, track_name=track_name, yt_metadata=yt_metadata)
+
+    _cleanup_staging(path)
+    return True, str(dest_path)
 
 
 def _cleanup_staging(path: Path):
@@ -745,70 +671,3 @@ def _cleanup_staging(path: Path):
         log.debug("staging file removed", file=str(path))
     except OSError as exc:
         log.warning("could not remove staging file", error=str(exc))
-
-
-def beet_remove_track(mbid: str, artist: str = "", track_name: str = "") -> list[str]:
-    """Remove track(s) from beets library and disk. Returns list of removed file paths.
-
-    Query order:
-    1. mb_trackid:{mbid}  — works for real MB UUIDs (LB tracks)
-    2. artist:"{artist}" title:"{track_name}"  — fallback for manual downloads
-    """
-    removed: list[str] = []
-
-    # Collect candidate paths
-    paths: list[str] = []
-
-    # Try mb_trackid first (works for LB tracks with real MB UUIDs)
-    ok, output = _beet("list", "-f", "$path", f"mb_trackid:{mbid}")
-    if ok and output.strip():
-        paths = [p for p in output.strip().split("\n") if p.strip()]
-
-    # Fallback: artist + title query
-    if not paths and artist and track_name:
-        ok, output = _beet("list", "-f", "$path", f"artist:{artist}", f"title:{track_name}")
-        if ok and output.strip():
-            paths = [p for p in output.strip().split("\n") if p.strip()]
-
-    # Filesystem fallback: beets DB가 비어있을 때 직접 탐색
-    if not paths:
-        log.info(
-            "beet_remove_track: beet query returned nothing, falling back to filesystem scan",
-            mbid=mbid,
-            artist=artist,
-            track=track_name,
-        )
-        music_root = "/app/data/music"
-        track_lower = track_name.lower() if track_name else ""
-        artist_lower = artist.lower() if artist else ""
-        for dirpath, _dirnames, filenames in os.walk(music_root):
-            for fname in filenames:
-                if not fname.lower().endswith((".flac", ".opus")):
-                    continue
-                if track_lower and track_lower not in fname.lower():
-                    continue
-                full_path = os.path.join(dirpath, fname)
-                if artist_lower and artist_lower not in full_path.lower():
-                    continue
-                paths.append(full_path)
-
-    if not paths:
-        log.info("beet_remove_track: no files found (beet query + filesystem)", mbid=mbid, artist=artist, track=track_name)
-        return removed
-
-    for file_path in paths:
-        ok, out = _beet("remove", "-d", "-f", f"path:{file_path}")
-        if ok:
-            log.info("beet remove succeeded", file=file_path)
-            removed.append(file_path)
-        else:
-            log.warning("beet remove failed, attempting direct os.remove", file=file_path, output=out)
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    log.info("direct os.remove succeeded", file=file_path)
-                    removed.append(file_path)
-                except OSError as exc:
-                    log.warning("direct os.remove failed", file=file_path, error=str(exc))
-
-    return removed

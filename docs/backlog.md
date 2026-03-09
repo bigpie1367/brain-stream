@@ -51,6 +51,18 @@
 | US-18 | 구조화 로그(structlog)로 파이프라인 각 단계를 추적할 수 있다 | 2026-03-03 |
 | US-19 | Docker Compose 단일 명령으로 전체 스택을 실행할 수 있다 | 2026-03-03 |
 
+### Epic 9: beets 의존성 제거 — MB API 직접 매칭으로 전환 (예정)
+
+| ID | User Story | 완료일 |
+|----|-----------|--------|
+| US-37 | beet import 제거 — `_mb_search_recording` (artist 유사도 검증 포함)으로 직접 MB recording 검색 | 예정 |
+| US-38 | shutil.copy2로 파일 복사, 경로 sanitize (특수문자 제거), `data/music/{Artist}/{Album}/{Track}` 구조 생성 | 예정 |
+| US-39 | beet modify 제거 — mutagen 직접 태그 쓰기 (album, mb_trackid 등) | 예정 |
+| US-40 | beet remove 제거 — `os.remove` + state.db file_path 조회로 대체 | 예정 |
+| US-41 | beet list 제거 — state.db에 `file_path TEXT` 컬럼 추가, mbid로 파일 경로 직접 조회 | 예정 |
+| US-42 | import log / `_beet_lock` 직렬화 로직 제거 | 예정 |
+| US-43 | beets 관련 의존성 제거 (requirements.txt, Dockerfile, beets/config.yaml) | 예정 |
+
 ### Epic 8: 파이프라인 안정성 개선 (2026-03-09)
 
 | ID | User Story | 완료일 |

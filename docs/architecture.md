@@ -77,11 +77,10 @@ External APIs:
 | `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회, `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계) |
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출; `recording_mbid`만 반환하므로 `_lookup_recording(mbid)`로 MB API에서 artist/track 조회 |
 | `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `ytsearch5:` 5개 후보 검색 후 차단 영상 감지 시 다음 후보 retry; `(file_path, yt_metadata)` 튜플 반환 |
-| `src/pipeline/tagger.py` | mutagen 선-태깅 → beets import → MB enrichment → CAA 커버아트 임베딩 (최대 3 release 시도) → YouTube 썸네일/채널명 폴백 |
+| `src/pipeline/tagger.py` | MB API recording 검색 (artist 유사도 검증) → mutagen 전체 태그 쓰기 → shutil 파일 복사 → MB enrichment → CAA/iTunes/Deezer 커버아트 임베딩 → YouTube 썸네일/채널명 폴백 |
 | `src/pipeline/navidrome.py` | Subsonic API token-auth, startScan + getScanStatus 폴링 |
 | `src/utils/logger.py` | structlog 설정 (TTY: 컬러 콘솔, non-TTY: JSON) |
 | `src/static/index.html` | 다크 테마 단일 파일 Web UI |
-| `beets/config.yaml` | beets 설정 (Dockerfile에 번들, 변경 시 재빌드 필요) |
 
 ---
 
@@ -118,27 +117,30 @@ state.db 중복 체크 (mbid 기준)
         │    출력: staging/{mbid}.flac
         │    실패 → mark_failed
         │
-        ├─ mutagen 선-태깅
-        │    artist + title 태그 삽입 (MusicBrainz 매칭 정확도 향상)
+        ├─ _mb_search_recording(artist, track_name)
+        │    primary:  artistname:{artist} AND recording:{track_name}
+        │    fallback: recording:{track_name} + artist-credit 유사도 검증 (0.3 미만 → mark_failed)
+        │    recording_id 없으면 → mark_failed
         │
-        ├─ beet import -q -s (Lock 직렬화)
-        │    import 로그 offset 기반 skip 감지
-        │    skip     → mark_failed
-        │    dup-skip → 성공 처리
-        │    success  → mark_done
+        ├─ shutil.copy2: staging → data/music/{Artist}/{Album}/{Track}.flac
+        │    파일명 sanitize (특수문자 제거)
+        │    state.db: file_path 저장
+        │    mark_done
+        │
+        ├─ mutagen: artist / title / mb_trackid 태그 쓰기
         │
         ├─ yt_metadata 수집 (download_track 반환)
         │    thumbnail_url, channel (YouTube 채널명)
         │
         ├─ _enrich_track()
-        │    imported_paths = beet list -f $path (중복 파일 전체 리스트)
-        │    mediafile → mb_trackid 읽기
+        │    file_path = state.db에서 mbid로 직접 조회
+        │    mb_trackid = mutagen으로 읽기
         │    이미 album+art 있음 → 조기 리턴
         │    MB API /recording/{id}?inc=releases+release-groups
-        │    → beet modify album= (mb_albumid는 기록 안 함)
+        │    → release-date 오름차순 정렬, Official Album 중 최초 release 선택
+        │    → mutagen으로 album 태그 쓰기 (mb_albumid는 기록 안 함)
         │    → coverartarchive.org 최대 3개 release 순차 시도 + mutagen 임베딩
-        │         (모든 중복 파일에 동일하게 임베딩)
-        │    → CAA 전부 실패 or MB 앨범 없음 → YouTube 폴백:
+        │    → CAA 실패 → iTunes (artist 유사도 검증) → Deezer (artist 유사도 검증) → YouTube 폴백:
         │         album = yt_metadata.channel (채널명)
         │         art   = yt_metadata.thumbnail_url 다운로드 + 임베딩
         │
@@ -190,8 +192,7 @@ Daemon Thread 3~N (수동 다운로드 잡별)
 ```
 
 **동시성 제어:**
-- `_beet_lock` (threading.Lock): beet import + import log 읽기를 직렬화
-  - LB 파이프라인과 수동 다운로드 잡이 동시에 beet import 실행 시 로그 오염 방지
+- beet import 제거로 별도 lock 불필요. 각 다운로드 잡은 고유한 mbid 기반 파일명을 사용하므로 파일 충돌 없음.
 
 ---
 
@@ -201,16 +202,13 @@ Daemon Thread 3~N (수동 다운로드 잡별)
 YouTube
   └─ yt-dlp 다운로드
        └─ data/staging/{mbid}.flac   ← 임시 파일
-            └─ beet import -q -s
+            └─ shutil.copy2
                  └─ data/music/{Artist}/{Album}/{Track}.flac  ← 영구 저장
-                      └─ beet modify (album 태그 업데이트)
-                           └─ mutagen (앨범아트 임베딩)
-                                └─ Navidrome 스캔 → 라이브러리 반영
+                      └─ mutagen (album 태그 업데이트 + 앨범아트 임베딩)
+                           └─ Navidrome 스캔 → 라이브러리 반영
 ```
 
-staging 파일은 import 성공/실패 후 삭제됨.
-
-beets-library.db는 named volume `db-data:/app/db`에 위치함 (`/app/db/beets-library.db`).
+staging 파일은 복사 성공/실패 후 삭제됨.
 
 ---
 

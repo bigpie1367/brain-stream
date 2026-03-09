@@ -1,12 +1,15 @@
 """
 tests/unit/test_tagger.py
-tagger.py 단위 테스트
-- _pretag: 실제 FLAC 더미 파일에 mutagen으로 태그 쓰기 검증
-- beet import 결과 파싱 로직: skip → False, duplicate-skip → True
+tagger.py 단위 테스트 (beets 제거 후 MB 직접 매칭 구현 기준)
+
+- _sanitize_filename: 파일시스템 특수문자 제거 검증
+- _write_tags / _read_tags: 실제 FLAC 더미 파일에 mutagen 태그 쓰기/읽기 검증
+- _pretag: 하위 호환 wrapper 검증
+- tag_and_import: MB 검색 실패 → False, 성공 → True + 파일 복사
 - _mb_search_recording fallback: artist 유사도 기반 선택
 - _mb_album_from_recording_id: 날짜 기준 오름차순 정렬
 - _itunes_search / _deezer_search: artist 검증 (유사도 0.4 미만 skip)
-- 외부 프로세스(_beet subprocess, requests)는 mock 처리
+- 외부 네트워크 호출(requests)은 mock 처리
 """
 import os
 from pathlib import Path
@@ -16,9 +19,10 @@ import pytest
 import mutagen.flac
 
 from src.pipeline.tagger import (
+    _sanitize_filename,
     _pretag,
-    _import_log_size,
-    _import_log_tail,
+    _write_tags,
+    _read_tags,
     tag_and_import,
     _mb_search_recording,
     _mb_album_from_recording_id,
@@ -33,31 +37,16 @@ def _make_minimal_flac(path: Path):
     """
     mutagen이 읽을 수 있는 최소 FLAC 파일을 생성한다.
     STREAMINFO 블록을 올바른 값으로 작성한다.
-
-    STREAMINFO 레이아웃 (34 bytes):
-      2B: min_blocksize
-      2B: max_blocksize
-      3B: min_framesize
-      3B: max_framesize
-      -- 8 bytes packed --
-      20 bits: sample_rate (44100 = 0xAC44)
-       3 bits: channels - 1  (2ch -> 1)
-       5 bits: bits_per_sample - 1 (16bit -> 15)
-      36 bits: total_samples (0)
-      16B: MD5 signature (zeros OK)
     """
     min_blocksize = 4096
     max_blocksize = 4096
     min_framesize = 0
     max_framesize = 0
-    sample_rate = 44100   # 0xAC44, 20 bits
-    channels = 2          # stored as channels-1 = 1, 3 bits
-    bits_per_sample = 16  # stored as bps-1 = 15, 5 bits
-    total_samples = 0     # 36 bits
+    sample_rate = 44100
+    channels = 2
+    bits_per_sample = 16
+    total_samples = 0
 
-    # Pack the 8-byte combined field:
-    #   [20:sample_rate | 3:(channels-1) | 5:(bps-1) | 36:total_samples]
-    # = 64 bits total
     combined = 0
     combined |= (sample_rate & 0xFFFFF) << 44
     combined |= ((channels - 1) & 0x7) << 41
@@ -67,16 +56,15 @@ def _make_minimal_flac(path: Path):
     import struct as _struct
     streaminfo = (
         _struct.pack(">HH", min_blocksize, max_blocksize)
-        + _struct.pack(">I", min_framesize)[1:]   # 3 bytes
-        + _struct.pack(">I", max_framesize)[1:]   # 3 bytes
-        + _struct.pack(">Q", combined)             # 8 bytes
-        + b"\x00" * 16                             # MD5
+        + _struct.pack(">I", min_framesize)[1:]
+        + _struct.pack(">I", max_framesize)[1:]
+        + _struct.pack(">Q", combined)
+        + b"\x00" * 16
     )
     assert len(streaminfo) == 34
 
     with open(path, "wb") as fp:
         fp.write(b"fLaC")
-        # last-metadata-block(1) | type=STREAMINFO(0) | length=34
         fp.write(bytes([0x80, 0x00, 0x00, 0x22]))
         fp.write(streaminfo)
 
@@ -85,6 +73,72 @@ def _make_flac(tmp_path: Path, name: str = "test.flac") -> Path:
     p = tmp_path / name
     _make_minimal_flac(p)
     return p
+
+
+# ── _sanitize_filename 테스트 ────────────────────────────────────────────────
+
+def test_sanitize_filename_removes_special_chars():
+    assert "/" not in _sanitize_filename("AC/DC")
+    assert "\\" not in _sanitize_filename("path\\file")
+    assert ":" not in _sanitize_filename("foo:bar")
+    assert "*" not in _sanitize_filename("star*fish")
+    assert "?" not in _sanitize_filename("what?")
+    assert '"' not in _sanitize_filename('say "hello"')
+    assert "<" not in _sanitize_filename("<tag>")
+    assert ">" not in _sanitize_filename("<tag>")
+    assert "|" not in _sanitize_filename("pipe|line")
+
+
+def test_sanitize_filename_limits_length():
+    long_name = "a" * 300
+    assert len(_sanitize_filename(long_name)) <= 255
+
+
+def test_sanitize_filename_nonempty_fallback():
+    # 모두 특수문자인 경우 "_"을 반환
+    result = _sanitize_filename("///")
+    assert result != ""
+    assert len(result) > 0
+
+
+def test_sanitize_filename_normal_name_unchanged():
+    assert _sanitize_filename("Radiohead") == "Radiohead"
+    assert _sanitize_filename("Pablo Honey") == "Pablo Honey"
+
+
+# ── _write_tags / _read_tags 테스트 ──────────────────────────────────────────
+
+def test_write_tags_and_read_tags_flac(tmp_path):
+    """FLAC 파일에 tags를 쓰고 다시 읽어서 일치하는지 검증한다."""
+    flac_path = _make_flac(tmp_path)
+
+    _write_tags(str(flac_path), "Radiohead", "Creep", "some-mb-uuid")
+
+    tags = _read_tags(str(flac_path))
+    assert tags["artist"] == "Radiohead"
+    assert tags["title"] == "Creep"
+    assert tags["mb_trackid"] == "some-mb-uuid"
+
+
+def test_write_tags_without_mb_trackid(tmp_path):
+    """mb_trackid 없이 태그를 쓰면 빈 문자열로 읽힌다."""
+    flac_path = _make_flac(tmp_path)
+
+    _write_tags(str(flac_path), "Artist", "Track")
+
+    tags = _read_tags(str(flac_path))
+    assert tags["artist"] == "Artist"
+    assert tags["title"] == "Track"
+    assert tags["mb_trackid"] == ""
+
+
+def test_read_tags_nonexistent_file_returns_defaults():
+    """존재하지 않는 파일에 _read_tags를 호출하면 기본값 dict를 반환한다."""
+    tags = _read_tags("/nonexistent/path/file.flac")
+    assert tags["artist"] == ""
+    assert tags["title"] == ""
+    assert tags["mb_trackid"] == ""
+    assert tags["has_art"] is False
 
 
 # ── _pretag 테스트 ────────────────────────────────────────────────────────────
@@ -104,7 +158,6 @@ def test_pretag_overwrites_existing_tags(tmp_path):
     """이미 태그가 있는 FLAC 파일에 _pretag를 호출하면 태그가 덮어씌워진다."""
     flac_path = _make_flac(tmp_path)
 
-    # 먼저 기존 태그 기록
     f = mutagen.flac.FLAC(flac_path)
     f["artist"] = "Old Artist"
     f["title"] = "Old Title"
@@ -120,207 +173,141 @@ def test_pretag_overwrites_existing_tags(tmp_path):
 def test_pretag_nonexistent_file_does_not_raise(tmp_path):
     """존재하지 않는 파일에 대해 _pretag는 예외를 발생시키지 않는다 (경고 로그만)."""
     bad_path = tmp_path / "nonexistent.flac"
-    # 예외 없이 조용히 실패해야 한다
     _pretag(bad_path, artist="Artist", track_name="Track")
 
 
-# ── _import_log_size / _import_log_tail 테스트 ───────────────────────────────
+# ── tag_and_import 테스트 ─────────────────────────────────────────────────────
 
-def test_import_log_size_returns_zero_when_no_file(monkeypatch):
-    """import log 파일이 없으면 0을 반환한다."""
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", "/nonexistent/path/beets.log")
-    assert _import_log_size() == 0
-
-
-def test_import_log_size_returns_file_size(tmp_path, monkeypatch):
-    log_file = tmp_path / "beets-import.log"
-    log_file.write_text("hello world")
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", str(log_file))
-    assert _import_log_size() == len("hello world")
-
-
-def test_import_log_tail_returns_content_after_offset(tmp_path, monkeypatch):
-    log_file = tmp_path / "beets-import.log"
-    log_file.write_text("BEFORE\nAFTER\n")
-    offset = len("BEFORE\n")
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", str(log_file))
-    tail = _import_log_tail(offset)
-    assert tail == "AFTER\n"
-
-
-def test_import_log_tail_returns_empty_when_no_file(monkeypatch):
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", "/nonexistent/beets.log")
-    assert _import_log_tail(0) == ""
-
-
-# ── tag_and_import: skip 감지 ─────────────────────────────────────────────────
-
-def test_tag_and_import_returns_false_when_beets_skips(tmp_path, monkeypatch):
-    """
-    beet import 후 import log에 'skip' 키워드가 있으면 False를 반환한다.
-    """
-    flac_path = _make_flac(tmp_path)
-    log_file = tmp_path / "beets-import.log"
-    log_file.write_text("")
-
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", str(log_file))
-
-    def fake_beet(*args, timeout=60):
-        # import 호출 시 log에 'skip' 기록
-        if args and args[0] == "import":
-            log_file.write_text("Skipping.\n")
-        return True, ""
-
-    monkeypatch.setattr("src.pipeline.tagger._beet", fake_beet)
-
-    result = tag_and_import(
-        str(flac_path),
-        music_dir=str(tmp_path / "music"),
-        artist="Artist",
-        track_name="Track",
-    )
-    assert result is False
-
-
-def test_tag_and_import_returns_true_when_duplicate_skip(tmp_path, monkeypatch):
-    """
-    beet import 후 import log에 'duplicate-skip' 키워드가 있으면
-    이미 라이브러리에 있는 것으로 간주해 True를 반환한다.
-    """
-    flac_path = _make_flac(tmp_path)
-    log_file = tmp_path / "beets-import.log"
-    log_file.write_text("")
-
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", str(log_file))
-
-    def fake_beet(*args, timeout=60):
-        if args and args[0] == "import":
-            log_file.write_text("Duplicate-skip.\n")
-        # list 호출에는 빈 결과 반환 (enrich 단계)
-        return True, ""
-
-    monkeypatch.setattr("src.pipeline.tagger._beet", fake_beet)
-    # _enrich_track 내부의 _find_imported_file과 mediafile 호출도 mock
-    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
-
-    result = tag_and_import(
-        str(flac_path),
-        music_dir=str(tmp_path / "music"),
-        artist="Artist",
-        track_name="Track",
-    )
-    assert result is True
-
-
-def test_tag_and_import_returns_true_on_clean_import(tmp_path, monkeypatch):
-    """
-    beet import가 정상적으로 완료되고 log에 skip 관련 키워드가 없으면 True를 반환한다.
-    """
-    flac_path = _make_flac(tmp_path)
-    log_file = tmp_path / "beets-import.log"
-    log_file.write_text("")
-
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", str(log_file))
-
-    def fake_beet(*args, timeout=60):
-        # import 성공, log에 아무것도 추가 안 함
-        return True, ""
-
-    monkeypatch.setattr("src.pipeline.tagger._beet", fake_beet)
-    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
-
-    result = tag_and_import(
-        str(flac_path),
-        music_dir=str(tmp_path / "music"),
-        artist="Artist",
-        track_name="Track",
-    )
-    assert result is True
-
-
-def test_tag_and_import_returns_false_when_file_not_found(tmp_path, monkeypatch):
-    """staging 파일이 없으면 즉시 False를 반환한다."""
+def test_tag_and_import_returns_false_when_file_not_found(tmp_path):
+    """staging 파일이 없으면 즉시 (False, '') 를 반환한다."""
     missing = tmp_path / "missing.flac"
-    result = tag_and_import(
+    success, dest = tag_and_import(
         str(missing),
         music_dir=str(tmp_path / "music"),
     )
-    assert result is False
+    assert success is False
+    assert dest == ""
 
 
-def test_tag_and_import_returns_false_when_beet_fails(tmp_path, monkeypatch):
-    """beet import 명령이 exit code != 0으로 실패하면 False를 반환한다."""
+def test_tag_and_import_returns_false_when_mb_search_fails(tmp_path, monkeypatch):
+    """MB 검색이 빈 문자열을 반환하면 (False, '') 를 반환한다."""
     flac_path = _make_flac(tmp_path)
-    log_file = tmp_path / "beets-import.log"
-    log_file.write_text("")
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: "")
 
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", str(log_file))
-
-    def fake_beet(*args, timeout=60):
-        return False, "error output"
-
-    monkeypatch.setattr("src.pipeline.tagger._beet", fake_beet)
-
-    result = tag_and_import(
+    success, dest = tag_and_import(
         str(flac_path),
         music_dir=str(tmp_path / "music"),
         artist="Artist",
         track_name="Track",
     )
-    assert result is False
+    assert success is False
+    assert dest == ""
 
 
-def test_tag_and_import_returns_false_on_timeout(tmp_path, monkeypatch):
-    """beet import가 TimeoutExpired를 발생시키면 False를 반환한다."""
-    import subprocess
+def test_tag_and_import_copies_file_on_success(tmp_path, monkeypatch):
+    """MB 검색 성공 시 파일을 music_dir에 복사하고 (True, dest_path)를 반환한다."""
     flac_path = _make_flac(tmp_path)
-    log_file = tmp_path / "beets-import.log"
-    log_file.write_text("")
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: "fake-recording-id")
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
 
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", str(log_file))
-
-    def fake_beet(*args, timeout=60):
-        raise subprocess.TimeoutExpired(cmd="beet", timeout=timeout)
-
-    monkeypatch.setattr("src.pipeline.tagger._beet", fake_beet)
-
-    result = tag_and_import(
+    music_dir = tmp_path / "music"
+    success, dest = tag_and_import(
         str(flac_path),
-        music_dir=str(tmp_path / "music"),
-        artist="Artist",
-        track_name="Track",
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
     )
-    assert result is False
+    assert success is True
+    assert dest != ""
+    assert Path(dest).exists()
 
 
-def test_tag_and_import_returns_false_when_beet_not_found(tmp_path, monkeypatch):
-    """beet 명령이 없을 때(FileNotFoundError) False를 반환한다."""
+def test_tag_and_import_staging_file_removed_after_success(tmp_path, monkeypatch):
+    """성공 시 staging 파일이 삭제된다."""
     flac_path = _make_flac(tmp_path)
-    log_file = tmp_path / "beets-import.log"
-    log_file.write_text("")
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: "fake-recording-id")
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
 
-    monkeypatch.setattr("src.pipeline.tagger._IMPORT_LOG", str(log_file))
-
-    def fake_beet(*args, timeout=60):
-        raise FileNotFoundError("beet not found")
-
-    monkeypatch.setattr("src.pipeline.tagger._beet", fake_beet)
-
-    result = tag_and_import(
+    music_dir = tmp_path / "music"
+    success, dest = tag_and_import(
         str(flac_path),
-        music_dir=str(tmp_path / "music"),
-        artist="Artist",
-        track_name="Track",
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
     )
-    assert result is False
+    assert success is True
+    assert not flac_path.exists()
+
+
+def test_tag_and_import_dest_path_contains_artist(tmp_path, monkeypatch):
+    """복사된 파일 경로에 sanitized artist 이름이 포함된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: "fake-recording-id")
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+
+    music_dir = tmp_path / "music"
+    success, dest = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+    )
+    assert success is True
+    assert "Radiohead" in dest
+
+
+def test_tag_and_import_duplicate_file_returns_true(tmp_path, monkeypatch):
+    """이미 dest 경로에 파일이 존재하면 duplicate로 처리해 True를 반환한다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: "fake-recording-id")
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+
+    music_dir = tmp_path / "music"
+    # 첫 번째 import
+    success1, dest1 = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+    )
+    assert success1 is True
+
+    # 두 번째 import: 동일 경로에 파일이 이미 존재
+    flac_path2 = _make_flac(tmp_path, name="test2.flac")
+    success2, dest2 = tag_and_import(
+        str(flac_path2),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+    )
+    assert success2 is True
+
+
+def test_tag_and_import_no_artist_no_mb_search(tmp_path, monkeypatch):
+    """artist/track_name이 없으면 MB 검색을 건너뛰고 파일을 복사한다."""
+    flac_path = _make_flac(tmp_path)
+    mb_called = []
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: mb_called.append((a, t)) or "",
+    )
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+
+    music_dir = tmp_path / "music"
+    success, dest = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+    )
+    # artist/track이 없으면 MB 검색 호출 없이 파일 복사
+    assert mb_called == []
+    assert success is True
+    assert dest != ""
 
 
 # ── _mb_search_recording fallback: artist 유사도 기반 선택 ─────────────────────
 
 def test_mb_search_recording_fallback_picks_best_artist_match(monkeypatch):
-    """
-    수정 1: fallback 재검색 결과에서 artist-credits를 비교해 가장 유사한 recording을 반환한다.
-    """
+    """fallback 재검색 결과에서 artist-credits를 비교해 가장 유사한 recording을 반환한다."""
     call_count = [0]
 
     def fake_get(url, params=None, headers=None, timeout=10):
@@ -328,10 +315,8 @@ def test_mb_search_recording_fallback_picks_best_artist_match(monkeypatch):
         resp = MagicMock()
         resp.raise_for_status = lambda: None
         if call_count[0] == 1:
-            # 첫 번째 호출(artistname+recording): 결과 없음
             resp.json.return_value = {"recordings": []}
         else:
-            # 두 번째 호출(recording-only): 2개 후보
             resp.json.return_value = {
                 "recordings": [
                     {
@@ -358,9 +343,7 @@ def test_mb_search_recording_fallback_picks_best_artist_match(monkeypatch):
 
 
 def test_mb_search_recording_fallback_returns_empty_when_below_threshold(monkeypatch):
-    """
-    수정 1: fallback 결과의 모든 artist 유사도가 0.3 미만이면 빈 문자열을 반환한다.
-    """
+    """fallback 결과의 모든 artist 유사도가 0.3 미만이면 빈 문자열을 반환한다."""
     call_count = [0]
 
     def fake_get(url, params=None, headers=None, timeout=10):
@@ -390,9 +373,7 @@ def test_mb_search_recording_fallback_returns_empty_when_below_threshold(monkeyp
 
 
 def test_mb_search_recording_fallback_returns_empty_when_no_results(monkeypatch):
-    """
-    수정 1: fallback 재검색 결과도 없으면 빈 문자열을 반환한다.
-    """
+    """fallback 재검색 결과도 없으면 빈 문자열을 반환한다."""
     call_count = [0]
 
     def fake_get(url, params=None, headers=None, timeout=10):
@@ -412,9 +393,7 @@ def test_mb_search_recording_fallback_returns_empty_when_no_results(monkeypatch)
 # ── _mb_album_from_recording_id: 날짜 기준 오름차순 정렬 ─────────────────────────
 
 def test_mb_album_picks_earliest_official_album_release(monkeypatch):
-    """
-    수정 2: Official Album release 중 date 오름차순으로 정렬해 가장 오래된 것을 선택한다.
-    """
+    """Official Album release 중 date 오름차순으로 정렬해 가장 오래된 것을 선택한다."""
     def fake_get(url, params=None, headers=None, timeout=10):
         resp = MagicMock()
         resp.raise_for_status = lambda: None
@@ -451,15 +430,12 @@ def test_mb_album_picks_earliest_official_album_release(monkeypatch):
     album, candidates = _mb_album_from_recording_id("some-recording-id")
     assert album == "Pablo Honey"
     assert candidates[0] == "original-1993"
-    # 날짜순으로 최대 3개
     assert "remaster-2005" in candidates
     assert "jp-edition-1993" in candidates
 
 
 def test_mb_album_fallback_picks_earliest_release(monkeypatch):
-    """
-    수정 2: Official Album이 없을 때 fallback releases도 date 오름차순으로 정렬한다.
-    """
+    """Official Album이 없을 때 fallback releases도 date 오름차순으로 정렬한다."""
     def fake_get(url, params=None, headers=None, timeout=10):
         resp = MagicMock()
         resp.raise_for_status = lambda: None
@@ -492,9 +468,7 @@ def test_mb_album_fallback_picks_earliest_release(monkeypatch):
 
 
 def test_mb_album_releases_without_date_sorted_last(monkeypatch):
-    """
-    수정 2: date가 없는 release는 맨 뒤로 정렬된다.
-    """
+    """date가 없는 release는 맨 뒤로 정렬된다."""
     def fake_get(url, params=None, headers=None, timeout=10):
         resp = MagicMock()
         resp.raise_for_status = lambda: None
@@ -529,10 +503,7 @@ def test_mb_album_releases_without_date_sorted_last(monkeypatch):
 # ── _itunes_search: artist 검증 ───────────────────────────────────────────────
 
 def test_itunes_search_skips_low_similarity_artist(monkeypatch):
-    """
-    수정 3: iTunes 결과의 artistName 유사도가 0.4 미만이면 해당 결과를 skip한다.
-    모두 미달이면 빈 dict를 반환한다.
-    """
+    """iTunes 결과의 artistName 유사도가 0.4 미만이면 빈 dict를 반환한다."""
     def fake_get(url, params=None, headers=None, timeout=10):
         resp = MagicMock()
         resp.raise_for_status = lambda: None
@@ -554,11 +525,7 @@ def test_itunes_search_skips_low_similarity_artist(monkeypatch):
 
 
 def test_itunes_search_returns_first_matching_artist(monkeypatch):
-    """
-    수정 3: iTunes 결과 중 유사도 0.4 이상인 첫 번째 결과를 반환한다.
-    첫 번째 결과의 artistName이 임계값 미만(XYZ)이고 두 번째 결과가 일치할 때
-    두 번째 결과를 반환한다.
-    """
+    """iTunes 결과 중 유사도 0.4 이상인 첫 번째 결과를 반환한다."""
     def fake_get(url, params=None, headers=None, timeout=10):
         resp = MagicMock()
         resp.raise_for_status = lambda: None
@@ -588,10 +555,7 @@ def test_itunes_search_returns_first_matching_artist(monkeypatch):
 # ── _deezer_search: artist 검증 ───────────────────────────────────────────────
 
 def test_deezer_search_skips_low_similarity_artist(monkeypatch):
-    """
-    수정 3: Deezer 결과의 artist.name 유사도가 0.4 미만이면 해당 결과를 skip한다.
-    모두 미달이면 빈 dict를 반환한다.
-    """
+    """Deezer 결과의 artist.name 유사도가 0.4 미만이면 빈 dict를 반환한다."""
     def fake_get(url, params=None, headers=None, timeout=10):
         resp = MagicMock()
         resp.raise_for_status = lambda: None
@@ -612,9 +576,7 @@ def test_deezer_search_skips_low_similarity_artist(monkeypatch):
 
 
 def test_deezer_search_returns_first_matching_artist(monkeypatch):
-    """
-    수정 3: Deezer 결과 중 유사도 0.4 이상인 첫 번째 결과를 반환한다.
-    """
+    """Deezer 결과 중 유사도 0.4 이상인 첫 번째 결과를 반환한다."""
     def fake_get(url, params=None, headers=None, timeout=10):
         resp = MagicMock()
         resp.raise_for_status = lambda: None

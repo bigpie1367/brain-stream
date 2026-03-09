@@ -24,19 +24,6 @@ if "yt_dlp" not in sys.modules:
     sys.modules["yt_dlp"] = _yt_dlp_stub
     sys.modules["yt_dlp.utils"] = _utils_stub
 
-# mediafile: beets 설치 시 함께 설치되는 패키지. 로컬에 beets가 없으면 stub으로 대체한다.
-if "mediafile" not in sys.modules:
-    _mediafile_stub = types.ModuleType("mediafile")
-
-    class _MediaFile:
-        def __init__(self, path):
-            self.mb_trackid = None
-            self.album = None
-            self.images = []
-
-    _mediafile_stub.MediaFile = _MediaFile
-    sys.modules["mediafile"] = _mediafile_stub
-
 # schedule: 스케줄러 라이브러리. 로컬에 없으면 stub으로 대체한다.
 if "schedule" not in sys.modules:
     _schedule_stub = types.ModuleType("schedule")
