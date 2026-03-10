@@ -77,19 +77,20 @@ ListenBrainz /cf/recommendation
       차단 영상(payment/private/members-only) 감지 → 다음 후보 retry
       5개 소진 시 "ytsearch1:" 폴백 / FLAC 우선 → Opus fallback
   → download_track() returns (file_path, yt_metadata) — yt_metadata: {thumbnail_url, channel}
-  → shutil.copy2: staging → data/music/{Artist}/Unknown Album/{Track}.ext
-  → mutagen: artist / title / mb_trackid 초기 태그 쓰기
-  → _enrich_track():
+  → mutagen: staging 파일에 artist / title / mb_trackid 초기 태그 쓰기
+  → _enrich_track() — staging 파일에서 직접 실행:
       앨범명 결정 순서:
         1. iTunes Search API (artist 유사도 0.4 이상)
         2. Deezer API (artist 유사도 0.4 이상)
         3. MB recording → release 조회 (Official Album, 최초 release 선택)
         4. YouTube channel 이름 (최후 수단)
+        5. 모두 실패 시 → "Unknown Album"
       커버아트 결정 순서:
         1. Cover Art Archive (mb_albumid_candidates가 있을 때, 최대 3개 시도)
         2. iTunes artwork URL
         3. Deezer artwork URL
         4. YouTube thumbnail (최후 수단)
+  → shutil.copy2: staging → data/music/{Artist}/{Album}/{Track}.ext (앨범명 기준 최종 경로 결정)
   → Navidrome Subsonic API startScan + poll
 ```
 

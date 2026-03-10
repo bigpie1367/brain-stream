@@ -128,17 +128,12 @@ state.db 중복 체크 (mbid 기준)
         │                        artist-credit + aliases 유사도 0.3 이상인 것 선택
         │    recording_id 없으면 → mark_failed
         │
-        ├─ shutil.copy2: staging → data/music/{Artist}/Unknown Album/{Track}.ext
-        │    파일명 sanitize (특수문자 제거)
-        │    state.db: file_path 저장
-        │    mark_done
-        │
-        ├─ mutagen: artist / title / mb_trackid 초기 태그 쓰기
+        ├─ mutagen: staging 파일에 artist / title / mb_trackid 초기 태그 쓰기
         │
         ├─ yt_metadata 수집 (download_track 반환)
         │    thumbnail_url, channel (YouTube 채널명)
         │
-        ├─ _enrich_track()
+        ├─ _enrich_track()  ← staging 파일에서 직접 실행
         │    이미 album+art 있음 → 조기 리턴
         │
         │    [앨범명 결정 순서]
@@ -148,12 +143,18 @@ state.db 중복 체크 (mbid 기준)
         │       → Official Album 중 최초 release 선택 → album 태그 쓰기
         │       → mb_albumid는 기록 안 함 (Navidrome 앨범 분리 방지)
         │    4. YouTube channel → album 태그 쓰기 (최후 수단)
+        │    5. 모두 실패 시 → "Unknown Album" 태그 쓰기
         │
         │    [커버아트 결정 순서]
         │    1. Cover Art Archive: mb_albumid_candidates 최대 3개 순차 시도 + mutagen 임베딩
         │    2. iTunes artwork URL → mutagen 임베딩
         │    3. Deezer artwork URL → mutagen 임베딩
         │    4. YouTube thumbnail_url → mutagen 임베딩 (최후 수단)
+        │
+        ├─ shutil.copy2: staging → data/music/{Artist}/{Album}/{Track}.ext
+        │    앨범명 기준으로 최종 경로 결정 (파일명 sanitize)
+        │    staging 원본 삭제
+        │    state.db: file_path 저장 → mark_done
         │
         └─ (모든 트랙 완료 후)
            Navidrome startScan → getScanStatus 폴링 → 완료 대기

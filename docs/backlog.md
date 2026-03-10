@@ -101,6 +101,9 @@
 
 | ID | 심각도 | 설명 | 현황 |
 |----|--------|------|------|
+| ~~BUG-08~~ | ~~Medium~~ | ~~앨범 매칭 성공 후에도 파일이 Unknown Album/ 폴더에 남아있음~~ | **수정 완료 (2026-03-10)** |
+| ~~BUG-09~~ | ~~Medium~~ | ~~모든 enrichment 실패 시 album 태그 미기록 → Navidrome "Non-album" 표시~~ | **수정 완료 (2026-03-10)** |
+| ~~BUG-10~~ | ~~Medium~~ | ~~rematch/apply에서 Navidrome getSong 절대 경로에 /app/data/music/ 이중 접두사 → 파일 미발견~~ | **수정 완료 (2026-03-10)** |
 | BUG-01 | Low | staging 디렉토리에 이전 세션의 `.flac` 파일이 남아있을 수 있음 (컨테이너 재시작 시) | 미해결 |
 | BUG-02 | Low | Navidrome 자동 스캔 비활성화 설정(`ND_SCANSCHEDULE: "0"`)이 docker-compose.yml에 하드코딩됨 | 미해결 |
 | BUG-03 | Low | 수동 다운로드 잡의 SSE Queue가 메모리에만 존재하여 컨테이너 재시작 시 in-progress 잡 상태 유실 | 미해결 |
