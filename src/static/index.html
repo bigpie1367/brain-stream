@@ -727,6 +727,7 @@
       font-size: 0.85rem;
       font-weight: 500;
       padding: 8px 16px;
+      min-width: 88px;
       white-space: nowrap;
       align-self: flex-end;
       transition: background 0.12s;
@@ -1867,8 +1868,8 @@
         const text = await res.text();
         throw new Error(text || 'HTTP ' + res.status);
       }
-      const candidates = await res.json();
-      renderRematchCandidates(candidates);
+      const data = await res.json();
+      renderRematchCandidates(data.candidates);
     } catch (e) {
       candidatesEl.innerHTML = '';
       setRematchFeedback('error', '검색 실패: ' + e.message);
