@@ -1357,3 +1357,61 @@ def test_enrich_track_unknown_album_not_written_when_yt_channel_available(tmp_pa
 
     tags = _read_tags(str(flac_path))
     assert tags["album"] == "ArtistVEVO"
+
+
+# ── tag_and_import: 파일 이동 로직 ────────────────────────────────────────────
+
+
+def test_tag_and_import_moves_file_to_album_folder(tmp_path, monkeypatch):
+    """앨범 매칭 성공 시 Unknown Album/ 에서 실제 앨범 폴더로 파일이 이동된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: ["fake-recording-id"]
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: "Pablo Honey",
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    # 파일이 실제 앨범 폴더에 있어야 한다
+    assert "Pablo Honey" in str(dest_path)
+    assert "Unknown Album" not in str(dest_path)
+    assert dest_path.exists()
+    # Unknown Album 폴더에 파일이 없어야 한다
+    unknown_album_path = music_dir / "Radiohead" / "Unknown Album" / "Creep.flac"
+    assert not unknown_album_path.exists()
+
+
+def test_tag_and_import_stays_in_unknown_album_when_no_match(tmp_path, monkeypatch):
+    """앨범 매칭 실패 시 (Unknown Album 반환) 파일이 Unknown Album/ 에 그대로 남는다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: []
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: "Unknown Album",
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    assert "Unknown Album" in str(dest_path)
+    assert dest_path.exists()

@@ -78,7 +78,8 @@ def run_pipeline(cfg):
 
         # 5. Tag + import
         success, dest_path = tag_and_import(
-            file_path, cfg.beets.music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata
+            file_path, cfg.beets.music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata,
+            db_path=cfg.state_db, mbid=mbid,
         )
         if success:
             mark_done(cfg.state_db, mbid, file_path=dest_path)

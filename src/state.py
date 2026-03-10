@@ -124,6 +124,14 @@ def get_download_by_mbid(db_path: str, mbid: str) -> Optional[dict]:
     return dict(row) if row is not None else None
 
 
+def update_file_path(db_path: str, mbid: str, file_path: str):
+    with _conn(db_path) as conn:
+        conn.execute(
+            "UPDATE downloads SET file_path = ? WHERE mbid = ?",
+            (file_path, mbid),
+        )
+
+
 def delete_download(db_path: str, mbid: str):
     with _conn(db_path) as conn:
         conn.execute("DELETE FROM downloads WHERE mbid = ?", (mbid,))

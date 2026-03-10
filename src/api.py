@@ -98,6 +98,8 @@ def _run_download_job(job_id: str, artist: str, track: str):
             artist=artist,
             track_name=track,
             yt_metadata=yt_metadata,
+            db_path=cfg.state_db,
+            mbid=mbid,
         )
         if not success:
             mark_failed(cfg.state_db, mbid, "tagging failed")

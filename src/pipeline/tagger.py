@@ -705,11 +705,12 @@ def _enrich_track(
     track_name: str = "",
     yt_metadata: dict | None = None,
     recording_ids: list[str] | None = None,
-):
+) -> str:
     """Resolve album via iTunes/Deezer, then fetch cover art from CAA/iTunes/Deezer.
 
     Album resolution priority: iTunes → Deezer → MB recording → YouTube channel.
     Cover art priority: CAA → iTunes → Deezer → YouTube thumbnail.
+    Returns the final album string (empty string if none).
     """
     tags = _read_tags(dest_path)
     mb_trackid = tags.get("mb_trackid", "")
@@ -718,7 +719,7 @@ def _enrich_track(
 
     if has_album and has_art:
         log.info("track already enriched, skipping", artist=artist, track=track_name)
-        return
+        return tags.get("album", "")
 
     # ── 1. Album resolution: iTunes → Deezer first ──────────────────────
     album = ""
@@ -844,6 +845,52 @@ def _enrich_track(
                 )
                 _embed_art_from_url(dest_path, thumbnail_url)
 
+    return album
+
+
+def _move_to_album_folder(
+    dest_path: Path,
+    music_dir: str,
+    sanitized_artist: str,
+    sanitized_track: str,
+    album: str,
+    db_path: str | None,
+    mbid: str | None,
+) -> Path:
+    """Move file from Unknown Album/ to actual album folder if album is known.
+
+    Returns the final Path (new location on success, original location on failure or no-op).
+    """
+    if not album or album == "Unknown Album":
+        return dest_path
+
+    from src.state import update_file_path
+
+    sanitized_album = _sanitize_filename(album)
+    new_dir = Path(music_dir) / sanitized_artist / sanitized_album
+    new_dir.mkdir(parents=True, exist_ok=True)
+    new_path = new_dir / dest_path.name
+
+    try:
+        shutil.move(str(dest_path), str(new_path))
+        log.info(
+            "moved file to album folder",
+            src=str(dest_path),
+            dest=str(new_path),
+            album=album,
+        )
+        if db_path and mbid:
+            update_file_path(db_path, mbid, str(new_path))
+        return new_path
+    except OSError as exc:
+        log.warning(
+            "could not move file to album folder, keeping original path",
+            src=str(dest_path),
+            dest=str(new_path),
+            error=str(exc),
+        )
+        return dest_path
+
 
 def tag_and_import(
     staging_file: str,
@@ -851,10 +898,13 @@ def tag_and_import(
     artist: str = "",
     track_name: str = "",
     yt_metadata: dict | None = None,
+    db_path: str | None = None,
+    mbid: str | None = None,
 ) -> tuple[bool, str]:
     """Tag staging file, copy to music_dir, enrich with MB metadata and cover art.
 
     Returns (success, dest_path). dest_path is empty string on failure.
+    If db_path and mbid are provided, updates file_path in state.db after file move.
     """
     path = Path(staging_file)
     if not path.exists():
@@ -885,12 +935,15 @@ def tag_and_import(
     if dest_path.exists():
         log.info("file already exists in music_dir, treating as duplicate", dest=str(dest_path))
         _cleanup_staging(path)
-        _enrich_track(
+        album = _enrich_track(
             str(dest_path),
             artist=artist,
             track_name=track_name,
             yt_metadata=yt_metadata,
             recording_ids=recording_ids if recording_ids else None,
+        )
+        dest_path = _move_to_album_folder(
+            dest_path, music_dir, sanitized_artist, sanitized_track, album, db_path, mbid
         )
         return True, str(dest_path)
 
@@ -911,12 +964,16 @@ def tag_and_import(
     _write_tags(str(dest_path), artist, track_name, recording_ids[0] if recording_ids else "")
 
     # Enrich: album from iTunes/Deezer + cover art (pass MB candidates for CAA)
-    _enrich_track(
+    album = _enrich_track(
         str(dest_path),
         artist=artist,
         track_name=track_name,
         yt_metadata=yt_metadata,
         recording_ids=recording_ids if recording_ids else None,
+    )
+
+    dest_path = _move_to_album_folder(
+        dest_path, music_dir, sanitized_artist, sanitized_track, album, db_path, mbid
     )
 
     _cleanup_staging(path)
