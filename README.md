@@ -2,7 +2,7 @@
 
 ListenBrainz 추천 기반 음악 자동 수집 및 스트리밍 시스템.
 
-ListenBrainz 추천 → YouTube 다운로드 → beets 자동 태깅 → Navidrome 스트리밍까지 완전 자동화된 파이프라인.
+ListenBrainz 추천 → YouTube 다운로드 → mutagen 자동 태깅 (iTunes/Deezer/MB 앨범 매칭, CAA 커버아트) → Navidrome 스트리밍까지 완전 자동화된 파이프라인.
 
 ## 빠른 시작
 
