@@ -17,10 +17,7 @@ from pydantic import BaseModel
 from src.pipeline.downloader import download_track
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
 from src.pipeline.tagger import (
-    embed_art_from_url,
     embed_cover_art,
-    mb_album_from_recording_id,
-    mb_search_recording,
     tag_and_import,
     write_album_tag,
 )
@@ -228,12 +225,16 @@ async def delete_download_entry(mbid: str):
     return {"deleted": True, "files_removed": files_removed}
 
 
+_MB_SEARCH_URL = "https://musicbrainz.org/ws/2/recording"
+_MB_SEARCH_HEADERS = {"User-Agent": "brainstream/1.0"}
+
+
 @app.get("/api/rematch/search")
 async def rematch_search(artist: str, track: str, source: str = "musicbrainz"):
     """Search for album candidates to rematch a track.
 
     Currently supports source=musicbrainz only.
-    Returns up to 3 album candidates with cover art URLs.
+    Returns up to 10 album candidates with cover art URLs.
     """
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
@@ -241,29 +242,89 @@ async def rematch_search(artist: str, track: str, source: str = "musicbrainz"):
     if source != "musicbrainz":
         raise HTTPException(status_code=400, detail=f"unsupported source: {source}")
 
-    recording_ids = mb_search_recording(artist, track)
-    if not recording_ids:
+    # Stage 1: strict query with artistname + recording fields
+    try:
+        r = requests.get(
+            _MB_SEARCH_URL,
+            params={
+                "query": f'artistname:"{artist}" AND recording:"{track}"',
+                "fmt": "json",
+                "limit": 10,
+            },
+            headers=_MB_SEARCH_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        recordings = r.json().get("recordings", [])
+    except Exception as exc:
+        log.error("rematch_search: MB stage1 failed", error=str(exc))
         return {"candidates": []}
 
-    recording_id = recording_ids[0]
-    album_name, mb_albumid_candidates = mb_album_from_recording_id(recording_id)
+    time.sleep(1)
 
-    if not album_name:
+    # Stage 2: plain freetext query when stage 1 returns nothing
+    if not recordings:
+        try:
+            r = requests.get(
+                _MB_SEARCH_URL,
+                params={
+                    "query": f"{artist} {track}",
+                    "fmt": "json",
+                    "limit": 10,
+                },
+                headers=_MB_SEARCH_HEADERS,
+                timeout=10,
+            )
+            r.raise_for_status()
+            recordings = r.json().get("recordings", [])
+        except Exception as exc:
+            log.error("rematch_search: MB stage2 failed", error=str(exc))
+            return {"candidates": []}
+
+        time.sleep(1)
+
+    if not recordings:
         return {"candidates": []}
 
     candidates = []
-    for album_id in mb_albumid_candidates:
-        candidates.append(
-            {
-                "source": "musicbrainz",
-                "mb_recording_id": recording_id,
-                "mb_album_id": album_id,
-                "album_name": album_name,
-                "artist_name": artist,
-                "year": None,
-                "cover_url": f"https://coverartarchive.org/release/{album_id}/front",
-            }
-        )
+    seen_album_ids: set[str] = set()
+
+    for rec in recordings[:5]:
+        recording_id = rec.get("id")
+        releases = rec.get("releases", [])
+        credits = rec.get("artist-credit", [])
+        artist_name = "".join(
+            c.get("artist", {}).get("name", "") + c.get("joinphrase", "")
+            for c in credits
+            if isinstance(c, dict)
+        ).strip() or artist
+
+        for release in releases[:3]:
+            mb_album_id = release.get("id")
+            if not mb_album_id or mb_album_id in seen_album_ids:
+                continue
+            seen_album_ids.add(mb_album_id)
+
+            album_name = release.get("title", "")
+            date = release.get("date", "")
+            year = int(date[:4]) if date and date[:4].isdigit() else None
+
+            candidates.append(
+                {
+                    "source": "musicbrainz",
+                    "mb_recording_id": recording_id,
+                    "mb_album_id": mb_album_id,
+                    "album_name": album_name,
+                    "artist_name": artist_name,
+                    "year": year,
+                    "cover_url": f"https://coverartarchive.org/release/{mb_album_id}/front",
+                }
+            )
+
+            if len(candidates) >= 10:
+                break
+        if len(candidates) >= 10:
+            break
 
     return {"candidates": candidates}
 

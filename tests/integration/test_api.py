@@ -247,13 +247,33 @@ def test_get_index_returns_html(client):
 
 # ── GET /api/rematch/search ───────────────────────────────────────────────────
 
+def _mb_search_response(recordings):
+    """requests.get mock 반환값 헬퍼."""
+    mock = MagicMock()
+    mock.raise_for_status = MagicMock()
+    mock.json.return_value = {"recordings": recordings}
+    return mock
+
+
+def _make_recording(rec_id, releases, artist_name="Radiohead"):
+    return {
+        "id": rec_id,
+        "artist-credit": [{"artist": {"name": artist_name}, "joinphrase": ""}],
+        "releases": releases,
+    }
+
+
+def _make_release(release_id, title, date="2000-01-01"):
+    return {"id": release_id, "title": title, "date": date}
+
+
 def test_rematch_search_returns_candidates(client):
-    """MB 검색이 성공하면 candidates 목록이 반환된다."""
-    with patch("src.api.mb_search_recording", return_value=["rec-id-001"]):
-        with patch(
-            "src.api.mb_album_from_recording_id",
-            return_value=("OK Computer", ["album-id-001"]),
-        ):
+    """MB stage1 검색이 성공하면 candidates 목록이 반환된다."""
+    release = _make_release("album-id-001", "OK Computer")
+    rec = _make_recording("rec-id-001", [release])
+
+    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
+        with patch("src.api.time.sleep"):
             resp = client.get(
                 "/api/rematch/search",
                 params={"artist": "Radiohead", "track": "Karma Police"},
@@ -273,28 +293,43 @@ def test_rematch_search_returns_candidates(client):
 
 
 def test_rematch_search_empty_when_no_recording(client):
-    """MB 검색 결과가 없으면 빈 candidates를 반환한다."""
-    with patch("src.api.mb_search_recording", return_value=[]):
-        resp = client.get(
-            "/api/rematch/search",
-            params={"artist": "Unknown", "track": "Nonexistent"},
-        )
+    """두 stage 모두 결과 없으면 빈 candidates를 반환한다."""
+    with patch("src.api.requests.get", return_value=_mb_search_response([])):
+        with patch("src.api.time.sleep"):
+            resp = client.get(
+                "/api/rematch/search",
+                params={"artist": "Unknown", "track": "Nonexistent"},
+            )
 
     assert resp.status_code == 200
     assert resp.json() == {"candidates": []}
 
 
-def test_rematch_search_empty_when_no_album(client):
-    """recording_id는 있지만 앨범 조회 실패 시 빈 candidates를 반환한다."""
-    with patch("src.api.mb_search_recording", return_value=["rec-id-002"]):
-        with patch("src.api.mb_album_from_recording_id", return_value=("", [])):
+def test_rematch_search_stage2_fallback(client):
+    """stage1 결과 없을 때 stage2로 폴백하여 결과를 반환한다."""
+    release = _make_release("album-fallback", "Some Album")
+    rec = _make_recording("rec-fallback", [release])
+
+    call_count = 0
+
+    def side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _mb_search_response([])   # stage1: 빈 결과
+        return _mb_search_response([rec])    # stage2: 결과 있음
+
+    with patch("src.api.requests.get", side_effect=side_effect):
+        with patch("src.api.time.sleep"):
             resp = client.get(
                 "/api/rematch/search",
                 params={"artist": "Artist", "track": "Track"},
             )
 
     assert resp.status_code == 200
-    assert resp.json() == {"candidates": []}
+    data = resp.json()
+    assert len(data["candidates"]) == 1
+    assert data["candidates"][0]["mb_album_id"] == "album-fallback"
 
 
 def test_rematch_search_unsupported_source_returns_400(client):
@@ -307,13 +342,16 @@ def test_rematch_search_unsupported_source_returns_400(client):
 
 
 def test_rematch_search_multiple_album_candidates(client):
-    """앨범 후보가 여러 개일 때 모두 반환한다."""
-    album_ids = ["album-a", "album-b", "album-c"]
-    with patch("src.api.mb_search_recording", return_value=["rec-001"]):
-        with patch(
-            "src.api.mb_album_from_recording_id",
-            return_value=("The Bends", album_ids),
-        ):
+    """recording당 여러 release가 있으면 모두 후보로 반환한다."""
+    releases = [
+        _make_release("album-a", "The Bends", "1995-03-13"),
+        _make_release("album-b", "The Bends (Remaster)", "2016-01-01"),
+        _make_release("album-c", "The Bends (Japan)", "1995-04-01"),
+    ]
+    rec = _make_recording("rec-001", releases)
+
+    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
+        with patch("src.api.time.sleep"):
             resp = client.get(
                 "/api/rematch/search",
                 params={"artist": "Radiohead", "track": "Fake Plastic Trees"},
@@ -323,7 +361,54 @@ def test_rematch_search_multiple_album_candidates(client):
     data = resp.json()
     assert len(data["candidates"]) == 3
     returned_ids = [c["mb_album_id"] for c in data["candidates"]]
-    assert returned_ids == album_ids
+    assert returned_ids == ["album-a", "album-b", "album-c"]
+
+
+def test_rematch_search_year_extracted_from_date(client):
+    """release date에서 year가 올바르게 추출된다."""
+    release = _make_release("album-yr", "OK Computer", "1997-06-16")
+    rec = _make_recording("rec-yr", [release])
+
+    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
+        with patch("src.api.time.sleep"):
+            resp = client.get(
+                "/api/rematch/search",
+                params={"artist": "Radiohead", "track": "Paranoid Android"},
+            )
+
+    data = resp.json()
+    assert data["candidates"][0]["year"] == 1997
+
+
+def test_rematch_search_deduplicates_album_ids(client):
+    """동일 album_id가 여러 recording에 걸쳐 있을 때 중복 제거한다."""
+    release = _make_release("shared-album", "Shared Album")
+    rec1 = _make_recording("rec-dup-1", [release])
+    rec2 = _make_recording("rec-dup-2", [release])
+
+    with patch("src.api.requests.get", return_value=_mb_search_response([rec1, rec2])):
+        with patch("src.api.time.sleep"):
+            resp = client.get(
+                "/api/rematch/search",
+                params={"artist": "Artist", "track": "Track"},
+            )
+
+    data = resp.json()
+    album_ids = [c["mb_album_id"] for c in data["candidates"]]
+    assert album_ids.count("shared-album") == 1
+
+
+def test_rematch_search_mb_request_error_returns_empty(client):
+    """MB API 호출 중 예외 발생 시 빈 candidates를 반환한다."""
+    with patch("src.api.requests.get", side_effect=Exception("network error")):
+        with patch("src.api.time.sleep"):
+            resp = client.get(
+                "/api/rematch/search",
+                params={"artist": "Artist", "track": "Track"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"candidates": []}
 
 
 # ── POST /api/rematch/apply ───────────────────────────────────────────────────
