@@ -450,12 +450,15 @@ async def rematch_apply(req: RematchApplyRequest):
             log.error("rematch_apply: getSong failed", song_id=req.song_id, error=str(exc))
             raise HTTPException(status_code=500, detail=f"getSong failed: {exc}")
 
-        relative_path = song.get("path", "")
-        if not relative_path:
+        raw_path = song.get("path", "")
+        if not raw_path:
             raise HTTPException(status_code=500, detail="getSong returned no path")
 
-        # Navidrome path is relative to music root inside the container
-        file_path = f"/app/data/music/{relative_path.lstrip('/')}"
+        # Navidrome may return an absolute container path or a relative path
+        if raw_path.startswith("/"):
+            file_path = raw_path
+        else:
+            file_path = f"/app/data/music/{raw_path}"
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"audio file not found: {file_path}")
 

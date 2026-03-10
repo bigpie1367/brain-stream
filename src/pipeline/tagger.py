@@ -789,6 +789,15 @@ def _enrich_track(
                 channel=album,
             )
 
+    # All 4 sources failed — use "Unknown Album" to prevent Navidrome "Non-album" display
+    if not album and not has_album:
+        album = "Unknown Album"
+        log.info(
+            "all album sources failed, using Unknown Album fallback",
+            artist=artist,
+            track=track_name,
+        )
+
     if album and not has_album:
         log.info("setting album tag", artist=artist, track=track_name, album=album)
         _write_album_tag(dest_path, album)

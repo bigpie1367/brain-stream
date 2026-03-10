@@ -794,3 +794,67 @@ def test_rematch_apply_via_mbid_file_missing_returns_404(client, tmp_state_db):
         },
     )
     assert resp.status_code == 404
+
+
+def test_rematch_apply_song_id_absolute_path_used_directly(client):
+    """getSong이 /app/data/music/... 형태의 절대경로를 반환할 때 prefix를 이중으로 붙이지 않는다."""
+    absolute_path = "/app/data/music/Artist/Album/track.flac"
+
+    with patch("src.api._navidrome_get_song", return_value={"path": absolute_path}):
+        with patch("src.api.os.path.exists", return_value=True):
+            with patch("src.api.requests.get") as mock_get:
+                mock_get.return_value = MagicMock(
+                    status_code=200,
+                    json=MagicMock(return_value={"title": "OK Computer"}),
+                    raise_for_status=MagicMock(),
+                )
+                with patch("src.api.write_album_tag") as mock_write:
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "song_id": "nav-song-123",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                },
+                            )
+
+    assert resp.status_code == 200
+    # write_album_tag의 첫 번째 인자(file_path)가 절대경로 그대로여야 한다
+    called_path = mock_write.call_args[0][0]
+    assert called_path == absolute_path
+    # /app/data/music가 이중으로 붙으면 안 된다
+    assert "/app/data/music/app/data/music" not in called_path
+
+
+def test_rematch_apply_song_id_relative_path_gets_prefix(client):
+    """getSong이 상대경로를 반환할 때 /app/data/music/ prefix를 붙인다."""
+    relative_path = "Artist/Album/track.flac"
+    expected_path = f"/app/data/music/{relative_path}"
+
+    with patch("src.api._navidrome_get_song", return_value={"path": relative_path}):
+        with patch("src.api.os.path.exists", return_value=True):
+            with patch("src.api.requests.get") as mock_get:
+                mock_get.return_value = MagicMock(
+                    status_code=200,
+                    json=MagicMock(return_value={"title": "OK Computer"}),
+                    raise_for_status=MagicMock(),
+                )
+                with patch("src.api.write_album_tag") as mock_write:
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "song_id": "nav-song-456",
+                                    "mb_recording_id": "rec-002",
+                                    "mb_album_id": "album-002",
+                                },
+                            )
+
+    assert resp.status_code == 200
+    called_path = mock_write.call_args[0][0]
+    assert called_path == expected_path

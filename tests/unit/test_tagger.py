@@ -19,6 +19,7 @@ import mutagen.flac
 from src.pipeline.tagger import (
     _collect_recording_candidates,
     _deezer_search,
+    _enrich_track,
     _is_live_title,
     _itunes_search,
     _mb_album_from_recording_id,
@@ -1282,3 +1283,77 @@ def test_collect_recording_candidates_empty_when_all_below_threshold():
     ]
     result = _collect_recording_candidates(recordings, "Without Me")
     assert result == []
+
+
+# ── _enrich_track: Unknown Album fallback ────────────────────────────────────
+
+
+def test_enrich_track_writes_unknown_album_when_all_sources_fail(tmp_path, monkeypatch):
+    """iTunes/Deezer/MB/YouTube 4단계 모두 실패하면 'Unknown Album' 태그를 기록한다."""
+    flac_path = _make_flac(tmp_path)
+    _write_tags(str(flac_path), "Artist", "Track")
+
+    monkeypatch.setattr("src.pipeline.tagger._itunes_search", lambda a, t: {})
+    monkeypatch.setattr("src.pipeline.tagger._deezer_search", lambda a, t: {})
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: [])
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    _enrich_track(
+        str(flac_path),
+        artist="Artist",
+        track_name="Track",
+        yt_metadata=None,
+        recording_ids=None,
+    )
+
+    tags = _read_tags(str(flac_path))
+    assert tags["album"] == "Unknown Album"
+
+
+def test_enrich_track_unknown_album_not_written_when_has_album(tmp_path, monkeypatch):
+    """이미 album 태그가 있으면 Unknown Album으로 덮어쓰지 않는다."""
+    import mutagen.flac as _flac
+
+    flac_path = _make_flac(tmp_path)
+    _write_tags(str(flac_path), "Artist", "Track")
+    f = _flac.FLAC(str(flac_path))
+    f["album"] = "My Real Album"
+    f.save()
+
+    write_album_called = []
+    monkeypatch.setattr(
+        "src.pipeline.tagger._write_album_tag",
+        lambda path, album: write_album_called.append(album),
+    )
+
+    _enrich_track(
+        str(flac_path),
+        artist="Artist",
+        track_name="Track",
+        yt_metadata=None,
+        recording_ids=None,
+    )
+
+    assert "Unknown Album" not in write_album_called
+
+
+def test_enrich_track_unknown_album_not_written_when_yt_channel_available(tmp_path, monkeypatch):
+    """YouTube channel 이름이 있으면 Unknown Album이 아닌 channel 이름으로 album 태그를 쓴다."""
+    flac_path = _make_flac(tmp_path)
+    _write_tags(str(flac_path), "Artist", "Track")
+
+    monkeypatch.setattr("src.pipeline.tagger._itunes_search", lambda a, t: {})
+    monkeypatch.setattr("src.pipeline.tagger._deezer_search", lambda a, t: {})
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: [])
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    _enrich_track(
+        str(flac_path),
+        artist="Artist",
+        track_name="Track",
+        yt_metadata={"channel": "ArtistVEVO", "thumbnail_url": ""},
+        recording_ids=None,
+    )
+
+    tags = _read_tags(str(flac_path))
+    assert tags["album"] == "ArtistVEVO"
