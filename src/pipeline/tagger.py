@@ -848,50 +848,6 @@ def _enrich_track(
     return album
 
 
-def _move_to_album_folder(
-    dest_path: Path,
-    music_dir: str,
-    sanitized_artist: str,
-    sanitized_track: str,
-    album: str,
-    db_path: str | None,
-    mbid: str | None,
-) -> Path:
-    """Move file from Unknown Album/ to actual album folder if album is known.
-
-    Returns the final Path (new location on success, original location on failure or no-op).
-    """
-    if not album or album == "Unknown Album":
-        return dest_path
-
-    from src.state import update_file_path
-
-    sanitized_album = _sanitize_filename(album)
-    new_dir = Path(music_dir) / sanitized_artist / sanitized_album
-    new_dir.mkdir(parents=True, exist_ok=True)
-    new_path = new_dir / dest_path.name
-
-    try:
-        shutil.move(str(dest_path), str(new_path))
-        log.info(
-            "moved file to album folder",
-            src=str(dest_path),
-            dest=str(new_path),
-            album=album,
-        )
-        if db_path and mbid:
-            update_file_path(db_path, mbid, str(new_path))
-        return new_path
-    except OSError as exc:
-        log.warning(
-            "could not move file to album folder, keeping original path",
-            src=str(dest_path),
-            dest=str(new_path),
-            error=str(exc),
-        )
-        return dest_path
-
-
 def tag_and_import(
     staging_file: str,
     music_dir: str,
@@ -901,10 +857,9 @@ def tag_and_import(
     db_path: str | None = None,
     mbid: str | None = None,
 ) -> tuple[bool, str]:
-    """Tag staging file, copy to music_dir, enrich with MB metadata and cover art.
+    """Tag staging file in-place, then copy to final music_dir path in one step.
 
     Returns (success, dest_path). dest_path is empty string on failure.
-    If db_path and mbid are provided, updates file_path in state.db after file move.
     """
     path = Path(staging_file)
     if not path.exists():
@@ -922,12 +877,26 @@ def tag_and_import(
                 track=track_name,
             )
 
-    # Build destination path: music_dir/{artist}/{Unknown Album}/{track}.ext
     sanitized_artist = _sanitize_filename(artist) if artist else "Unknown Artist"
     sanitized_track = (
         _sanitize_filename(track_name) if track_name else _sanitize_filename(path.stem)
     )
-    dest_dir = Path(music_dir) / sanitized_artist / "Unknown Album"
+
+    # Write initial tags to staging file
+    _write_tags(str(path), artist, track_name, recording_ids[0] if recording_ids else "")
+
+    # Enrich staging file: album from iTunes/Deezer/MB + cover art
+    album = _enrich_track(
+        str(path),
+        artist=artist,
+        track_name=track_name,
+        yt_metadata=yt_metadata,
+        recording_ids=recording_ids if recording_ids else None,
+    )
+
+    # Compute final destination path based on resolved album
+    sanitized_album = _sanitize_filename(album) if album else "Unknown Album"
+    dest_dir = Path(music_dir) / sanitized_artist / sanitized_album
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / (sanitized_track + path.suffix)
 
@@ -935,19 +904,9 @@ def tag_and_import(
     if dest_path.exists():
         log.info("file already exists in music_dir, treating as duplicate", dest=str(dest_path))
         _cleanup_staging(path)
-        album = _enrich_track(
-            str(dest_path),
-            artist=artist,
-            track_name=track_name,
-            yt_metadata=yt_metadata,
-            recording_ids=recording_ids if recording_ids else None,
-        )
-        dest_path = _move_to_album_folder(
-            dest_path, music_dir, sanitized_artist, sanitized_track, album, db_path, mbid
-        )
         return True, str(dest_path)
 
-    # Copy staging file to destination
+    # Copy enriched staging file to final destination
     try:
         shutil.copy2(str(path), str(dest_path))
         log.info("copied file to music_dir", src=staging_file, dest=str(dest_path))
@@ -959,22 +918,6 @@ def tag_and_import(
             error=str(exc),
         )
         return False, ""
-
-    # Write initial tags with first candidate recording ID
-    _write_tags(str(dest_path), artist, track_name, recording_ids[0] if recording_ids else "")
-
-    # Enrich: album from iTunes/Deezer + cover art (pass MB candidates for CAA)
-    album = _enrich_track(
-        str(dest_path),
-        artist=artist,
-        track_name=track_name,
-        yt_metadata=yt_metadata,
-        recording_ids=recording_ids if recording_ids else None,
-    )
-
-    dest_path = _move_to_album_folder(
-        dest_path, music_dir, sanitized_artist, sanitized_track, album, db_path, mbid
-    )
 
     _cleanup_staging(path)
     return True, str(dest_path)
