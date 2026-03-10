@@ -652,6 +652,24 @@ def _normalize_for_match(s: str) -> str:
     return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
 
 
+_FEAT_RE = re.compile(
+    r"\s+(?:feat(?:uring)?\.?|ft\.?)\s+.*$",
+    re.IGNORECASE,
+)
+_COMMA_RE = re.compile(r",.*$")
+
+
+def _primary_artist(artist: str) -> str:
+    """Return the primary artist name, stripping featuring/ft./comma suffixes.
+
+    Used only for filesystem path construction; mutagen tags keep the original value.
+    Removal order: feat./featuring/ft. patterns first, then comma suffix.
+    """
+    result = _FEAT_RE.sub("", artist)
+    result = _COMMA_RE.sub("", result)
+    return result.strip()
+
+
 def _embed_art_from_url(file_path: str, url: str):
     """Download image from URL and embed into audio file."""
     try:
@@ -877,7 +895,7 @@ def tag_and_import(
                 track=track_name,
             )
 
-    sanitized_artist = _sanitize_filename(artist) if artist else "Unknown Artist"
+    sanitized_artist = _sanitize_filename(_primary_artist(artist)) if artist else "Unknown Artist"
     sanitized_track = (
         _sanitize_filename(track_name) if track_name else _sanitize_filename(path.stem)
     )

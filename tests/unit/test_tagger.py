@@ -26,6 +26,7 @@ from src.pipeline.tagger import (
     _mb_search_recording,
     _pick_best_recording,
     _pretag,
+    _primary_artist,
     _read_tags,
     _sanitize_filename,
     _write_tags,
@@ -1414,4 +1415,101 @@ def test_tag_and_import_stays_in_unknown_album_when_no_match(tmp_path, monkeypat
     assert success is True
     dest_path = Path(dest)
     assert "Unknown Album" in str(dest_path)
+
+
+# ── _primary_artist 테스트 ────────────────────────────────────────────────────
+
+
+def test_primary_artist_feat_dot():
+    """`feat.` 이후 전부 제거한다."""
+    assert _primary_artist("Eminem feat. Nate Dogg") == "Eminem"
+
+
+def test_primary_artist_feat_no_dot():
+    """`feat ` (점 없음) 이후 전부 제거한다."""
+    assert _primary_artist("Eminem feat Rihanna") == "Eminem"
+
+
+def test_primary_artist_featuring():
+    """`featuring` 이후 전부 제거한다."""
+    assert _primary_artist("Eminem featuring Dido") == "Eminem"
+
+
+def test_primary_artist_ft_dot():
+    """`ft.` 이후 전부 제거한다."""
+    assert _primary_artist("Drake ft. Future") == "Drake"
+
+
+def test_primary_artist_ft_no_dot():
+    """`ft ` (점 없음) 이후 전부 제거한다."""
+    assert _primary_artist("Drake ft Future") == "Drake"
+
+
+def test_primary_artist_comma():
+    """쉼표 이후 전부 제거한다."""
+    assert _primary_artist("Eminem, DJ Haze & DJ Capcom") == "Eminem"
+
+
+def test_primary_artist_feat_then_comma():
+    """`feat.` 제거 후 남은 쉼표도 제거된다."""
+    assert _primary_artist("Artist feat. Guest, Another") == "Artist"
+
+
+def test_primary_artist_case_insensitive():
+    """대소문자 무시하고 패턴을 제거한다."""
+    assert _primary_artist("Eminem FEAT. Nate Dogg") == "Eminem"
+    assert _primary_artist("Eminem Featuring Dido") == "Eminem"
+    assert _primary_artist("Eminem FT. Rihanna") == "Eminem"
+
+
+def test_primary_artist_no_feat():
+    """피처링 표기가 없으면 원본 그대로 반환한다."""
+    assert _primary_artist("Radiohead") == "Radiohead"
+
+
+def test_primary_artist_earth_wind_fire():
+    """`Earth, Wind & Fire`는 feat./ft. 패턴이 없어 쉼표 이후가 제거된다.
+
+    `Earth`만 남는 것이 현재 구현의 의도된 동작이다 (쉼표 패턴 마지막 적용).
+    """
+    assert _primary_artist("Earth, Wind & Fire") == "Earth"
+
+
+def test_primary_artist_strips_whitespace():
+    """앞뒤 공백을 strip 한다."""
+    assert _primary_artist("  Eminem feat. Rihanna  ") == "Eminem"
+
+
+def test_primary_artist_empty_string():
+    """빈 문자열 입력 시 빈 문자열을 반환한다."""
+    assert _primary_artist("") == ""
+
+
+def test_tag_and_import_uses_primary_artist_for_path(tmp_path, monkeypatch):
+    """tag_and_import가 파일 경로 결정 시 _primary_artist를 적용한다."""
+    flac_path = tmp_path / "test.flac"
+    _make_minimal_flac(flac_path)
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: []
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: "The Marshall Mathers LP",
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Eminem feat. Nate Dogg",
+        track_name="'Till I Collapse",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    # 폴더명은 피처링 제거 후 "Eminem" 이어야 한다
+    assert "Eminem" in dest_path.parts
+    # "Eminem feat. Nate Dogg" 전체가 폴더명이 되면 안 된다
+    assert not any("feat" in part for part in dest_path.parts)
     assert dest_path.exists()
