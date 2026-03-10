@@ -855,29 +855,72 @@
     }
 
     .expand-inner {
-      padding: 12px 16px;
+      padding: 14px 16px;
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
+      align-items: flex-start;
+      gap: 14px;
       background: #141728;
       border-top: 1px solid #1e2235;
     }
 
-    .expand-album-info {
-      font-size: 0.83rem;
-      color: #a0aec0;
+    /* 커버아트 80×80 */
+    .expand-cover {
+      width: 80px;
+      height: 80px;
+      border-radius: 4px;
+      background: #2d3147;
+      object-fit: cover;
+      flex-shrink: 0;
     }
 
-    .expand-album-label {
+    .expand-cover-placeholder {
+      width: 80px;
+      height: 80px;
+      border-radius: 4px;
+      background: #2d3147;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #4a5568;
+      font-size: 1.8rem;
+      flex-shrink: 0;
+    }
+
+    /* 앨범명·아티스트 정보 + 버튼을 세로 방향으로 */
+    .expand-body {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 6px;
+      min-height: 80px;
+    }
+
+    .expand-album-name {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .expand-album-meta {
+      font-size: 0.78rem;
       color: #718096;
-      margin-right: 4px;
+    }
+
+    .expand-loading {
+      font-size: 0.83rem;
+      color: #718096;
     }
 
     .expand-actions {
       display: flex;
       gap: 8px;
       flex-shrink: 0;
+      align-self: flex-end;
     }
 
     .btn-expand-rematch {
@@ -1308,20 +1351,38 @@
     const inner = document.createElement('div');
     inner.className = 'expand-inner';
 
-    // 앨범 정보 영역
-    const albumInfo = document.createElement('div');
-    albumInfo.className = 'expand-album-info';
+    // ── 커버아트 영역 ──
+    const coverPlaceholder = document.createElement('div');
+    coverPlaceholder.className = 'expand-cover-placeholder';
+    coverPlaceholder.textContent = '\u266B';
 
-    const labelSpan = document.createElement('span');
-    labelSpan.className = 'expand-album-label';
-    labelSpan.textContent = '앨범:';
+    const coverImg = document.createElement('img');
+    coverImg.className = 'expand-cover';
+    coverImg.alt = '';
+    coverImg.style.display = 'none';
+    coverImg.onerror = function() {
+      this.style.display = 'none';
+      coverPlaceholder.style.display = 'flex';
+    };
 
-    const albumText = document.createElement('span');
-    albumText.className = 'expand-album-value';
-    albumText.textContent = '앨범 정보 불러오는 중...';
+    // ── 우측 본문 영역 (앨범명 + 아티스트·연도 + 버튼) ──
+    const body = document.createElement('div');
+    body.className = 'expand-body';
 
-    albumInfo.appendChild(labelSpan);
-    albumInfo.appendChild(albumText);
+    // 로딩 중 텍스트 (detail 로드 전)
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'expand-loading';
+    loadingDiv.textContent = '불러오는 중...';
+
+    // 앨범명 (로드 후 교체)
+    const albumNameDiv = document.createElement('div');
+    albumNameDiv.className = 'expand-album-name';
+    albumNameDiv.style.display = 'none';
+
+    // 아티스트 · 연도 한 줄
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'expand-album-meta';
+    metaDiv.style.display = 'none';
 
     // 버튼 영역
     const actions = document.createElement('div');
@@ -1348,23 +1409,58 @@
     actions.appendChild(rematchBtn);
     actions.appendChild(deleteBtn);
 
-    inner.appendChild(albumInfo);
-    inner.appendChild(actions);
+    body.appendChild(loadingDiv);
+    body.appendChild(albumNameDiv);
+    body.appendChild(metaDiv);
+    body.appendChild(actions);
+
+    inner.appendChild(coverPlaceholder);
+    inner.appendChild(coverImg);
+    inner.appendChild(body);
     expandTd.innerHTML = '';
     expandTd.appendChild(inner);
 
-    // 앨범 정보 lazy load
-    loadDownloadDetail(r.mbid, albumText);
+    // 앨범 detail lazy load
+    loadDownloadDetail(r.mbid, r.artist, {
+      coverImg,
+      coverPlaceholder,
+      loadingDiv,
+      albumNameDiv,
+      metaDiv,
+    });
   }
 
-  async function loadDownloadDetail(mbid, albumTextEl) {
+  async function loadDownloadDetail(mbid, artist, els) {
     try {
       const res = await fetch('/api/downloads/' + encodeURIComponent(mbid) + '/detail');
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      albumTextEl.textContent = data.album_name || '앨범 정보 없음';
+      const detail = await res.json();
+
+      // 커버아트
+      if (detail.cover_art) {
+        els.coverImg.src = detail.cover_art;
+        els.coverImg.style.display = 'block';
+        els.coverPlaceholder.style.display = 'none';
+      }
+
+      // 앨범명
+      els.albumNameDiv.textContent = detail.album_name || '앨범 정보 없음';
+      els.albumNameDiv.style.display = '';
+
+      // 아티스트 · 연도
+      const metaParts = [artist];
+      if (detail.year) metaParts.push(detail.year);
+      els.metaDiv.textContent = metaParts.join(' · ');
+      els.metaDiv.style.display = '';
+
+      // 로딩 텍스트 제거
+      els.loadingDiv.style.display = 'none';
     } catch (e) {
-      albumTextEl.textContent = '앨범 정보 없음';
+      els.loadingDiv.style.display = 'none';
+      els.albumNameDiv.textContent = '앨범 정보 없음';
+      els.albumNameDiv.style.display = '';
+      els.metaDiv.textContent = artist;
+      els.metaDiv.style.display = '';
     }
   }
 

@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -205,9 +206,11 @@ async def get_download_detail(mbid: str):
 
     file_path = record.get("file_path")
     if not file_path or not os.path.exists(file_path):
-        return {"album_name": None, "file_path": None}
+        return {"album_name": None, "year": None, "cover_art": None}
 
     album_name = None
+    year = None
+    cover_art = None
     try:
         lower = file_path.lower()
         if lower.endswith(".flac"):
@@ -215,15 +218,35 @@ async def get_download_detail(mbid: str):
             tags = audio.get("album")
             if tags:
                 album_name = tags[0]
+            date_tags = audio.get("date") or audio.get("year")
+            if date_tags:
+                year = date_tags[0]
+            try:
+                pics = audio.pictures
+                if pics:
+                    pic = pics[0]
+                    cover_art = f"data:{pic.mime};base64,{base64.b64encode(pic.data).decode()}"
+            except Exception:
+                cover_art = None
         elif lower.endswith(".opus") or lower.endswith(".ogg"):
             audio = mutagen.oggopus.OggOpus(file_path)
             tags = audio.get("album")
             if tags:
                 album_name = tags[0]
+            date_tags = audio.get("date") or audio.get("year")
+            if date_tags:
+                year = date_tags[0]
+            try:
+                raw = audio.get("METADATA_BLOCK_PICTURE", [None])[0]
+                if raw:
+                    pic = mutagen.flac.Picture(base64.b64decode(raw))
+                    cover_art = f"data:{pic.mime};base64,{base64.b64encode(pic.data).decode()}"
+            except Exception:
+                cover_art = None
     except Exception:
         album_name = None
 
-    return {"album_name": album_name, "file_path": file_path}
+    return {"album_name": album_name, "year": year, "cover_art": cover_art}
 
 
 @app.delete("/api/downloads/{mbid}")

@@ -254,7 +254,7 @@ def test_get_download_detail_not_found_returns_404(client):
 
 
 def test_get_download_detail_no_file_path_returns_nulls(client, tmp_state_db):
-    """file_path가 None이면 album_name과 file_path 모두 null을 반환한다."""
+    """file_path가 None이면 album_name, year, cover_art 모두 null을 반환한다."""
     from src.state import mark_pending
     mark_pending(tmp_state_db, "mbid-nofile", "Track", "Artist")
 
@@ -262,7 +262,8 @@ def test_get_download_detail_no_file_path_returns_nulls(client, tmp_state_db):
     assert resp.status_code == 200
     data = resp.json()
     assert data["album_name"] is None
-    assert data["file_path"] is None
+    assert data["year"] is None
+    assert data["cover_art"] is None
 
 
 def test_get_download_detail_file_missing_returns_nulls(client, tmp_state_db):
@@ -275,7 +276,8 @@ def test_get_download_detail_file_missing_returns_nulls(client, tmp_state_db):
     assert resp.status_code == 200
     data = resp.json()
     assert data["album_name"] is None
-    assert data["file_path"] is None
+    assert data["year"] is None
+    assert data["cover_art"] is None
 
 
 def test_get_download_detail_flac_reads_album_tag(client, tmp_state_db, tmp_path):
@@ -288,7 +290,10 @@ def test_get_download_detail_flac_reads_album_tag(client, tmp_state_db, tmp_path
     mark_done(tmp_state_db, "mbid-flac", file_path=str(dummy_file))
 
     mock_audio = MagicMock()
-    mock_audio.get.return_value = ["The Marshall Mathers LP"]
+    mock_audio.get.side_effect = lambda key, default=None: (
+        ["The Marshall Mathers LP"] if key == "album" else default
+    )
+    mock_audio.pictures = []
 
     with patch("src.api.mutagen.flac.FLAC", return_value=mock_audio):
         resp = client.get("/api/downloads/mbid-flac/detail")
@@ -296,7 +301,7 @@ def test_get_download_detail_flac_reads_album_tag(client, tmp_state_db, tmp_path
     assert resp.status_code == 200
     data = resp.json()
     assert data["album_name"] == "The Marshall Mathers LP"
-    assert data["file_path"] == str(dummy_file)
+    assert "file_path" not in data
 
 
 def test_get_download_detail_opus_reads_album_tag(client, tmp_state_db, tmp_path):
@@ -309,7 +314,9 @@ def test_get_download_detail_opus_reads_album_tag(client, tmp_state_db, tmp_path
     mark_done(tmp_state_db, "mbid-opus", file_path=str(dummy_file))
 
     mock_audio = MagicMock()
-    mock_audio.get.return_value = ["The Marshall Mathers LP"]
+    mock_audio.get.side_effect = lambda key, default=None: (
+        ["The Marshall Mathers LP"] if key == "album" else default
+    )
 
     with patch("src.api.mutagen.oggopus.OggOpus", return_value=mock_audio):
         resp = client.get("/api/downloads/mbid-opus/detail")
@@ -317,6 +324,92 @@ def test_get_download_detail_opus_reads_album_tag(client, tmp_state_db, tmp_path
     assert resp.status_code == 200
     data = resp.json()
     assert data["album_name"] == "The Marshall Mathers LP"
+
+
+def test_get_download_detail_flac_reads_year_tag(client, tmp_state_db, tmp_path):
+    """FLAC 파일의 date 태그에서 year를 정상적으로 읽어 반환한다."""
+    dummy_file = tmp_path / "track.flac"
+    dummy_file.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "mbid-flac-yr", "Lose Yourself", "Eminem")
+    mark_done(tmp_state_db, "mbid-flac-yr", file_path=str(dummy_file))
+
+    mock_audio = MagicMock()
+    mock_audio.get.side_effect = lambda key, default=None: (
+        ["The Marshall Mathers LP"] if key == "album"
+        else ["2000"] if key == "date"
+        else default
+    )
+    mock_audio.pictures = []
+
+    with patch("src.api.mutagen.flac.FLAC", return_value=mock_audio):
+        resp = client.get("/api/downloads/mbid-flac-yr/detail")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["year"] == "2000"
+
+
+def test_get_download_detail_flac_reads_cover_art(client, tmp_state_db, tmp_path):
+    """FLAC 파일의 커버아트를 base64 data URL로 반환한다."""
+    import base64 as b64mod
+
+    dummy_file = tmp_path / "track.flac"
+    dummy_file.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "mbid-flac-art", "Lose Yourself", "Eminem")
+    mark_done(tmp_state_db, "mbid-flac-art", file_path=str(dummy_file))
+
+    fake_img_bytes = b"\xff\xd8\xff\xe0fake jpeg"
+    mock_pic = MagicMock()
+    mock_pic.mime = "image/jpeg"
+    mock_pic.data = fake_img_bytes
+
+    mock_audio = MagicMock()
+    mock_audio.get.return_value = None
+    mock_audio.pictures = [mock_pic]
+
+    with patch("src.api.mutagen.flac.FLAC", return_value=mock_audio):
+        resp = client.get("/api/downloads/mbid-flac-art/detail")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    expected = f"data:image/jpeg;base64,{b64mod.b64encode(fake_img_bytes).decode()}"
+    assert data["cover_art"] == expected
+
+
+def test_get_download_detail_opus_reads_cover_art(client, tmp_state_db, tmp_path):
+    """OggOpus 파일의 METADATA_BLOCK_PICTURE 태그로 커버아트를 읽어 반환한다."""
+    import base64 as b64mod
+    from mutagen.flac import Picture
+
+    dummy_file = tmp_path / "track.opus"
+    dummy_file.write_bytes(b"fake opus data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "mbid-opus-art", "Lose Yourself", "Eminem")
+    mark_done(tmp_state_db, "mbid-opus-art", file_path=str(dummy_file))
+
+    fake_img_bytes = b"\xff\xd8\xff\xe0fake jpeg"
+    pic = Picture()
+    pic.mime = "image/jpeg"
+    pic.data = fake_img_bytes
+    encoded_pic = b64mod.b64encode(pic.write()).decode()
+
+    mock_audio = MagicMock()
+    mock_audio.get.side_effect = lambda key, default=None: (
+        [encoded_pic] if key == "METADATA_BLOCK_PICTURE" else default
+    )
+
+    with patch("src.api.mutagen.oggopus.OggOpus", return_value=mock_audio):
+        resp = client.get("/api/downloads/mbid-opus-art/detail")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cover_art"] is not None
+    assert data["cover_art"].startswith("data:image/jpeg;base64,")
 
 
 def test_get_download_detail_no_album_tag_returns_null(client, tmp_state_db, tmp_path):
@@ -329,7 +422,8 @@ def test_get_download_detail_no_album_tag_returns_null(client, tmp_state_db, tmp
     mark_done(tmp_state_db, "mbid-notag", file_path=str(dummy_file))
 
     mock_audio = MagicMock()
-    mock_audio.get.return_value = None  # 태그 없음
+    mock_audio.get.return_value = None
+    mock_audio.pictures = []
 
     with patch("src.api.mutagen.flac.FLAC", return_value=mock_audio):
         resp = client.get("/api/downloads/mbid-notag/detail")
@@ -337,7 +431,8 @@ def test_get_download_detail_no_album_tag_returns_null(client, tmp_state_db, tmp
     assert resp.status_code == 200
     data = resp.json()
     assert data["album_name"] is None
-    assert data["file_path"] == str(dummy_file)
+    assert data["year"] is None
+    assert data["cover_art"] is None
 
 
 def test_get_download_detail_mutagen_exception_returns_null_album(client, tmp_state_db, tmp_path):
@@ -355,7 +450,7 @@ def test_get_download_detail_mutagen_exception_returns_null_album(client, tmp_st
     assert resp.status_code == 200
     data = resp.json()
     assert data["album_name"] is None
-    assert data["file_path"] == str(dummy_file)
+    assert "file_path" not in data
 
 
 # ── GET /api/rematch/search ───────────────────────────────────────────────────
