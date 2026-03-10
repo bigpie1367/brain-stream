@@ -840,6 +840,77 @@
     }
     .btn-modal-apply:hover { background: #2b6cb0; color: #bee3f8; }
     .btn-modal-apply:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
+
+    /* ── Downloads 확장 행 ── */
+    tbody tr.history-row {
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    tbody tr.history-row:hover { background: #1e2235; }
+    tbody tr.history-row.expanded { background: #1a2235; }
+
+    tbody tr.expand-row td {
+      padding: 0;
+      border-bottom: 1px solid #2d3147;
+    }
+
+    .expand-inner {
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: #141728;
+      border-top: 1px solid #1e2235;
+    }
+
+    .expand-album-info {
+      font-size: 0.83rem;
+      color: #a0aec0;
+    }
+
+    .expand-album-label {
+      color: #718096;
+      margin-right: 4px;
+    }
+
+    .expand-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .btn-expand-rematch {
+      background: none;
+      border: 1px solid #2d3147;
+      border-radius: 4px;
+      color: #718096;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 4px 10px;
+      white-space: nowrap;
+      align-self: auto;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      line-height: 1.5;
+    }
+    .btn-expand-rematch:hover { background: #2d3147; border-color: #a78bfa; color: #a78bfa; }
+
+    .btn-expand-delete {
+      background: none;
+      border: 1px solid #4a2020;
+      border-radius: 4px;
+      color: #718096;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 4px 10px;
+      white-space: nowrap;
+      align-self: auto;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      line-height: 1.5;
+    }
+    .btn-expand-delete:hover { background: #3b1515; border-color: #fc8181; color: #fc8181; }
   </style>
 </head>
 <body>
@@ -1127,6 +1198,10 @@
     return `<span class="badge ${esc(cls)}">${esc(src)}</span>`;
   }
 
+  // ── Downloads 아코디언 상태 ────────────────────────────────────────────────
+  // 현재 펼쳐진 행의 mbid (없으면 null)
+  let _expandedMbid = null;
+
   async function loadHistory() {
     try {
       const res = await fetch('/api/downloads');
@@ -1137,14 +1212,18 @@
       if (!rows.length) {
         tbody.innerHTML = '';
         noData.style.display = 'block';
+        _expandedMbid = null;
         return;
       }
       noData.style.display = 'none';
       tbody.innerHTML = '';
 
       rows.forEach(r => {
+        const isExpandable = r.status !== 'pending' && r.status !== 'downloading';
+
         const tr = document.createElement('tr');
         tr.dataset.mbid = r.mbid;
+        tr.className = 'history-row';
 
         const tdArtist = document.createElement('td');
         tdArtist.textContent = r.artist;
@@ -1162,14 +1241,8 @@
         tdTime.style.color = '#718096';
         tdTime.textContent = relativeTime(r.downloaded_at);
 
+        // 액션 열 (빈 셀 — 확장 영역에 버튼 이동)
         const tdAction = document.createElement('td');
-        tdAction.style.textAlign = 'right';
-        const delBtn = document.createElement('button');
-        delBtn.className = 'btn-danger';
-        delBtn.textContent = '삭제';
-        delBtn.title = '이 항목을 이력에서 삭제합니다';
-        delBtn.addEventListener('click', () => openDeleteModal(r.mbid, r.artist, r.track_name, tr));
-        tdAction.appendChild(delBtn);
 
         tr.appendChild(tdArtist);
         tr.appendChild(tdTrack);
@@ -1178,19 +1251,132 @@
         tr.appendChild(tdTime);
         tr.appendChild(tdAction);
         tbody.appendChild(tr);
+
+        // 확장 행 (기본 숨김)
+        const expandTr = document.createElement('tr');
+        expandTr.className = 'expand-row';
+        expandTr.style.display = 'none';
+
+        const expandTd = document.createElement('td');
+        expandTd.colSpan = 6;
+        expandTr.appendChild(expandTd);
+        tbody.appendChild(expandTr);
+
+        // 이전에 펼쳐져 있던 행이면 즉시 복원
+        if (_expandedMbid === r.mbid && isExpandable) {
+          tr.classList.add('expanded');
+          expandTr.style.display = '';
+          renderExpandInner(expandTd, r, expandTr, tr, true /* cached */);
+        }
+
+        if (!isExpandable) return;
+
+        // 행 클릭 → 아코디언 토글
+        tr.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isOpen = tr.classList.contains('expanded');
+
+          // 먼저 모든 확장 행 닫기
+          collapseAllExpandRows();
+
+          if (!isOpen) {
+            // 이 행 열기
+            tr.classList.add('expanded');
+            expandTr.style.display = '';
+            _expandedMbid = r.mbid;
+            renderExpandInner(expandTd, r, expandTr, tr, false /* fresh load */);
+          } else {
+            _expandedMbid = null;
+          }
+        });
       });
     } catch (e) {
       console.error('history load failed', e);
     }
   }
 
+  function collapseAllExpandRows() {
+    document.querySelectorAll('#history-body .history-row.expanded').forEach(el => {
+      el.classList.remove('expanded');
+    });
+    document.querySelectorAll('#history-body .expand-row').forEach(el => {
+      el.style.display = 'none';
+    });
+  }
+
+  function renderExpandInner(expandTd, r, expandTr, mainTr, useCached) {
+    const inner = document.createElement('div');
+    inner.className = 'expand-inner';
+
+    // 앨범 정보 영역
+    const albumInfo = document.createElement('div');
+    albumInfo.className = 'expand-album-info';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'expand-album-label';
+    labelSpan.textContent = '앨범:';
+
+    const albumText = document.createElement('span');
+    albumText.className = 'expand-album-value';
+    albumText.textContent = '앨범 정보 불러오는 중...';
+
+    albumInfo.appendChild(labelSpan);
+    albumInfo.appendChild(albumText);
+
+    // 버튼 영역
+    const actions = document.createElement('div');
+    actions.className = 'expand-actions';
+
+    const rematchBtn = document.createElement('button');
+    rematchBtn.className = 'btn-expand-rematch';
+    rematchBtn.textContent = '재매칭';
+    rematchBtn.title = '앨범 재매칭';
+    rematchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openRematchModalForDownload(r.mbid, r.artist, r.track_name);
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn-expand-delete';
+    deleteBtn.textContent = '삭제';
+    deleteBtn.title = '이 항목을 이력에서 삭제합니다';
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openDeleteModal(r.mbid, r.artist, r.track_name, mainTr, expandTr);
+    });
+
+    actions.appendChild(rematchBtn);
+    actions.appendChild(deleteBtn);
+
+    inner.appendChild(albumInfo);
+    inner.appendChild(actions);
+    expandTd.innerHTML = '';
+    expandTd.appendChild(inner);
+
+    // 앨범 정보 lazy load
+    loadDownloadDetail(r.mbid, albumText);
+  }
+
+  async function loadDownloadDetail(mbid, albumTextEl) {
+    try {
+      const res = await fetch('/api/downloads/' + encodeURIComponent(mbid) + '/detail');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      albumTextEl.textContent = data.album_name || '앨범 정보 없음';
+    } catch (e) {
+      albumTextEl.textContent = '앨범 정보 없음';
+    }
+  }
+
   // ── 삭제 모달 ──────────────────────────────────────────────────────────────
   let _pendingDeleteMbid = null;
   let _pendingDeleteRow  = null;
+  let _pendingDeleteExpandRow = null;
 
-  function openDeleteModal(mbid, artist, trackName, rowEl) {
+  function openDeleteModal(mbid, artist, trackName, rowEl, expandRowEl) {
     _pendingDeleteMbid = mbid;
     _pendingDeleteRow  = rowEl;
+    _pendingDeleteExpandRow = expandRowEl ?? null;
 
     const msgEl = document.getElementById('modal-msg');
     // textContent로 삽입해 XSS 방지
@@ -1212,6 +1398,7 @@
     document.getElementById('delete-modal').classList.add('hidden');
     _pendingDeleteMbid = null;
     _pendingDeleteRow  = null;
+    _pendingDeleteExpandRow = null;
   }
 
   async function confirmDelete() {
@@ -1230,14 +1417,23 @@
         throw new Error(text || 'HTTP ' + res.status);
       }
 
-      // 성공: 해당 행을 DOM에서 제거
+      // 성공: 해당 행과 확장 행을 DOM에서 제거
+      if (_pendingDeleteExpandRow && _pendingDeleteExpandRow.parentNode) {
+        _pendingDeleteExpandRow.parentNode.removeChild(_pendingDeleteExpandRow);
+      }
       if (_pendingDeleteRow && _pendingDeleteRow.parentNode) {
         _pendingDeleteRow.parentNode.removeChild(_pendingDeleteRow);
       }
 
+      // 삭제한 항목이 펼쳐져 있었으면 _expandedMbid 초기화
+      if (_expandedMbid === _pendingDeleteMbid) {
+        _expandedMbid = null;
+      }
+
       // 남은 행이 없으면 "이력 없음" 표시
       const tbody = document.getElementById('history-body');
-      if (!tbody.hasChildNodes()) {
+      const remainingRows = tbody.querySelectorAll('tr.history-row');
+      if (!remainingRows.length) {
         document.getElementById('no-data').style.display = 'block';
       }
 
@@ -1280,10 +1476,12 @@
   }
 
   // Initial load + auto-refresh every 5 s
-  // 모달이 열려 있는 동안은 자동 갱신을 건너뛰어 _pendingDeleteRow 참조 보호
+  // 삭제/재매칭 모달이 열려 있는 동안은 자동 갱신을 건너뛰어 참조 보호
   loadHistory();
   setInterval(() => {
-    if (!_pendingDeleteMbid) loadHistory();
+    const deleteModalOpen = !document.getElementById('delete-modal').classList.contains('hidden');
+    const rematchModalOpen = !document.getElementById('rematch-modal').classList.contains('hidden');
+    if (!deleteModalOpen && !rematchModalOpen) loadHistory();
   }, 5000);
 
   // ── Library ────────────────────────────────────────────────────────────────
@@ -1803,10 +2001,13 @@
 
   // ── 재매칭 모달 ────────────────────────────────────────────────────────────
   let _rematchSongId = null;
+  let _rematchMbid = null;   // Downloads 탭에서 mbid 기반 재매칭 시 사용
   let _selectedCandidate = null;
 
+  // Library 탭 트랙 재매칭 (song_id 기반)
   function openRematchModal(songId, artist, title) {
     _rematchSongId = songId;
+    _rematchMbid = null;
     _selectedCandidate = null;
 
     document.getElementById('rematch-artist').value = artist;
@@ -1832,7 +2033,32 @@
   function closeRematchModal() {
     document.getElementById('rematch-modal').classList.add('hidden');
     _rematchSongId = null;
+    _rematchMbid = null;
     _selectedCandidate = null;
+  }
+
+  // Downloads 탭 이력 행에서 호출 — mbid 기반 재매칭
+  function openRematchModalForDownload(mbid, artist, title) {
+    _rematchSongId = null;
+    _rematchMbid = mbid;
+    _selectedCandidate = null;
+
+    document.getElementById('rematch-artist').value = artist;
+    document.getElementById('rematch-track').value = title;
+
+    const candidatesEl = document.getElementById('rematch-candidates');
+    candidatesEl.innerHTML = '<div class="rematch-placeholder">아티스트와 트랙명을 입력 후 검색하세요.</div>';
+
+    const feedbackEl = document.getElementById('rematch-feedback');
+    feedbackEl.textContent = '';
+    feedbackEl.className = 'rematch-feedback';
+
+    const applyBtn = document.getElementById('rematch-apply-btn');
+    applyBtn.disabled = false;
+    applyBtn.textContent = '적용';
+
+    document.getElementById('rematch-modal').classList.remove('hidden');
+    document.getElementById('rematch-artist').focus();
   }
 
   async function searchRematch() {
@@ -1980,7 +2206,7 @@
       setRematchFeedback('error', '적용할 후보를 선택하세요.');
       return;
     }
-    if (!_rematchSongId) {
+    if (!_rematchSongId && !_rematchMbid) {
       setRematchFeedback('error', '대상 트랙 정보가 없습니다. 모달을 다시 열어주세요.');
       return;
     }
@@ -1993,14 +2219,21 @@
     searchBtn.disabled = true;
 
     try {
+      // Downloads 탭(mbid 기반) vs Library 탭(song_id 기반) 분기
+      const payload = {
+        mb_recording_id: _selectedCandidate.mb_recording_id ?? null,
+        mb_album_id:     _selectedCandidate.mb_album_id ?? null,
+      };
+      if (_rematchMbid) {
+        payload.mbid = _rematchMbid;
+      } else {
+        payload.song_id = _rematchSongId;
+      }
+
       const res = await fetch('/api/rematch/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          song_id:         _rematchSongId,
-          mb_recording_id: _selectedCandidate.mb_recording_id ?? null,
-          mb_album_id:     _selectedCandidate.mb_album_id ?? null,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {

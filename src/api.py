@@ -8,6 +8,8 @@ import uuid
 from queue import Empty, Queue
 
 import httpx
+import mutagen.flac
+import mutagen.oggopus
 import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -53,7 +55,8 @@ class DownloadRequest(BaseModel):
 
 
 class RematchApplyRequest(BaseModel):
-    song_id: str
+    song_id: str | None = None
+    mbid: str | None = None
     mb_recording_id: str
     mb_album_id: str
 
@@ -189,6 +192,38 @@ async def list_downloads():
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
     return get_all_downloads(_cfg.state_db)
+
+
+@app.get("/api/downloads/{mbid}/detail")
+async def get_download_detail(mbid: str):
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+
+    record = get_download_by_mbid(_cfg.state_db, mbid)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not found")
+
+    file_path = record.get("file_path")
+    if not file_path or not os.path.exists(file_path):
+        return {"album_name": None, "file_path": None}
+
+    album_name = None
+    try:
+        lower = file_path.lower()
+        if lower.endswith(".flac"):
+            audio = mutagen.flac.FLAC(file_path)
+            tags = audio.get("album")
+            if tags:
+                album_name = tags[0]
+        elif lower.endswith(".opus") or lower.endswith(".ogg"):
+            audio = mutagen.oggopus.OggOpus(file_path)
+            tags = audio.get("album")
+            if tags:
+                album_name = tags[0]
+    except Exception:
+        album_name = None
+
+    return {"album_name": album_name, "file_path": file_path}
 
 
 @app.delete("/api/downloads/{mbid}")
@@ -356,7 +391,7 @@ def _navidrome_get_song(url: str, username: str, password: str, song_id: str) ->
 async def rematch_apply(req: RematchApplyRequest):
     """Apply a manual album rematch to a song file.
 
-    1. Resolves the file path via Navidrome getSong.
+    1. Resolves the file path via state.db (mbid) or Navidrome getSong (song_id).
     2. Fetches album name from MusicBrainz release.
     3. Rewrites album tag (mb_albumid is NOT written to avoid Navidrome album split).
     4. Embeds cover art from Cover Art Archive.
@@ -365,26 +400,41 @@ async def rematch_apply(req: RematchApplyRequest):
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
 
-    # 1. Resolve file path via Navidrome getSong
-    try:
-        song = _navidrome_get_song(
-            _cfg.navidrome.url,
-            _cfg.navidrome.username,
-            _cfg.navidrome.password,
-            req.song_id,
-        )
-    except Exception as exc:
-        log.error("rematch_apply: getSong failed", song_id=req.song_id, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"getSong failed: {exc}")
+    if req.song_id is None and req.mbid is None:
+        raise HTTPException(status_code=422, detail="song_id or mbid is required")
 
-    relative_path = song.get("path", "")
-    if not relative_path:
-        raise HTTPException(status_code=500, detail="getSong returned no path")
+    # 1. Resolve file path
+    if req.mbid is not None:
+        # Downloads 탭에서 호출: state.db에서 file_path 직접 조회
+        record = get_download_by_mbid(_cfg.state_db, req.mbid)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"mbid not found: {req.mbid}")
+        file_path = record.get("file_path")
+        if not file_path:
+            raise HTTPException(status_code=500, detail="file_path not recorded in state.db")
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"audio file not found: {file_path}")
+    else:
+        # Navidrome 탭에서 호출: getSong으로 경로 조회
+        try:
+            song = _navidrome_get_song(
+                _cfg.navidrome.url,
+                _cfg.navidrome.username,
+                _cfg.navidrome.password,
+                req.song_id,
+            )
+        except Exception as exc:
+            log.error("rematch_apply: getSong failed", song_id=req.song_id, error=str(exc))
+            raise HTTPException(status_code=500, detail=f"getSong failed: {exc}")
 
-    # Navidrome path is relative to music root inside the container
-    file_path = f"/app/data/music/{relative_path.lstrip('/')}"
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"audio file not found: {file_path}")
+        relative_path = song.get("path", "")
+        if not relative_path:
+            raise HTTPException(status_code=500, detail="getSong returned no path")
+
+        # Navidrome path is relative to music root inside the container
+        file_path = f"/app/data/music/{relative_path.lstrip('/')}"
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"audio file not found: {file_path}")
 
     # 2. Fetch album name from MusicBrainz release
     _MB_API = "https://musicbrainz.org/ws/2"
@@ -434,6 +484,7 @@ async def rematch_apply(req: RematchApplyRequest):
     log.info(
         "rematch applied",
         song_id=req.song_id,
+        mbid=req.mbid,
         mb_album_id=req.mb_album_id,
         album_name=album_name,
         file=file_path,

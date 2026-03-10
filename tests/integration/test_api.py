@@ -245,6 +245,119 @@ def test_get_index_returns_html(client):
     assert "html" in resp.headers.get("content-type", "").lower()
 
 
+# ── GET /api/downloads/{mbid}/detail ─────────────────────────────────────────
+
+def test_get_download_detail_not_found_returns_404(client):
+    """DB에 없는 mbid 조회 시 404를 반환한다."""
+    resp = client.get("/api/downloads/nonexistent-mbid/detail")
+    assert resp.status_code == 404
+
+
+def test_get_download_detail_no_file_path_returns_nulls(client, tmp_state_db):
+    """file_path가 None이면 album_name과 file_path 모두 null을 반환한다."""
+    from src.state import mark_pending
+    mark_pending(tmp_state_db, "mbid-nofile", "Track", "Artist")
+
+    resp = client.get("/api/downloads/mbid-nofile/detail")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["album_name"] is None
+    assert data["file_path"] is None
+
+
+def test_get_download_detail_file_missing_returns_nulls(client, tmp_state_db):
+    """file_path가 DB에 있지만 실제 파일이 없으면 nulls를 반환한다."""
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "mbid-gone", "Track", "Artist")
+    mark_done(tmp_state_db, "mbid-gone", file_path="/nonexistent/track.flac")
+
+    resp = client.get("/api/downloads/mbid-gone/detail")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["album_name"] is None
+    assert data["file_path"] is None
+
+
+def test_get_download_detail_flac_reads_album_tag(client, tmp_state_db, tmp_path):
+    """FLAC 파일의 album 태그를 정상적으로 읽어 반환한다."""
+    dummy_file = tmp_path / "track.flac"
+    dummy_file.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "mbid-flac", "Lose Yourself", "Eminem")
+    mark_done(tmp_state_db, "mbid-flac", file_path=str(dummy_file))
+
+    mock_audio = MagicMock()
+    mock_audio.get.return_value = ["The Marshall Mathers LP"]
+
+    with patch("src.api.mutagen.flac.FLAC", return_value=mock_audio):
+        resp = client.get("/api/downloads/mbid-flac/detail")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["album_name"] == "The Marshall Mathers LP"
+    assert data["file_path"] == str(dummy_file)
+
+
+def test_get_download_detail_opus_reads_album_tag(client, tmp_state_db, tmp_path):
+    """OggOpus 파일의 album 태그를 정상적으로 읽어 반환한다."""
+    dummy_file = tmp_path / "track.opus"
+    dummy_file.write_bytes(b"fake opus data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "mbid-opus", "Lose Yourself", "Eminem")
+    mark_done(tmp_state_db, "mbid-opus", file_path=str(dummy_file))
+
+    mock_audio = MagicMock()
+    mock_audio.get.return_value = ["The Marshall Mathers LP"]
+
+    with patch("src.api.mutagen.oggopus.OggOpus", return_value=mock_audio):
+        resp = client.get("/api/downloads/mbid-opus/detail")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["album_name"] == "The Marshall Mathers LP"
+
+
+def test_get_download_detail_no_album_tag_returns_null(client, tmp_state_db, tmp_path):
+    """파일은 존재하지만 album 태그가 없으면 album_name이 null이다."""
+    dummy_file = tmp_path / "track.flac"
+    dummy_file.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "mbid-notag", "Track", "Artist")
+    mark_done(tmp_state_db, "mbid-notag", file_path=str(dummy_file))
+
+    mock_audio = MagicMock()
+    mock_audio.get.return_value = None  # 태그 없음
+
+    with patch("src.api.mutagen.flac.FLAC", return_value=mock_audio):
+        resp = client.get("/api/downloads/mbid-notag/detail")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["album_name"] is None
+    assert data["file_path"] == str(dummy_file)
+
+
+def test_get_download_detail_mutagen_exception_returns_null_album(client, tmp_state_db, tmp_path):
+    """mutagen 파싱 중 예외 발생 시 album_name이 null이고 에러 없이 200을 반환한다."""
+    dummy_file = tmp_path / "track.flac"
+    dummy_file.write_bytes(b"corrupted data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "mbid-corrupt", "Track", "Artist")
+    mark_done(tmp_state_db, "mbid-corrupt", file_path=str(dummy_file))
+
+    with patch("src.api.mutagen.flac.FLAC", side_effect=Exception("corrupted")):
+        resp = client.get("/api/downloads/mbid-corrupt/detail")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["album_name"] is None
+    assert data["file_path"] == str(dummy_file)
+
+
 # ── GET /api/rematch/search ───────────────────────────────────────────────────
 
 def _mb_search_response(recordings):
@@ -497,10 +610,92 @@ def test_rematch_apply_mb_release_lookup_fails_returns_500(client):
     assert resp.status_code == 500
 
 
-def test_rematch_apply_missing_song_id_returns_422(client):
-    """필수 필드 누락 시 422를 반환한다."""
+def test_rematch_apply_missing_song_id_and_mbid_returns_422(client):
+    """song_id와 mbid 둘 다 없으면 422를 반환한다."""
     resp = client.post(
         "/api/rematch/apply",
         json={"mb_recording_id": "rec-001", "mb_album_id": "album-001"},
     )
     assert resp.status_code == 422
+
+
+def test_rematch_apply_via_mbid_success(client, tmp_state_db, tmp_path):
+    """mbid 경로: state.db에서 file_path 조회 후 재태깅 성공 → 200 반환."""
+    dummy_audio = tmp_path / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "manual-abc12345", "Lose Yourself", "Eminem")
+    mark_done(tmp_state_db, "manual-abc12345", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "The Marshall Mathers LP"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag") as mock_write:
+            with patch("src.api.embed_cover_art", return_value=True):
+                with patch("src.api.threading.Thread") as mock_thread_cls:
+                    mock_thread_cls.return_value = MagicMock()
+                    resp = client.post(
+                        "/api/rematch/apply",
+                        json={
+                            "mbid": "manual-abc12345",
+                            "mb_recording_id": "rec-001",
+                            "mb_album_id": "album-001",
+                        },
+                    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["album_name"] == "The Marshall Mathers LP"
+    mock_write.assert_called_once()
+
+
+def test_rematch_apply_via_mbid_not_in_db_returns_404(client):
+    """mbid가 state.db에 없으면 404를 반환한다."""
+    resp = client.post(
+        "/api/rematch/apply",
+        json={
+            "mbid": "manual-nonexistent",
+            "mb_recording_id": "rec-001",
+            "mb_album_id": "album-001",
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_rematch_apply_via_mbid_file_path_none_returns_500(client, tmp_state_db):
+    """mbid는 있지만 file_path가 None이면 500을 반환한다."""
+    from src.state import mark_pending
+    mark_pending(tmp_state_db, "manual-nofp", "Track", "Artist")
+    # file_path를 기록하지 않아 None 상태
+
+    resp = client.post(
+        "/api/rematch/apply",
+        json={
+            "mbid": "manual-nofp",
+            "mb_recording_id": "rec-001",
+            "mb_album_id": "album-001",
+        },
+    )
+    assert resp.status_code == 500
+
+
+def test_rematch_apply_via_mbid_file_missing_returns_404(client, tmp_state_db):
+    """mbid의 file_path가 존재하지 않는 파일이면 404를 반환한다."""
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "manual-gone", "Track", "Artist")
+    mark_done(tmp_state_db, "manual-gone", file_path="/nonexistent/path/track.flac")
+
+    resp = client.post(
+        "/api/rematch/apply",
+        json={
+            "mbid": "manual-gone",
+            "mb_recording_id": "rec-001",
+            "mb_album_id": "album-001",
+        },
+    )
+    assert resp.status_code == 404
