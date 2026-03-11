@@ -9,7 +9,7 @@
 
 다운로드 상태를 추적하는 메인 데이터베이스.
 
-**경로**: `data/state.db` (컨테이너 내 `/app/data/state.db`)
+**경로**: 컨테이너 내 `/app/db/state.db` (named Docker volume `db-data` 마운트). 호스트에서 직접 접근 불가 — `docker compose exec brainstream sqlite3 /app/db/state.db` 사용.
 
 ### 테이블: `downloads`
 
@@ -78,8 +78,10 @@ CREATE TABLE IF NOT EXISTS downloads (
 ## 3. 파일시스템 구조
 
 ```
+db/                             # named volume (db-data:/app/db)
+└── state.db                    # 다운로드 상태 DB (file_path 컬럼 포함)
+
 data/
-├── state.db                    # 다운로드 상태 DB (file_path 컬럼 포함)
 ├── staging/                    # 임시 다운로드 디렉토리
 │   └── {mbid}.flac             # 처리 완료 후 자동 삭제
 ├── music/                      # 최종 음악 라이브러리 (Navidrome이 읽음)

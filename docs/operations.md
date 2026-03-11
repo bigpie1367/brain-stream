@@ -177,7 +177,7 @@ curl "https://stream.example.com/rest/ping?u=admin&t={md5_token}&s={salt}&v=1.16
 # Python 소스 변경 (src/ 파일) — 로컬
 ./restart_local_docker.sh
 
-# beets 설정 변경 (beets/config.yaml) — 이미지에 번들됨, 재빌드 후 push 필요
+# Python 소스 변경 — 서버 (이미지 재빌드 필요)
 # git push → CI → Watchtower 자동 배포
 
 # 환경변수 변경 (.env) — 재시작만
@@ -200,24 +200,24 @@ curl http://localhost:8080/api/downloads | python3 -m json.tool
 # API
 curl http://localhost:8080/api/downloads | python3 -m json.tool
 
-# SQLite 직접 조회
-sqlite3 data/state.db "SELECT artist, track_name, status, attempts FROM downloads ORDER BY rowid DESC LIMIT 20;"
+# SQLite 직접 조회 (state.db는 named volume — docker compose exec 사용)
+docker compose -f docker-compose.prod.yml exec brainstream \
+  sqlite3 /app/db/state.db "SELECT artist, track_name, status, attempts FROM downloads ORDER BY rowid DESC LIMIT 20;"
 
 # 실패 목록만
-sqlite3 data/state.db "SELECT artist, track_name, error_msg, attempts FROM downloads WHERE status='failed';"
+docker compose -f docker-compose.prod.yml exec brainstream \
+  sqlite3 /app/db/state.db "SELECT artist, track_name, error_msg, attempts FROM downloads WHERE status='failed';"
 ```
 
-### 5.4 beets 라이브러리 확인
+### 5.4 라이브러리 파일 확인
 
 ```bash
-# 전체 목록
-docker exec brainstream-1 beet list -f '$artist - $title [$album]'
+# 특정 아티스트 폴더 확인
+ls data/music/{아티스트명}/
 
-# 특정 아티스트
-docker exec brainstream-1 beet list -f '$path' artist:Radiohead
-
-# 앨범 없는 트랙 확인
-docker exec brainstream-1 beet list -f '$artist - $title' album:''
+# 태그 확인 (ffprobe 사용 시)
+docker compose -f docker-compose.prod.yml exec brainstream \
+  ffprobe -v quiet -print_format json -show_format "/app/data/music/Radiohead/Pablo Honey/Creep.flac"
 ```
 
 ---
@@ -229,7 +229,6 @@ docker exec brainstream-1 beet list -f '$artist - $title' album:''
 | 로그 | 경로 | 설명 |
 |------|------|------|
 | music-bot 앱 로그 | `data/logs/music-bot.log` | 구조화 로그 (JSON) |
-| beets import 로그 | `data/logs/beets-import.log` | beets 임포트 결과 |
 | Docker 로그 | `docker compose logs` | 컨테이너 stdout/stderr |
 
 ### 6.2 로그 확인
@@ -237,9 +236,6 @@ docker exec brainstream-1 beet list -f '$artist - $title' album:''
 ```bash
 # 실시간 앱 로그
 docker compose logs -f brainstream
-
-# beets import 로그
-tail -f data/logs/beets-import.log
 
 # 최근 에러만
 docker compose logs brainstream | grep '"level":"error"'
@@ -258,27 +254,18 @@ docker compose logs brainstream | grep '"level":"error"'
    ```
 2. state.db에서 실패 원인 확인:
    ```bash
-   sqlite3 data/state.db "SELECT artist, track_name, error_msg FROM downloads WHERE status='failed';"
+   docker compose exec brainstream sqlite3 /app/db/state.db "SELECT artist, track_name, error_msg FROM downloads WHERE status='failed';"
    ```
 3. 로그 확인: `docker compose logs -f brainstream`
 
-### beets가 skip을 반복함
-
-```bash
-tail -100 data/logs/beets-import.log
-```
-
-- `no strong recommendation` → `strong_rec_thresh` 값 완화 검토 (현재 0.15)
-- `No matching recordings found` → `beets/config.yaml`에 `musicbrainz` 플러그인 포함 여부 확인
-
 ### 앨범이 Navidrome에서 2개로 분리됨
 
-`tagger.py`의 `_enrich_track`에서 `mb_albumid`를 태그에 기록하고 있지 않은지 확인.
+`tagger.py`의 `_enrich_track`에서 `mb_albumid`를 태그에 기록하지 않는지 확인. mb_albumid 태그가 있으면 Navidrome이 별개 앨범으로 취급함.
 
 ```bash
-# 파일 태그 확인
-docker exec brainstream-1 beet list -f '$mb_albumid' artist:"아티스트"
-# 비어 있어야 정상
+# 파일 FLAC 태그에 mb_albumid가 없는지 확인 (metaflac 사용)
+docker compose exec brainstream metaflac --list "/app/data/music/아티스트/앨범/트랙.flac" | grep -i album
+# MUSICBRAINZ_ALBUMID 항목이 없어야 정상
 ```
 
 ### 앨범아트가 없음

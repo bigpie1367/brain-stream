@@ -1,8 +1,8 @@
 # API 명세서
 
-- **버전**: 1.2.0
+- **버전**: 1.3.0
 - **Base URL**: `http://localhost:8080`
-- **작성일**: 2026-03-10
+- **작성일**: 2026-03-11
 
 ---
 
@@ -16,6 +16,7 @@
 | GET | `/api/downloads` | 다운로드 이력 조회 |
 | DELETE | `/api/downloads/{mbid}` | 트랙 삭제 (파일 + state.db) |
 | POST | `/api/pipeline/run` | LB 파이프라인 수동 트리거 |
+| GET | `/api/downloads/{mbid}/detail` | 트랙 상세 정보 조회 (앨범명, 연도, 커버아트) |
 | GET | `/api/rematch/search` | 앨범 재매칭 후보 검색 |
 | POST | `/api/rematch/apply` | 선택한 앨범으로 재태깅 |
 
@@ -90,7 +91,7 @@ X-Accel-Buffering: no
 ```
 data: {"status": "downloading", "message": "YouTube 검색 중..."}
 
-data: {"status": "tagging", "message": "beets 태깅 중..."}
+data: {"status": "tagging", "message": "태깅 중..."}
 
 data: {"status": "scanning", "message": "Navidrome 스캔 중..."}
 
@@ -135,7 +136,8 @@ data: {"status": "done", "message": "완료"}
     "source": "listenbrainz",
     "attempts": 1,
     "downloaded_at": "2026-03-04T10:23:45.123456",
-    "error_msg": null
+    "error_msg": null,
+    "file_path": "/app/data/music/Radiohead/Pablo Honey/Creep.flac"
   },
   {
     "mbid": "manual-a1b2c3d4",
@@ -145,7 +147,8 @@ data: {"status": "done", "message": "완료"}
     "source": "manual",
     "attempts": 1,
     "downloaded_at": "2026-03-04T11:00:00.000000",
-    "error_msg": null
+    "error_msg": null,
+    "file_path": "/app/data/music/IU/밤의 편지/밤편지.flac"
   }
 ]
 ```
@@ -162,6 +165,7 @@ data: {"status": "done", "message": "완료"}
 | attempts | integer | 시도 횟수 |
 | downloaded_at | string \| null | 완료 시각 (UTC ISO 8601), 미완료 시 null |
 | error_msg | string \| null | 실패 사유, 성공 시 null |
+| file_path | string \| null | 임포트된 파일의 컨테이너 내 절대 경로. 미완료 시 null |
 
 **Error Responses**
 
@@ -231,6 +235,43 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 
 | Status | 설명 |
 |--------|------|
+| 503 | 서버 설정 미로드 |
+
+---
+
+## GET `/api/downloads/{mbid}/detail`
+
+라이브러리에 저장된 트랙의 상세 메타데이터를 파일에서 직접 읽어 반환한다.
+
+**Path Parameters**
+
+| 파라미터 | 설명 |
+|---------|------|
+| mbid | state.db의 mbid (LB 트랙: MB UUID, 수동 트랙: `manual-{uuid8}`) |
+
+**Response** `200 OK`
+
+```json
+{
+  "album_name": "Pablo Honey",
+  "year": "1993",
+  "cover_art": "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| album_name | string \| null | 파일의 album 태그 |
+| year | string \| null | 파일의 date 또는 year 태그 |
+| cover_art | string \| null | `data:{mime};base64,{...}` 형식의 임베드 커버아트. 없으면 null |
+
+파일이 없거나 경로가 없는 경우 세 필드 모두 null로 반환한다.
+
+**Error Responses**
+
+| Status | 설명 |
+|--------|------|
+| 404 | mbid가 state.db에 없음 |
 | 503 | 서버 설정 미로드 |
 
 ---

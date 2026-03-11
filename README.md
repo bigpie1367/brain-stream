@@ -42,7 +42,7 @@ cp .env.example .env
 | Planner | 요구사항 분석, 문서화, 태스크 배정 |
 | Backend | `src/pipeline/`, API, DB |
 | Frontend | `src/static/index.html` |
-| DevOps | `Dockerfile`, `docker-compose.*.yml`, `beets/` |
+| DevOps | `Dockerfile`, `docker-compose.*.yml`, `requirements.txt` |
 | QA | 기능 검증, 버그 리포트 |
 
 자세한 세션 초기화 프롬프트 및 협업 규칙: [docs/multi-session-workflow.md](docs/multi-session-workflow.md)
@@ -84,6 +84,6 @@ curl -X POST http://localhost:8080/api/pipeline/run
 # 다운로드 이력 확인
 curl http://localhost:8080/api/downloads | python3 -m json.tool
 
-# SQLite 상태 확인
-sqlite3 data/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
+# SQLite 상태 확인 (state.db는 named volume — docker compose exec 사용)
+docker compose exec brainstream sqlite3 /app/db/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
 ```

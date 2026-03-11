@@ -1,7 +1,7 @@
 # 시스템 아키텍처
 
-- **버전**: 1.1.0
-- **작성일**: 2026-03-05
+- **버전**: 1.2.0
+- **작성일**: 2026-03-11
 
 ---
 
@@ -50,7 +50,7 @@
 │    ./data/music   → brainstream:/app/data/music             │
 │                   → navidrome:/music (read-only)            │
 │    ./data/staging → brainstream:/app/data/staging           │
-│    ./beets        → brainstream:/root/.config/beets         │
+│    db-data        → brainstream:/app/db  (named volume)     │
 └─────────────────────────────────────────────────────────────┘
 
 External APIs:
@@ -112,9 +112,9 @@ state.db 중복 체크 (mbid 기준)
         │   retry 트랙 empty artist/track → _lookup_recording() 재조회, 여전히 비면 mark_failed
         │
         ├─ yt-dlp YouTube 검색
-        │    "ytsearch5:{artist} {track}" (5개 후보)
+        │    "ytsearch5:{artist} {track} official audio" (5개 후보)
         │    결제/비공개/멤버십/접근불가 감지 → 다음 후보 retry
-        │    5개 모두 소진 시 "ytsearch1:" 폴백
+        │    5개 모두 소진 시 "ytsearch1:{artist} {track} official audio" 폴백
         │    FLAC 우선 → Opus fallback
         │    출력: staging/{mbid}.flac
         │    실패 → mark_failed
@@ -204,7 +204,7 @@ Daemon Thread 3~N (수동 다운로드 잡별)
 ```
 
 **동시성 제어:**
-- beet import 제거로 별도 lock 불필요. 각 다운로드 잡은 고유한 mbid 기반 파일명을 사용하므로 파일 충돌 없음.
+- 별도 lock 불필요. 각 다운로드 잡은 고유한 mbid 기반 파일명을 사용하므로 파일 충돌 없음.
 
 ---
 

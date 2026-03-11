@@ -54,20 +54,22 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-02 |
-| 설명 | `ytsearch1:{artist} {track}` 쿼리로 YouTube 첫 번째 결과를 다운로드한다 |
+| 설명 | `ytsearch5:{artist} {track} official audio` 쿼리로 YouTube 5개 후보를 수집하고 최적 결과를 다운로드한다 |
+| 후보 선택 | 라이브/커버 영상 패널티, 공식 채널(VEVO 등) 보너스 점수 기반 최적 후보 선택 |
+| 차단 영상 처리 | 결제/비공개/멤버십/접근불가 감지 → 다음 후보 retry. 5개 소진 시 `ytsearch1:{artist} {track} official audio` 폴백 |
 | 포맷 우선순위 | FLAC 우선, 실패 시 Opus fallback |
 | 출력 위치 | staging 디렉토리 (`{mbid}.{ext}`) |
 | 우선순위 | 필수 |
 
-### FR-03. beets 자동 태깅 및 라이브러리 임포트
+### FR-03. 자동 태깅 및 라이브러리 임포트
 
 | 항목 | 내용 |
 |------|------|
 | ID | FR-03 |
-| 설명 | beets singleton 임포트로 MusicBrainz 기준 메타데이터 자동 매칭 및 음악 라이브러리에 복사 |
-| 전처리 | mutagen으로 artist/title 선-태깅 (MusicBrainz 매칭 정확도 향상) |
-| skip 감지 | import 로그 offset 비교로 beets skip 여부 판단 (exit code가 항상 0이므로) |
-| duplicate 처리 | 이미 라이브러리에 있는 경우 성공으로 처리 |
+| 설명 | MB API 3단계 검색으로 recording 매칭 후 mutagen으로 직접 태깅, shutil로 최종 경로에 복사 |
+| MB 검색 단계 | stage 1 (strict): artistname+recording+Album+Official / stage 2 (plain): artistname+recording / stage 3 (fallback): recording만, artist 유사도 0.3 이상 |
+| 태그 쓰기 | mutagen: artist, title, mb_trackid 초기 태그 → _enrich_track()으로 album 태그 + 커버아트 임베딩 |
+| 파일 복사 | `shutil.copy2`: staging → `data/music/{Artist}/{Album}/{Track}.ext` |
 | 우선순위 | 필수 |
 
 ### FR-04. 앨범 정보 enrichment
@@ -75,9 +77,9 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-04 |
-| 설명 | beets singleton 임포트 후 앨범명/앨범아트가 없는 경우 MusicBrainz API로 보완 |
-| 앨범명 | `/ws/2/recording/{mb_trackid}?inc=releases+release-groups` → Official Album 우선 |
-| 앨범아트 | Cover Art Archive에서 직접 다운로드 → mutagen으로 파일에 임베딩 |
+| 설명 | staging 파일에서 직접 앨범명/커버아트를 결정하여 mutagen으로 임베딩 |
+| 앨범명 결정 순서 | 1. iTunes Search API (artist 유사도 0.4 이상) → 2. Deezer API → 3. MB `/recording/{id}?inc=releases+release-groups` → 4. YouTube 채널명 → 5. "Unknown Album" |
+| 커버아트 결정 순서 | 1. Cover Art Archive (mb_albumid_candidates 최대 3개 시도) → 2. iTunes artwork URL → 3. Deezer artwork URL → 4. YouTube 썸네일 |
 | 제약 | mb_albumid는 파일 태그에 기록하지 않음 (Navidrome 앨범 분리 방지) |
 | 우선순위 | 필수 |
 
@@ -125,8 +127,7 @@
 
 ### NFR-01. 동시성 안전성
 
-- beet import는 threading.Lock으로 직렬화 (import 로그 오염 방지)
-- 여러 manual 다운로드 잡이 동시에 실행될 수 있어야 함
+- 여러 manual 다운로드 잡이 동시에 실행될 수 있어야 함. 각 잡은 고유한 mbid 기반 파일명을 사용하므로 별도 lock 불필요
 - duplicate-skip 발생 시에도 enrichment 수행
 
 ### NFR-02. 장애 격리
@@ -143,8 +144,8 @@
 ### NFR-04. 배포 단순성
 
 - Docker Compose 단일 명령으로 전체 스택 실행
-- beets 설정은 볼륨 마운트로 재빌드 없이 변경 가능
-- 환경변수로 민감 정보 오버라이드 가능 (LB_USERNAME, LB_TOKEN, NAVIDROME_USER, NAVIDROME_PASSWORD)
+- config 파일 없이 환경변수만으로 동작 (LB_USERNAME, LB_TOKEN, NAVIDROME_USER, NAVIDROME_PASSWORD)
+- Python 소스 변경 시 재빌드 후 재시작만으로 적용 가능
 
 ### NFR-05. API Rate Limit 준수
 
@@ -157,11 +158,11 @@
 
 | ID | 제약 | 이유 |
 |----|------|------|
-| CON-01 | beets는 pip으로 설치 (apt 금지) | apt beets는 시스템 Python → pip 패키지 접근 불가 |
-| CON-02 | beets 2.x: musicbrainz를 plugins에 명시 필수 | beets 2.x에서 플러그인으로 분리됨 |
-| CON-03 | beet import는 반드시 `-s` (singleton) 플래그 사용 | 앨범 모드는 단일 파일 skip 처리 |
-| CON-04 | mb_albumid를 파일 태그에 기록 금지 | 트랙마다 다른 release ID → Navidrome 앨범 분리 현상 |
-| CON-05 | strong_rec_thresh ≥ 0.15 | 0.04 이하면 정상 매치(88.9%)도 거부됨 |
+| CON-01 | mb_albumid를 파일 태그에 기록 금지 | 트랙마다 다른 release ID → Navidrome 앨범 분리 현상 |
+| CON-02 | iTunes/Deezer artist 유사도 임계값 0.4 이상만 허용 | 동명 아티스트 오매칭 방지 |
+| CON-03 | MB 검색 폴백 3단계: recording-only 단계에서 artist 유사도 0.3 미만 시 실패 처리 | 관련 없는 아티스트 recording 매칭 방지 |
+| CON-04 | MusicBrainz API: 각 호출 전 1초 대기 | Rate limit 1 req/sec 준수 |
+| CON-05 | Linux 파일시스템 대소문자 구분으로 인한 폴더 충돌 방지 | `_resolve_dir`로 대소문자 무시 기존 폴더 재사용 |
 
 ---
 
@@ -170,8 +171,10 @@
 | 시스템 | 용도 | 비고 |
 |--------|------|------|
 | ListenBrainz API | CF 추천 트랙 조회 | 인증 Token 필요 |
-| YouTube (yt-dlp) | 음원 다운로드 | 검색어: `ytsearch1:{artist} {track}` |
+| YouTube (yt-dlp) | 음원 다운로드 | 검색어: `ytsearch5:{artist} {track} official audio` |
 | MusicBrainz API | recording → 앨범 정보 조회 | Rate limit 1 req/sec |
 | Cover Art Archive | 앨범아트 다운로드 | MusicBrainz release ID 필요 |
+| iTunes Search API | 앨범명/커버아트 조회 | 인증 불필요. `country` 파라미터로 US/KR 스토어 선택 |
+| Deezer API | 앨범명/커버아트 폴백 조회 | 인증 불필요 |
 | Navidrome | 음악 스트리밍 서버 | Subsonic API v1.16.1 |
-| beets | 오디오 메타데이터 태거 | pip 설치 필수 (v2.x) |
+| mutagen | 오디오 파일 태그 읽기/쓰기 | FLAC, OGG/Opus, MP4/M4A 지원 |

@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |----------|-----------|---------------|
 | `backend` | `src/pipeline/`, `src/state.py`, `src/config.py`, `src/main.py`, `src/api.py` | Python 코드 구현·수정 |
 | `frontend` | `src/static/index.html` | Web UI 수정 |
-| `devops` | `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `beets/` | 인프라·빌드·환경 |
+| `devops` | `Dockerfile`, `docker-compose.yml`, `requirements.txt` | 인프라·빌드·환경 |
 | `qa` | (읽기 전용 + Bash) | 기능 검증·버그 재현 |
 
 ### Planner 역할 (이 세션)
@@ -54,7 +54,7 @@ docker restart music-bot-temp-music-bot-1
 docker compose up --build -d
 
 # Inspect SQLite state DB
-sqlite3 data/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
+docker compose exec brainstream sqlite3 /app/db/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
 
 # Manually trigger the LB pipeline via API
 curl -X POST http://localhost:8080/api/pipeline/run
