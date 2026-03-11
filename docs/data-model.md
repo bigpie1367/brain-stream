@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS downloads (
 | mbid | TEXT (PK) | LB 트랙: MusicBrainz recording UUID. 수동: `manual-{8자 hex}` | `a3e48b38-...` / `manual-a1b2c3d4` |
 | track_name | TEXT | 트랙명. 태깅 완료 후 canonical title(iTunes/MB/Deezer)로 업데이트됨 | `Creep` |
 | artist | TEXT | 아티스트명. 태깅 완료 후 canonical artist(MB/iTunes/Deezer)로 업데이트됨 | `Radiohead` |
-| status | TEXT | 현재 처리 상태 | `done` |
+| status | TEXT | 현재 처리 상태 (`pending` / `downloading` / `done` / `failed` / `ignored`) | `done` |
 | attempts | INTEGER | 총 시도 횟수 (실패 시 증가) | `1` |
 | downloaded_at | TEXT | 성공 완료 시각 (UTC) | `2026-03-04T10:23:45` |
 | error_msg | TEXT | 마지막 실패 사유 | `download failed` |
@@ -64,11 +64,13 @@ CREATE TABLE IF NOT EXISTS downloads (
     ▼                      ▼
 ┌────────┐           ┌──────────┐
 │  done  │           │  failed  │◄──── attempts 증가
-└────────┘           └──────┬───┘
-                            │
-                  attempts < 3?
-                  ├─ Yes → 다음 파이프라인 실행 시 재시도
-                  └─ No  → 영구 실패 (더 이상 재시도 안 함)
+└───┬────┘           └──────┬───┘
+    │                       │
+    │ DELETE /api/downloads  │ attempts < 3?
+    ▼                       ├─ Yes → 다음 파이프라인 실행 시 재시도
+┌─────────┐                 └─ No  → 영구 실패 (더 이상 재시도 안 함)
+│ ignored │  ← 파일 삭제, DB 레코드 유지
+└─────────┘  ← 파이프라인이 done과 동일하게 스킵
 ```
 
 **주의**: `pending`에서 `downloading`을 거치지 않고 바로 `done`/`failed`로 전이될 수 있음 (LB 자동 파이프라인).

@@ -14,7 +14,7 @@
 | POST | `/api/download` | 수동 다운로드 시작 |
 | GET | `/api/sse/{job_id}` | SSE 실시간 진행 스트림 |
 | GET | `/api/downloads` | 다운로드 이력 조회 |
-| DELETE | `/api/downloads/{mbid}` | 트랙 삭제 (파일 + state.db) |
+| DELETE | `/api/downloads/{mbid}` | 트랙 삭제 (파일 제거 + state.db를 ignored로 마킹) |
 | POST | `/api/pipeline/run` | LB 파이프라인 수동 트리거 |
 | GET | `/api/downloads/{mbid}/detail` | 트랙 상세 정보 조회 (앨범명, 연도, 커버아트) |
 | GET | `/api/rematch/search` | 앨범 재매칭 후보 검색 |
@@ -160,7 +160,7 @@ data: {"status": "done", "message": "완료"}
 | mbid | string | LB 트랙은 MusicBrainz recording UUID, 수동 트랙은 `manual-{uuid8}` |
 | track_name | string | 트랙명 |
 | artist | string | 아티스트명 |
-| status | string | `pending` / `downloading` / `done` / `failed` |
+| status | string | `pending` / `downloading` / `done` / `failed` / `ignored` |
 | source | string | `listenbrainz` / `manual` |
 | attempts | integer | 시도 횟수 |
 | downloaded_at | string \| null | 완료 시각 (UTC ISO 8601), 미완료 시 null |
@@ -177,7 +177,9 @@ data: {"status": "done", "message": "완료"}
 
 ## DELETE `/api/downloads/{mbid}`
 
-라이브러리에서 트랙을 삭제한다. 파일을 제거하고 state.db 레코드를 삭제한 후 Navidrome 재스캔을 트리거한다.
+라이브러리에서 트랙을 삭제한다. 물리적 파일을 제거하고 state.db 레코드를 `ignored`로 마킹한 후 Navidrome 재스캔을 트리거한다.
+
+> **참고**: 레코드를 완전히 삭제하지 않고 `ignored`로 마킹하므로, 이후 LB 파이프라인이 같은 mbid를 추천해도 재다운로드하지 않는다.
 
 **Path Parameters**
 
@@ -196,14 +198,14 @@ data: {"status": "done", "message": "완료"}
 
 | 필드 | 타입 | 설명 |
 |------|------|------|
-| deleted | boolean | state.db 레코드 삭제 여부 |
+| deleted | boolean | state.db 레코드가 `ignored`로 마킹됐는지 여부 |
 | files_removed | integer | 실제 삭제된 파일 수 (파일이 없던 경우 0) |
 
 **동작 순서**
 
 1. state.db에서 mbid로 file_path 조회
 2. 파일이 존재하면 삭제. 삭제 후 비어진 앨범 폴더 → 아티스트 폴더 순으로 자동 정리
-3. state.db에서 레코드 삭제
+3. state.db 레코드를 `ignored`로 마킹 (레코드 자체는 유지)
 4. Navidrome 재스캔 트리거 (파일이 삭제된 경우)
 
 **Error Responses**
@@ -415,6 +417,10 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 ```
 pending → downloading → (tagging) → done
                     └─────────────→ failed (최대 3회 재시도)
+
+done / ignored ← DELETE /api/downloads/{mbid} 호출 시 → ignored (파일 삭제, DB 레코드 유지)
 ```
 
 `attempts < 3`인 `failed` 상태는 다음 파이프라인 실행 시 자동 재시도됨.
+
+`ignored` 상태는 `done`과 동일하게 파이프라인 스킵 대상. LB 파이프라인이 같은 mbid를 추천해도 재다운로드하지 않음.
