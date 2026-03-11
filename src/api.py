@@ -36,6 +36,7 @@ from src.state import (
     mark_done,
     mark_downloading,
     mark_failed,
+    mark_ignored,
     mark_pending,
     update_file_path,
     update_track_info,
@@ -300,7 +301,7 @@ async def delete_download_entry(mbid: str):
         except OSError as exc:
             log.warning("could not remove file", file=file_path, error=str(exc))
 
-    delete_download(_cfg.state_db, mbid)
+    mark_ignored(_cfg.state_db, mbid)
 
     if files_removed:
         threading.Thread(

@@ -182,9 +182,9 @@ def test_delete_download_returns_404_when_not_found(client):
     assert resp.status_code == 404
 
 
-def test_delete_download_removes_db_record(client, tmp_state_db):
-    """삭제 후 state DB에서 레코드가 제거된다."""
-    from src.state import mark_done
+def test_delete_download_marks_record_as_ignored(client, tmp_state_db):
+    """삭제 후 state DB 레코드가 ignored 상태로 전환된다 (재다운로드 방지)."""
+    from src.state import mark_done, get_download_by_mbid
 
     mark_pending(tmp_state_db, "mbid-del", "Track", "Artist")
     mark_done(tmp_state_db, "mbid-del")
@@ -194,8 +194,9 @@ def test_delete_download_removes_db_record(client, tmp_state_db):
     data = resp.json()
     assert data["deleted"] is True
 
-    rows = get_all_downloads(tmp_state_db)
-    assert not any(r["mbid"] == "mbid-del" for r in rows)
+    row = get_download_by_mbid(tmp_state_db, "mbid-del")
+    assert row is not None
+    assert row["status"] == "ignored"
 
 
 def test_delete_download_removes_file_when_file_path_set(client, tmp_state_db, tmp_path):
@@ -219,8 +220,10 @@ def test_delete_download_removes_file_when_file_path_set(client, tmp_state_db, t
     assert not dummy_file.exists()
 
 
-def test_delete_download_no_file_path_removes_only_db(client, tmp_state_db):
-    """file_path가 None이면 파일 삭제 없이 DB 레코드만 삭제한다."""
+def test_delete_download_no_file_path_marks_ignored(client, tmp_state_db):
+    """file_path가 None이면 파일 삭제 없이 DB 레코드를 ignored 상태로 전환한다."""
+    from src.state import get_download_by_mbid
+
     mark_pending(tmp_state_db, "mbid-nofile", "Track", "Artist")
 
     resp = client.delete("/api/downloads/mbid-nofile")
@@ -228,6 +231,10 @@ def test_delete_download_no_file_path_removes_only_db(client, tmp_state_db):
     data = resp.json()
     assert data["deleted"] is True
     assert data["files_removed"] == 0
+
+    row = get_download_by_mbid(tmp_state_db, "mbid-nofile")
+    assert row is not None
+    assert row["status"] == "ignored"
 
 
 # ── GET / (index.html) ────────────────────────────────────────────────────────

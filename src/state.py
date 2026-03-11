@@ -53,7 +53,7 @@ def is_downloaded(db_path: str, mbid: str) -> bool:
         row = conn.execute(
             "SELECT status FROM downloads WHERE mbid = ?", (mbid,)
         ).fetchone()
-    return row is not None and row["status"] == "done"
+    return row is not None and row["status"] in ("done", "ignored")
 
 
 def mark_pending(
@@ -159,6 +159,15 @@ def update_track_info(
     values.append(mbid)
     with _conn(db_path) as conn:
         conn.execute(f"UPDATE downloads SET {', '.join(fields)} WHERE mbid = ?", values)
+
+
+def mark_ignored(db_path: str, mbid: str):
+    """사용자가 명시적으로 제거한 트랙. 파이프라인이 재다운로드하지 않도록 스킵."""
+    with _conn(db_path) as conn:
+        conn.execute(
+            "UPDATE downloads SET status = 'ignored' WHERE mbid = ?",
+            (mbid,),
+        )
 
 
 def delete_download(db_path: str, mbid: str):

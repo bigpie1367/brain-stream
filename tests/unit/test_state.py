@@ -9,6 +9,7 @@ from src.state import (
     mark_downloading,
     mark_done,
     mark_failed,
+    mark_ignored,
     get_all_downloads,
     get_retryable,
     get_download_by_mbid,
@@ -103,6 +104,33 @@ def test_is_downloaded_false_when_pending(tmp_state_db):
 
 def test_is_downloaded_false_when_not_exist(tmp_state_db):
     assert is_downloaded(tmp_state_db, "nonexistent-mbid") is False
+
+
+def test_is_downloaded_true_after_mark_ignored(tmp_state_db):
+    mark_pending(tmp_state_db, "mbid-ign", "Song", "Artist")
+    mark_ignored(tmp_state_db, "mbid-ign")
+    assert is_downloaded(tmp_state_db, "mbid-ign") is True
+
+
+def test_mark_ignored_sets_status(tmp_state_db):
+    mark_pending(tmp_state_db, "mbid-ign2", "Song", "Artist")
+    mark_ignored(tmp_state_db, "mbid-ign2")
+    row = get_download_by_mbid(tmp_state_db, "mbid-ign2")
+    assert row["status"] == "ignored"
+
+
+def test_mark_ignored_excluded_from_retryable(tmp_state_db):
+    mark_pending(tmp_state_db, "mbid-ign3", "Song", "Artist")
+    mark_ignored(tmp_state_db, "mbid-ign3")
+    retryable = get_retryable(tmp_state_db, max_attempts=3)
+    assert not any(r["mbid"] == "mbid-ign3" for r in retryable)
+
+
+def test_mark_ignored_included_in_get_all_downloads(tmp_state_db):
+    mark_pending(tmp_state_db, "mbid-ign4", "Song", "Artist")
+    mark_ignored(tmp_state_db, "mbid-ign4")
+    rows = get_all_downloads(tmp_state_db)
+    assert any(r["mbid"] == "mbid-ign4" and r["status"] == "ignored" for r in rows)
 
 
 # ── mark_failed ───────────────────────────────────────────────────────────────
