@@ -32,8 +32,8 @@ CREATE TABLE IF NOT EXISTS downloads (
 | 컬럼 | 타입 | 설명 | 예시 |
 |------|------|------|------|
 | mbid | TEXT (PK) | LB 트랙: MusicBrainz recording UUID. 수동: `manual-{8자 hex}` | `a3e48b38-...` / `manual-a1b2c3d4` |
-| track_name | TEXT | 트랙명 | `Creep` |
-| artist | TEXT | 아티스트명 | `Radiohead` |
+| track_name | TEXT | 트랙명. 태깅 완료 후 canonical title(iTunes/MB/Deezer)로 업데이트됨 | `Creep` |
+| artist | TEXT | 아티스트명. 태깅 완료 후 canonical artist(MB/iTunes/Deezer)로 업데이트됨 | `Radiohead` |
 | status | TEXT | 현재 처리 상태 | `done` |
 | attempts | INTEGER | 총 시도 횟수 (실패 시 증가) | `1` |
 | downloaded_at | TEXT | 성공 완료 시각 (UTC) | `2026-03-04T10:23:45` |

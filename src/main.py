@@ -10,7 +10,7 @@ from src.pipeline.downloader import download_track
 from src.pipeline.listenbrainz import _lookup_recording, fetch_recommendations
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
 from src.pipeline.tagger import tag_and_import
-from src.state import get_retryable, init_db, is_downloaded, mark_done, mark_failed, mark_pending
+from src.state import get_retryable, init_db, is_downloaded, mark_done, mark_failed, mark_pending, update_track_info
 from src.utils.logger import get_logger, setup_logger
 
 log = get_logger(__name__)
@@ -77,12 +77,19 @@ def run_pipeline(cfg):
             continue
 
         # 5. Tag + import
-        success, dest_path = tag_and_import(
+        success, dest_path, canonical_artist, canonical_title = tag_and_import(
             file_path, cfg.beets.music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata,
             db_path=cfg.state_db, mbid=mbid,
         )
         if success:
             mark_done(cfg.state_db, mbid, file_path=dest_path)
+            if canonical_artist or canonical_title:
+                update_track_info(
+                    cfg.state_db,
+                    mbid,
+                    artist=canonical_artist if canonical_artist else None,
+                    track_name=canonical_title if canonical_title else None,
+                )
             imported_any = True
         else:
             mark_failed(cfg.state_db, mbid, "tagging failed")

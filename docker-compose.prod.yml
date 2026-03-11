@@ -3,7 +3,7 @@ services:
     image: deluan/navidrome:latest
     restart: unless-stopped
     volumes:
-      - ./data/music:/music:ro
+      - ${MUSIC_DIR}:/music:ro
       - navidrome-data:/data
     environment:
       ND_SCANSCHEDULE: "0"   # disable auto-scan; brainstream triggers it
@@ -19,6 +19,7 @@ services:
       - "8080:8000"
     volumes:
       - ./data:/app/data
+      - ${MUSIC_DIR}:/app/data/music
       - db-data:/app/db
     depends_on:
       - navidrome

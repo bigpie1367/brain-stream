@@ -126,6 +126,7 @@ state.db 중복 체크 (mbid 기준)
         │    stage 2 (plain):   artistname:{a} AND recording:{t}  (release-type 필터 없음)
         │    stage 3 (fallback): recording:{t} 만 검색,
         │                        artist-credit + aliases 유사도 0.3 이상인 것 선택
+        │    반환: (recording_ids, mb_artist_name, mb_recording_title)
         │    recording_id 없으면 → mark_failed
         │
         ├─ mutagen: staging 파일에 artist / title / mb_trackid 초기 태그 쓰기
@@ -135,6 +136,19 @@ state.db 중복 체크 (mbid 기준)
         │
         ├─ _enrich_track()  ← staging 파일에서 직접 실행
         │    이미 album+art 있음 → 조기 리턴
+        │    반환: (album, canonical_artist, canonical_title)
+        │
+        │    [canonical_artist 결정 순서]
+        │    1. MB artist-credit[0].artist.name (MB 매칭 성공 시)
+        │    2. iTunes artistName (artist 유사도 0.4 이상)
+        │    3. Deezer artist.name (artist 유사도 0.4 이상)
+        │    4. 원본 요청 아티스트명 (fallback)
+        │
+        │    [canonical_title 결정 순서]
+        │    1. iTunes trackName (artist 유사도 0.4 이상)
+        │    2. MB recording title (MB 매칭 성공 시)
+        │    3. Deezer title (artist 유사도 0.4 이상)
+        │    4. 원본 요청 track_name (fallback)
         │
         │    [앨범명 결정 순서]
         │    1. iTunes Search API (artist 유사도 0.4 이상) → album 태그 쓰기
@@ -151,10 +165,15 @@ state.db 중복 체크 (mbid 기준)
         │    3. Deezer artwork URL → mutagen 임베딩
         │    4. YouTube thumbnail_url → mutagen 임베딩 (최후 수단)
         │
-        ├─ shutil.copy2: staging → data/music/{Artist}/{Album}/{Track}.ext
-        │    앨범명 기준으로 최종 경로 결정 (파일명 sanitize)
+        ├─ mutagen: canonical artist / title 태그를 staging 파일에 덮어쓰기
+        │    (요청 키워드가 아닌 MB/iTunes/Deezer 정규명으로 파일 태그 통일)
+        │
+        ├─ shutil.copy2: staging → data/music/{canonical_artist}/{Album}/{canonical_title}.ext
+        │    폴더명: _primary_artist(canonical_artist) — feat. 제거 후 sanitize
+        │    파일명: canonical_title sanitize
         │    staging 원본 삭제
         │    state.db: file_path 저장 → mark_done
+        │    state.db: artist / track_name을 canonical 값으로 업데이트
         │
         └─ (모든 트랙 완료 후)
            Navidrome startScan → getScanStatus 폴링 → 완료 대기
@@ -174,7 +193,8 @@ Queue 생성 (job_id → Queue)
         │    SSE emit: "downloading"
         │    yt-dlp 다운로드
         │    SSE emit: "tagging"
-        │    tag_and_import() (자동 파이프라인과 동일)
+        │    tag_and_import() → (success, dest_path, canonical_artist, canonical_title)
+        │      성공 시 state.db artist/track_name을 canonical 값으로 업데이트
         │    SSE emit: "scanning"
         │    Navidrome 스캔
         │    SSE emit: "done" / "failed"

@@ -102,7 +102,7 @@ def _run_download_job(job_id: str, artist: str, track: str):
             return
 
         _emit(job_id, "tagging", "태깅 중...")
-        success, dest_path = tag_and_import(
+        success, dest_path, canonical_artist, canonical_title = tag_and_import(
             file_path,
             cfg.beets.music_dir,
             artist=artist,
@@ -117,6 +117,14 @@ def _run_download_job(job_id: str, artist: str, track: str):
             return
 
         mark_done(cfg.state_db, mbid, file_path=dest_path)
+
+        if canonical_artist or canonical_title:
+            update_track_info(
+                cfg.state_db,
+                mbid,
+                artist=canonical_artist if canonical_artist else None,
+                track_name=canonical_title if canonical_title else None,
+            )
 
         _emit(job_id, "scanning", "Navidrome 스캔 중...")
         if trigger_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password):

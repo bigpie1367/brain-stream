@@ -105,7 +105,28 @@ def _collect_recording_candidates(recordings: list, track_name: str = "") -> lis
     return candidates[:3]
 
 
-def _mb_search_recording(artist: str, track_name: str) -> list[str]:
+def _extract_mb_artist_name(recordings: list) -> str:
+    """Extract the primary artist name from the first recording's artist-credit."""
+    for rec in recordings:
+        credits = rec.get("artist-credit", [])
+        for credit in credits:
+            if not isinstance(credit, dict):
+                continue
+            name = credit.get("artist", {}).get("name", "")
+            if name:
+                return name
+    return ""
+
+
+def _extract_mb_recording_title(recordings: list, best_id: str) -> str:
+    """Extract the title of the recording with the given ID from the recordings list."""
+    for rec in recordings:
+        if rec.get("id") == best_id:
+            return rec.get("title", "")
+    return ""
+
+
+def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, str]:
     """Search MusicBrainz for recordings by artist and title.
 
     Uses artistname: field (includes aliases) instead of artist: (canonical only).
@@ -114,7 +135,10 @@ def _mb_search_recording(artist: str, track_name: str) -> list[str]:
     versions. Falls back to the plain artistname+recording query if the strict
     query returns no results. Falls back further to a recording-only search if
     that also returns 0 results.
-    Returns a list of candidate recording IDs (up to 3, deduplicated), or empty list on failure.
+    Returns (candidate_recording_ids, mb_artist_name, mb_recording_title).
+    candidate_recording_ids: up to 3, deduplicated, or empty list on failure.
+    mb_artist_name: primary artist name from artist-credit, or empty string.
+    mb_recording_title: title of the best-matched recording, or empty string.
     """
     try:
         # Attempt 1: strict query — Official Album, exclude Live/Compilation/Soundtrack/Mixtape/DJ-mix/Remix
@@ -131,7 +155,7 @@ def _mb_search_recording(artist: str, track_name: str) -> list[str]:
         )
         r = requests.get(
             f"{_MB_API}/recording",
-            params={"query": strict_query, "fmt": "json", "limit": 5},
+            params={"query": strict_query, "fmt": "json", "limit": 5, "inc": "artist-credits"},
             headers=_MB_HEADERS,
             timeout=10,
         )
@@ -140,13 +164,17 @@ def _mb_search_recording(artist: str, track_name: str) -> list[str]:
         if recordings:
             candidates = _collect_recording_candidates(recordings, track_name)
             if candidates:
+                mb_artist_name = _extract_mb_artist_name(recordings)
+                mb_recording_title = _extract_mb_recording_title(recordings, candidates[0])
                 log.info(
                     "MB strict search found recordings",
                     artist=artist,
                     track=track_name,
                     recording_ids=candidates,
+                    mb_artist_name=mb_artist_name,
+                    mb_recording_title=mb_recording_title,
                 )
-                return candidates
+                return candidates, mb_artist_name, mb_recording_title
 
         # Attempt 2: plain query (no release-type filter)
         log.info(
@@ -158,7 +186,7 @@ def _mb_search_recording(artist: str, track_name: str) -> list[str]:
         query = f'artistname:"{artist}" AND recording:"{track_name}"'
         r = requests.get(
             f"{_MB_API}/recording",
-            params={"query": query, "fmt": "json", "limit": 5},
+            params={"query": query, "fmt": "json", "limit": 5, "inc": "artist-credits"},
             headers=_MB_HEADERS,
             timeout=10,
         )
@@ -167,13 +195,17 @@ def _mb_search_recording(artist: str, track_name: str) -> list[str]:
         if recordings:
             candidates = _collect_recording_candidates(recordings, track_name)
             if candidates:
+                mb_artist_name = _extract_mb_artist_name(recordings)
+                mb_recording_title = _extract_mb_recording_title(recordings, candidates[0])
                 log.info(
                     "MB plain search found recordings",
                     artist=artist,
                     track=track_name,
                     recording_ids=candidates,
+                    mb_artist_name=mb_artist_name,
+                    mb_recording_title=mb_recording_title,
                 )
-                return candidates
+                return candidates, mb_artist_name, mb_recording_title
 
         # Fallback: recording-only search (no artist filter) — pick best artist match
         log.info(
@@ -199,6 +231,7 @@ def _mb_search_recording(artist: str, track_name: str) -> list[str]:
             norm_artist = _normalize_for_match(artist)
             best_id = ""
             best_ratio = 0.0
+            best_artist_name = ""
             for rec in recordings2:
                 credits = rec.get("artist-credit", [])
                 for credit in credits:
@@ -225,25 +258,29 @@ def _mb_search_recording(artist: str, track_name: str) -> list[str]:
                     if ratio > best_ratio:
                         best_ratio = ratio
                         best_id = rec.get("id", "")
+                        best_artist_name = credit_artist.get("name", "")
             if best_ratio >= 0.3 and best_id:
+                best_recording_title = _extract_mb_recording_title(recordings2, best_id)
                 log.info(
                     "MB recording-only fallback found recording",
                     artist=artist,
                     track=track_name,
                     recording_id=best_id,
+                    mb_artist_name=best_artist_name,
+                    mb_recording_title=best_recording_title,
                     artist_similarity=round(best_ratio, 3),
                 )
-                return [best_id]
+                return [best_id], best_artist_name, best_recording_title
             log.info(
                 "MB recording-only fallback: no result met artist similarity threshold (0.3)",
                 artist=artist,
                 track=track_name,
                 best_ratio=round(best_ratio, 3),
             )
-        return []
+        return [], "", ""
     except Exception as exc:
         log.warning("MB recording search failed", artist=artist, track=track_name, error=str(exc))
-        return []
+        return [], "", ""
 
 
 def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = ""):
@@ -544,9 +581,9 @@ def _itunes_search(artist: str, track_name: str, country: str | None = None) -> 
             ).ratio()
             if ratio >= 0.4:
                 album = candidate.get("collectionName", "")
-                artwork_url = candidate.get("artworkUrl100", "").replace(
-                    "100x100bb", "600x600bb"
-                )
+                artwork_url = candidate.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
+                artist_name = candidate.get("artistName", "")
+                track_title = candidate.get("trackName", "")
                 log.info(
                     "iTunes search result",
                     artist=artist,
@@ -555,7 +592,12 @@ def _itunes_search(artist: str, track_name: str, country: str | None = None) -> 
                     artwork_url=artwork_url,
                     country=country or "US",
                 )
-                return {"album": album, "artwork_url": artwork_url}
+                return {
+                    "album": album,
+                    "artwork_url": artwork_url,
+                    "artistName": artist_name,
+                    "trackName": track_title,
+                }
     except Exception as exc:
         log.warning(
             "iTunes search failed",
@@ -612,6 +654,8 @@ def _deezer_search(artist: str, track_name: str) -> dict:
         album_obj = item.get("album", {})
         album = album_obj.get("title", "")
         artwork_url = album_obj.get("cover_xl", "")
+        artist_name = item.get("artist", {}).get("name", "")
+        track_title = item.get("title", "")
         log.info(
             "Deezer search result",
             artist=artist,
@@ -619,7 +663,12 @@ def _deezer_search(artist: str, track_name: str) -> dict:
             album=album,
             artwork_url=artwork_url,
         )
-        return {"album": album, "artwork_url": artwork_url}
+        return {
+            "album": album,
+            "artwork_url": artwork_url,
+            "artistName": artist_name,
+            "trackName": track_title,
+        }
     except Exception as exc:
         log.warning("Deezer search failed", artist=artist, track=track_name, error=str(exc))
         return {}
@@ -759,12 +808,16 @@ def _enrich_track(
     track_name: str = "",
     yt_metadata: dict | None = None,
     recording_ids: list[str] | None = None,
-) -> str:
+    mb_recording_title: str = "",
+) -> tuple[str, str, str]:
     """Resolve album via iTunes/Deezer, then fetch cover art from CAA/iTunes/Deezer.
 
     Album resolution priority: iTunes → Deezer → MB recording → YouTube channel.
     Cover art priority: CAA → iTunes → Deezer → YouTube thumbnail.
-    Returns the final album string (empty string if none).
+    canonical_title priority: iTunes trackName → MB recording title → Deezer title.
+    Returns (album, canonical_artist, canonical_title) where canonical_artist is the
+    normalised artist name from iTunes/Deezer/MB and canonical_title is the normalised
+    track title from iTunes/Deezer/MB (or empty string if none found).
     """
     tags = _read_tags(dest_path)
     mb_trackid = tags.get("mb_trackid", "")
@@ -773,10 +826,12 @@ def _enrich_track(
 
     if has_album and has_art:
         log.info("track already enriched, skipping", artist=artist, track=track_name)
-        return tags.get("album", "")
+        return tags.get("album", ""), tags.get("artist", ""), ""
 
     # ── 1. Album resolution: iTunes → Deezer first ──────────────────────
     album = ""
+    canonical_artist = ""
+    canonical_title = ""
     itunes_result: dict = {}
     deezer_result: dict = {}
 
@@ -785,13 +840,28 @@ def _enrich_track(
         itunes_result = _itunes_search(artist, track_name)
         album = itunes_result.get("album", "")
         if album:
+            canonical_artist = itunes_result.get("artistName", "")
+            canonical_title = itunes_result.get("trackName", "")
             log.info("album resolved via iTunes", artist=artist, track=track_name, album=album)
+
+        # MB recording title — 2순위 canonical_title (iTunes 결과가 없을 때)
+        if not canonical_title and mb_recording_title:
+            canonical_title = mb_recording_title
+            log.info(
+                "canonical_title resolved via MB recording title",
+                artist=artist,
+                track=track_name,
+                mb_recording_title=mb_recording_title,
+            )
 
         # Deezer fallback
         if not album:
             deezer_result = _deezer_search(artist, track_name)
             album = deezer_result.get("album", "")
             if album:
+                canonical_artist = deezer_result.get("artistName", "")
+                if not canonical_title:
+                    canonical_title = deezer_result.get("trackName", "")
                 log.info("album resolved via Deezer", artist=artist, track=track_name, album=album)
 
     # ── 2. Build MB recording IDs for cover art (CAA) ────────────────────
@@ -807,7 +877,9 @@ def _enrich_track(
             artist=artist,
             track=track_name,
         )
-        rids_to_try = _mb_search_recording(artist, track_name)
+        rids_to_try, _mb_artist_from_search, _mb_title_from_search = _mb_search_recording(
+            artist, track_name
+        )
         if rids_to_try:
             _write_tags(dest_path, artist, track_name, rids_to_try[0])
     elif mb_trackid and recording_ids and mb_trackid not in rids_to_try:
@@ -872,6 +944,8 @@ def _enrich_track(
         if not art_embedded:
             if not itunes_result and artist and track_name:
                 itunes_result = _itunes_search(artist, track_name)
+                if not canonical_artist:
+                    canonical_artist = itunes_result.get("artistName", "")
             itunes_art = itunes_result.get("artwork_url", "")
             if itunes_art:
                 log.info("embedding cover art from iTunes", artist=artist, track=track_name)
@@ -882,6 +956,8 @@ def _enrich_track(
         if not art_embedded:
             if not deezer_result and artist and track_name:
                 deezer_result = _deezer_search(artist, track_name)
+                if not canonical_artist:
+                    canonical_artist = deezer_result.get("artistName", "")
             deezer_art = deezer_result.get("artwork_url", "")
             if deezer_art:
                 log.info("embedding cover art from Deezer", artist=artist, track=track_name)
@@ -899,7 +975,7 @@ def _enrich_track(
                 )
                 _embed_art_from_url(dest_path, thumbnail_url)
 
-    return album
+    return album, canonical_artist, canonical_title
 
 
 def tag_and_import(
@@ -910,20 +986,25 @@ def tag_and_import(
     yt_metadata: dict | None = None,
     db_path: str | None = None,
     mbid: str | None = None,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, str, str]:
     """Tag staging file in-place, then copy to final music_dir path in one step.
 
-    Returns (success, dest_path). dest_path is empty string on failure.
+    Returns (success, dest_path, canonical_artist, canonical_title).
+    canonical_artist and canonical_title are empty strings on failure or when unavailable.
     """
     path = Path(staging_file)
     if not path.exists():
         log.error("staging file not found", file=staging_file)
-        return False, ""
+        return False, "", "", ""
 
     # Search MB for recording IDs (best-effort; failure does not abort import)
     recording_ids: list[str] = []
+    mb_artist_name: str = ""
+    mb_recording_title: str = ""
     if artist and track_name:
-        recording_ids = _mb_search_recording(artist, track_name)
+        recording_ids, mb_artist_name, mb_recording_title = _mb_search_recording(
+            artist, track_name
+        )
         if not recording_ids:
             log.warning(
                 "MB recording not found, continuing with iTunes/Deezer",
@@ -931,22 +1012,50 @@ def tag_and_import(
                 track=track_name,
             )
 
-    sanitized_artist = _sanitize_filename(_primary_artist(artist)) if artist else "Unknown Artist"
-    sanitized_track = (
-        _sanitize_filename(track_name) if track_name else _sanitize_filename(path.stem)
-    )
-
     # Write initial tags to staging file
     _write_tags(str(path), artist, track_name, recording_ids[0] if recording_ids else "")
 
     # Enrich staging file: album from iTunes/Deezer/MB + cover art
-    album = _enrich_track(
+    album, canonical_artist, canonical_title = _enrich_track(
         str(path),
         artist=artist,
         track_name=track_name,
         yt_metadata=yt_metadata,
         recording_ids=recording_ids if recording_ids else None,
+        mb_recording_title=mb_recording_title,
     )
+
+    # Determine final artist folder name:
+    # 1. MB artist-credit name (most authoritative canonical source)
+    # 2. canonical_artist from iTunes/Deezer (returned by _enrich_track)
+    # 3. original request artist name (last resort)
+    effective_artist = mb_artist_name or canonical_artist or artist
+    if mb_artist_name and mb_artist_name != artist:
+        log.info(
+            "using MB artist-credit name for folder",
+            original=artist,
+            mb_artist=mb_artist_name,
+        )
+    sanitized_artist = (
+        _sanitize_filename(_primary_artist(effective_artist))
+        if effective_artist
+        else "Unknown Artist"
+    )
+
+    # Determine final track filename: canonical from iTunes/Deezer preferred, else original request
+    effective_track = canonical_title if canonical_title else (track_name or path.stem)
+    sanitized_track = _sanitize_filename(effective_track)
+    if canonical_title and canonical_title != track_name:
+        log.info(
+            "using canonical track title for filename",
+            original=track_name,
+            canonical=canonical_title,
+        )
+
+    # Overwrite artist/title tags on staging file with canonical names before copy
+    # effective_artist: full canonical name (feat. not stripped — that's only for folder path)
+    # effective_track: canonical title from iTunes/Deezer, or original request
+    _write_tags(str(path), effective_artist, effective_track)
 
     # Compute final destination path based on resolved album
     sanitized_album = _sanitize_filename(album) if album else "Unknown Album"
@@ -958,7 +1067,7 @@ def tag_and_import(
     if dest_path.exists():
         log.info("file already exists in music_dir, treating as duplicate", dest=str(dest_path))
         _cleanup_staging(path)
-        return True, str(dest_path)
+        return True, str(dest_path), effective_artist, effective_track
 
     # Copy enriched staging file to final destination
     try:
@@ -971,10 +1080,10 @@ def tag_and_import(
             dest=str(dest_path),
             error=str(exc),
         )
-        return False, ""
+        return False, "", "", ""
 
     _cleanup_staging(path)
-    return True, str(dest_path)
+    return True, str(dest_path), effective_artist, effective_track
 
 
 def _cleanup_staging(path: Path):

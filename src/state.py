@@ -56,7 +56,9 @@ def is_downloaded(db_path: str, mbid: str) -> bool:
     return row is not None and row["status"] == "done"
 
 
-def mark_pending(db_path: str, mbid: str, track_name: str, artist: str, source: str = "listenbrainz"):
+def mark_pending(
+    db_path: str, mbid: str, track_name: str, artist: str, source: str = "listenbrainz"
+):
     with _conn(db_path) as conn:
         conn.execute("""
             INSERT OR IGNORE INTO downloads (mbid, track_name, artist, status, source)
@@ -137,14 +139,18 @@ def update_track_info(
     mbid: str,
     *,
     artist: str | None = None,
+    track_name: str | None = None,
     file_path: str | None = None,
 ):
-    """아티스트·파일경로를 선택적으로 업데이트한다."""
+    """아티스트·트랙명·파일경로를 선택적으로 업데이트한다."""
     fields = []
     values = []
     if artist is not None:
         fields.append("artist = ?")
         values.append(artist)
+    if track_name is not None:
+        fields.append("track_name = ?")
+        values.append(track_name)
     if file_path is not None:
         fields.append("file_path = ?")
         values.append(file_path)

@@ -229,7 +229,7 @@ def test_write_artist_tag_nonexistent_file_does_not_raise(tmp_path):
 def test_tag_and_import_returns_false_when_file_not_found(tmp_path):
     """staging 파일이 없으면 즉시 (False, '') 를 반환한다."""
     missing = tmp_path / "missing.flac"
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(missing),
         music_dir=str(tmp_path / "music"),
     )
@@ -240,10 +240,10 @@ def test_tag_and_import_returns_false_when_file_not_found(tmp_path):
 def test_tag_and_import_continues_when_mb_search_fails(tmp_path, monkeypatch):
     """MB 검색이 빈 리스트를 반환해도 import는 계속 진행된다 (iTunes/Deezer fallback)."""
     flac_path = _make_flac(tmp_path)
-    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: [])
-    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", ""))
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
 
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(tmp_path / "music"),
         artist="Artist",
@@ -257,12 +257,12 @@ def test_tag_and_import_copies_file_on_success(tmp_path, monkeypatch):
     """MB 검색 성공 시 파일을 music_dir에 복사하고 (True, dest_path)를 반환한다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
-        "src.pipeline.tagger._mb_search_recording", lambda a, t: ["fake-recording-id"]
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: (["fake-recording-id"], "", "")
     )
-    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
 
     music_dir = tmp_path / "music"
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
         artist="Radiohead",
@@ -277,12 +277,12 @@ def test_tag_and_import_staging_file_removed_after_success(tmp_path, monkeypatch
     """성공 시 staging 파일이 삭제된다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
-        "src.pipeline.tagger._mb_search_recording", lambda a, t: ["fake-recording-id"]
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: (["fake-recording-id"], "", "")
     )
-    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
 
     music_dir = tmp_path / "music"
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
         artist="Radiohead",
@@ -296,12 +296,12 @@ def test_tag_and_import_dest_path_contains_artist(tmp_path, monkeypatch):
     """복사된 파일 경로에 sanitized artist 이름이 포함된다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
-        "src.pipeline.tagger._mb_search_recording", lambda a, t: ["fake-recording-id"]
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: (["fake-recording-id"], "", "")
     )
-    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
 
     music_dir = tmp_path / "music"
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
         artist="Radiohead",
@@ -315,13 +315,13 @@ def test_tag_and_import_duplicate_file_returns_true(tmp_path, monkeypatch):
     """이미 dest 경로에 파일이 존재하면 duplicate로 처리해 True를 반환한다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
-        "src.pipeline.tagger._mb_search_recording", lambda a, t: ["fake-recording-id"]
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: (["fake-recording-id"], "", "")
     )
-    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
 
     music_dir = tmp_path / "music"
     # 첫 번째 import
-    success1, dest1 = tag_and_import(
+    success1, dest1, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
         artist="Radiohead",
@@ -331,7 +331,7 @@ def test_tag_and_import_duplicate_file_returns_true(tmp_path, monkeypatch):
 
     # 두 번째 import: 동일 경로에 파일이 이미 존재
     flac_path2 = _make_flac(tmp_path, name="test2.flac")
-    success2, dest2 = tag_and_import(
+    success2, dest2, *_ = tag_and_import(
         str(flac_path2),
         music_dir=str(music_dir),
         artist="Radiohead",
@@ -346,12 +346,12 @@ def test_tag_and_import_no_artist_no_mb_search(tmp_path, monkeypatch):
     mb_called = []
     monkeypatch.setattr(
         "src.pipeline.tagger._mb_search_recording",
-        lambda a, t: mb_called.append((a, t)) or [],
+        lambda a, t: (mb_called.append((a, t)) or ([], "", "")),
     )
-    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
 
     music_dir = tmp_path / "music"
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
     )
@@ -398,7 +398,7 @@ def test_mb_search_recording_fallback_picks_best_artist_match(monkeypatch):
     monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
-    result = _mb_search_recording("Butterfly Jones", "butterfly")
+    result, mb_artist, mb_title = _mb_search_recording("Butterfly Jones", "butterfly")
     assert result == ["correct-id-002"]
 
 
@@ -435,7 +435,7 @@ def test_mb_search_recording_fallback_returns_empty_when_below_threshold(monkeyp
     monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
-    result = _mb_search_recording("Radiohead", "butterfly")
+    result, mb_artist, mb_title = _mb_search_recording("Radiohead", "butterfly")
     assert result == []
 
 
@@ -453,7 +453,7 @@ def test_mb_search_recording_fallback_returns_empty_when_no_results(monkeypatch)
     monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
-    result = _mb_search_recording("Artist", "track")
+    result, mb_artist, mb_title = _mb_search_recording("Artist", "track")
     assert result == []
 
 
@@ -1073,8 +1073,9 @@ def test_mb_search_recording_fallback_matches_via_alias(monkeypatch):
     monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
-    result = _mb_search_recording("아이유", "밤편지")
+    result, mb_artist, mb_title = _mb_search_recording("아이유", "밤편지")
     assert result == ["iu-recording-001"]
+    assert mb_artist == "IU"
 
 
 def test_mb_search_recording_fallback_no_aliases_uses_name(monkeypatch):
@@ -1111,8 +1112,9 @@ def test_mb_search_recording_fallback_no_aliases_uses_name(monkeypatch):
     monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
-    result = _mb_search_recording("Radiohead", "Creep")
+    result, mb_artist, mb_title = _mb_search_recording("Radiohead", "Creep")
     assert result == ["radiohead-creep-001"]
+    assert mb_artist == "Radiohead"
 
 
 # ── _mb_search_recording: strict query (Album/Official/no-Live) ────────────────
@@ -1134,7 +1136,7 @@ def test_mb_search_recording_strict_query_returns_first_result(monkeypatch):
     monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
-    result = _mb_search_recording("The White Stripes", "Seven Nation Army")
+    result, mb_artist, mb_title = _mb_search_recording("The White Stripes", "Seven Nation Army")
     assert "studio-recording-001" in result
     assert call_count[0] == 1
 
@@ -1181,7 +1183,7 @@ def test_mb_search_recording_strict_empty_then_plain_returns_result(monkeypatch)
     monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
-    result = _mb_search_recording("Some Artist", "Some Track")
+    result, mb_artist, mb_title = _mb_search_recording("Some Artist", "Some Track")
     assert "plain-recording-001" in result
     assert call_count[0] == 2
 
@@ -1370,7 +1372,7 @@ def test_enrich_track_writes_unknown_album_when_all_sources_fail(tmp_path, monke
 
     monkeypatch.setattr("src.pipeline.tagger._itunes_search", lambda a, t: {})
     monkeypatch.setattr("src.pipeline.tagger._deezer_search", lambda a, t: {})
-    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: [])
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", ""))
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
     _enrich_track(
@@ -1419,7 +1421,7 @@ def test_enrich_track_unknown_album_not_written_when_yt_channel_available(tmp_pa
 
     monkeypatch.setattr("src.pipeline.tagger._itunes_search", lambda a, t: {})
     monkeypatch.setattr("src.pipeline.tagger._deezer_search", lambda a, t: {})
-    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: [])
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", ""))
     monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
 
     _enrich_track(
@@ -1441,15 +1443,15 @@ def test_tag_and_import_moves_file_to_album_folder(tmp_path, monkeypatch):
     """앨범 매칭 성공 시 Unknown Album/ 에서 실제 앨범 폴더로 파일이 이동된다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
-        "src.pipeline.tagger._mb_search_recording", lambda a, t: ["fake-recording-id"]
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: (["fake-recording-id"], "", "")
     )
     monkeypatch.setattr(
         "src.pipeline.tagger._enrich_track",
-        lambda *args, **kwargs: "Pablo Honey",
+        lambda *args, **kwargs: ("Pablo Honey", "", ""),
     )
 
     music_dir = tmp_path / "music"
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
         artist="Radiohead",
@@ -1471,15 +1473,15 @@ def test_tag_and_import_stays_in_unknown_album_when_no_match(tmp_path, monkeypat
     """앨범 매칭 실패 시 (Unknown Album 반환) 파일이 Unknown Album/ 에 그대로 남는다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
-        "src.pipeline.tagger._mb_search_recording", lambda a, t: []
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", "")
     )
     monkeypatch.setattr(
         "src.pipeline.tagger._enrich_track",
-        lambda *args, **kwargs: "Unknown Album",
+        lambda *args, **kwargs: ("Unknown Album", "", ""),
     )
 
     music_dir = tmp_path / "music"
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
         artist="Radiohead",
@@ -1565,15 +1567,15 @@ def test_tag_and_import_uses_primary_artist_for_path(tmp_path, monkeypatch):
     _make_minimal_flac(flac_path)
 
     monkeypatch.setattr(
-        "src.pipeline.tagger._mb_search_recording", lambda a, t: []
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", "")
     )
     monkeypatch.setattr(
         "src.pipeline.tagger._enrich_track",
-        lambda *args, **kwargs: "The Marshall Mathers LP",
+        lambda *args, **kwargs: ("The Marshall Mathers LP", "", ""),
     )
 
     music_dir = tmp_path / "music"
-    success, dest = tag_and_import(
+    success, dest, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
         artist="Eminem feat. Nate Dogg",
@@ -1587,3 +1589,614 @@ def test_tag_and_import_uses_primary_artist_for_path(tmp_path, monkeypatch):
     # "Eminem feat. Nate Dogg" 전체가 폴더명이 되면 안 된다
     assert not any("feat" in part for part in dest_path.parts)
     assert dest_path.exists()
+
+
+def test_tag_and_import_uses_canonical_artist_for_path(tmp_path, monkeypatch):
+    """_enrich_track이 canonical_artist를 반환하면, 그 이름이 폴더명으로 사용된다.
+
+    예: 요청 아티스트 'iu' → iTunes canonical 'IU' → 폴더 'IU'
+    MB 검색 실패 시 iTunes/Deezer canonical_artist가 2순위로 사용된다.
+    """
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", "")
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("삐삐", "IU", ""),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="iu",
+        track_name="삐삐",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    # 정규화된 canonical_artist 'IU'가 폴더명이 되어야 한다
+    assert "IU" in dest_path.parts
+    # 원본 요청 아티스트 'iu'가 폴더명이 되면 안 된다
+    assert "iu" not in dest_path.parts
+    assert dest_path.exists()
+
+
+def test_tag_and_import_falls_back_to_original_artist_when_no_canonical(tmp_path, monkeypatch):
+    """_enrich_track이 canonical_artist를 빈 문자열로 반환하면, 원본 아티스트명을 사용한다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", "")
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Unknown Album", "", ""),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="아이유",
+        track_name="우울시계",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    # canonical이 없으므로 원본 '아이유'가 폴더명이 되어야 한다
+    assert "아이유" in dest_path.parts
+    assert dest_path.exists()
+
+
+def test_tag_and_import_canonical_artist_feat_stripped(tmp_path, monkeypatch):
+    """canonical_artist에도 피처링 표기가 있으면 _primary_artist 적용으로 제거된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", "")
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Some Album", "Eminem feat. Dr. Dre", ""),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Eminem",
+        track_name="Forgot About Dre",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    assert "Eminem" in dest_path.parts
+    assert not any("feat" in part for part in dest_path.parts)
+    assert dest_path.exists()
+
+
+# ── tag_and_import: canonical_title 파일명 반영 ───────────────────────────────
+
+
+def test_tag_and_import_uses_canonical_title_for_filename(tmp_path, monkeypatch):
+    """_enrich_track이 canonical_title을 반환하면 파일명에 canonical_title이 사용된다.
+
+    예: 요청 track '삐삐' → iTunes canonical 'Bbibbi' → 파일명 'Bbibbi.flac'
+    """
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", ""))
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Palette", "IU", "Bbibbi"),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="iu",
+        track_name="삐삐",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    assert dest_path.stem == "Bbibbi"
+    assert dest_path.exists()
+
+
+def test_tag_and_import_falls_back_to_original_track_when_no_canonical_title(tmp_path, monkeypatch):
+    """canonical_title이 빈 문자열이면 원본 요청 track_name을 파일명으로 사용한다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", ""))
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Unknown Album", "", ""),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="아이유",
+        track_name="삐삐",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    assert dest_path.stem == "삐삐"
+    assert dest_path.exists()
+
+
+def test_tag_and_import_canonical_title_applied_with_sanitize(tmp_path, monkeypatch):
+    """canonical_title에 파일시스템 특수문자가 있으면 _sanitize_filename이 적용된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", ""))
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Some Album", "Artist", "Title: Subtitle"),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Artist",
+        track_name="original",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    assert ":" not in dest_path.stem
+    assert dest_path.exists()
+
+
+# ── MB artist-credit name을 1순위 canonical_artist로 사용 ─────────────────────
+
+
+def test_tag_and_import_uses_mb_artist_name_over_itunes(tmp_path, monkeypatch):
+    """MB artist-credit name이 있으면 iTunes/Deezer canonical_artist보다 우선하여 폴더명으로 사용된다.
+
+    예: 요청 아티스트 '아이유' → MB artist-credit 'IU' → 폴더 'IU'
+    (iTunes canonical도 '아이유'를 반환할 수 있지만 MB가 1순위)
+    """
+    flac_path = _make_flac(tmp_path)
+    # MB 검색 결과에 mb_artist_name="IU" 포함
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (["some-recording-id"], "IU", ""),
+    )
+    # _enrich_track은 iTunes canonical_artist "아이유"를 반환한다고 가정
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("밤편지", "아이유", "Through the Night"),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="아이유",
+        track_name="밤편지",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    # MB artist-credit "IU"가 폴더명이 되어야 한다
+    assert "IU" in dest_path.parts
+    # iTunes canonical "아이유"가 폴더명이 되면 안 된다
+    assert "아이유" not in dest_path.parts
+    assert dest_path.exists()
+
+
+def test_tag_and_import_mb_artist_empty_falls_back_to_itunes_canonical(tmp_path, monkeypatch):
+    """MB artist name이 빈 문자열이면 iTunes/Deezer canonical_artist(2순위)를 폴더명으로 사용한다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: ([], "", ""),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Palette", "IU", ""),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="iu",
+        track_name="Palette",
+    )
+
+    assert success is True
+    dest_path = Path(dest)
+    assert "IU" in dest_path.parts
+    assert "iu" not in dest_path.parts
+    assert dest_path.exists()
+
+
+def test_mb_search_recording_returns_artist_name_in_strict_path(monkeypatch):
+    """strict 검색 성공 시 artist-credit name이 두 번째 반환값으로 포함된다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "recordings": [
+                {
+                    "id": "iu-strict-001",
+                    "title": "밤편지",
+                    "artist-credit": [
+                        {"artist": {"name": "IU", "sort-name": "IU"}}
+                    ],
+                }
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result, mb_artist, mb_title = _mb_search_recording("아이유", "밤편지")
+    assert "iu-strict-001" in result
+    assert mb_artist == "IU"
+
+
+def test_mb_search_recording_returns_empty_artist_name_on_failure(monkeypatch):
+    """모든 검색 단계 실패 시 ([], '') 를 반환한다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {"recordings": []}
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result, mb_artist, mb_title = _mb_search_recording("NoArtist", "NoTrack")
+    assert result == []
+    assert mb_artist == ""
+
+
+# ── tag_and_import: canonical artist/title 태그 덮어쓰기 ──────────────────────
+
+
+def test_tag_and_import_writes_canonical_artist_to_file_tag(tmp_path, monkeypatch):
+    """canonical artist name이 파일의 artist 태그에 기록된다.
+
+    예: 요청 'iu' → MB artist-credit 'IU' → 파일 태그 artist='IU'
+    """
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (["some-id"], "IU", ""),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Palette", "IU", "Palette"),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="iu",
+        track_name="palette",
+    )
+
+    assert success is True
+    tags = _read_tags(dest)
+    assert tags["artist"] == "IU"
+
+
+def test_tag_and_import_writes_canonical_title_to_file_tag(tmp_path, monkeypatch):
+    """canonical title이 파일의 title 태그에 기록된다.
+
+    예: 요청 '삐삐' → iTunes canonical 'Bbibbi' → 파일 태그 title='Bbibbi'
+    """
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: ([], "", ""),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("IU", "IU", "Bbibbi"),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="iu",
+        track_name="삐삐",
+    )
+
+    assert success is True
+    tags = _read_tags(dest)
+    assert tags["title"] == "Bbibbi"
+
+
+def test_tag_and_import_falls_back_to_original_artist_in_tag_when_no_canonical(
+    tmp_path, monkeypatch
+):
+    """canonical artist가 없으면 원본 요청 artist가 파일 태그에 기록된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: ([], "", ""),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Unknown Album", "", ""),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="아이유",
+        track_name="밤편지",
+    )
+
+    assert success is True
+    tags = _read_tags(dest)
+    assert tags["artist"] == "아이유"
+
+
+def test_tag_and_import_falls_back_to_original_title_in_tag_when_no_canonical(
+    tmp_path, monkeypatch
+):
+    """canonical title이 없으면 원본 요청 track_name이 파일 태그에 기록된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: ([], "", ""),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Unknown Album", "", ""),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="아이유",
+        track_name="밤편지",
+    )
+
+    assert success is True
+    tags = _read_tags(dest)
+    assert tags["title"] == "밤편지"
+
+
+def test_tag_and_import_artist_tag_uses_full_name_not_primary_artist(tmp_path, monkeypatch):
+    """파일 artist 태그에는 feat. 포함 전체 canonical name이 기록된다.
+
+    _primary_artist()는 폴더 경로 구성에만 적용되고 태그에는 영향을 주지 않는다.
+    """
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (["some-id"], "Eminem feat. Nate Dogg", ""),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("8 Mile", "Eminem feat. Nate Dogg", "Till I Collapse"),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Eminem feat. Nate Dogg",
+        track_name="Till I Collapse",
+    )
+
+    assert success is True
+    tags = _read_tags(dest)
+    # 태그에는 전체 이름, 폴더에는 _primary_artist 적용 후 "Eminem"
+    assert tags["artist"] == "Eminem feat. Nate Dogg"
+    assert "Eminem" in Path(dest).parts
+
+
+# ── MB recording title canonical_title 2순위 동작 ────────────────────────────
+
+
+def test_mb_search_recording_returns_recording_title(monkeypatch):
+    """strict 검색 성공 시 best recording의 title이 세 번째 반환값으로 포함된다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "recordings": [
+                {
+                    "id": "iu-strict-001",
+                    "title": "Through the Night",
+                    "artist-credit": [{"artist": {"name": "IU", "sort-name": "IU"}}],
+                }
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    # "Through the Night" 검색 — recording title과 일치해야 candidates가 생성됨
+    result, mb_artist, mb_title = _mb_search_recording("IU", "Through the Night")
+    assert "iu-strict-001" in result
+    assert mb_artist == "IU"
+    assert mb_title == "Through the Night"
+
+
+def test_mb_search_recording_returns_empty_title_on_failure(monkeypatch):
+    """검색 실패 시 세 번째 반환값이 빈 문자열이다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {"recordings": []}
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result, mb_artist, mb_title = _mb_search_recording("NoArtist", "NoTrack")
+    assert result == []
+    assert mb_title == ""
+
+
+def test_enrich_track_uses_mb_recording_title_when_itunes_fails(tmp_path, monkeypatch):
+    """iTunes가 title을 반환 못 할 때 MB recording title이 canonical_title 2순위로 사용된다."""
+    flac_path = _make_flac(tmp_path)
+    _write_tags(str(flac_path), "Artist", "Track")
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger._itunes_search",
+        lambda a, t, **kw: {},
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._deezer_search",
+        lambda a, t: {"album": "Some Album", "artwork_url": "", "artistName": "Artist", "trackName": "Deezer Title"},
+    )
+
+    album, canonical_artist, canonical_title = _enrich_track(
+        str(flac_path),
+        artist="Artist",
+        track_name="Track",
+        yt_metadata=None,
+        recording_ids=None,
+        mb_recording_title="MB Title",
+    )
+
+    assert canonical_title == "MB Title"
+
+
+def test_enrich_track_itunes_title_beats_mb_recording_title(tmp_path, monkeypatch):
+    """iTunes trackName이 있으면 MB recording title보다 우선한다."""
+    flac_path = _make_flac(tmp_path)
+    _write_tags(str(flac_path), "Artist", "Track")
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger._itunes_search",
+        lambda a, t, **kw: {"album": "iTunes Album", "artwork_url": "", "artistName": "Artist", "trackName": "iTunes Title"},
+    )
+
+    album, canonical_artist, canonical_title = _enrich_track(
+        str(flac_path),
+        artist="Artist",
+        track_name="Track",
+        yt_metadata=None,
+        recording_ids=None,
+        mb_recording_title="MB Title",
+    )
+
+    assert canonical_title == "iTunes Title"
+
+
+def test_tag_and_import_writes_mb_recording_title_when_itunes_fails(tmp_path, monkeypatch):
+    """MB recording title이 iTunes 실패 시 파일 title 태그에 기록된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (["some-id"], "IU", "Through the Night"),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("밤편지", "IU", "Through the Night"),
+    )
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="아이유",
+        track_name="밤편지",
+    )
+
+    assert success is True
+    tags = _read_tags(dest)
+    assert tags["title"] == "Through the Night"
+
+
+# ── tag_and_import: canonical artist/title 반환값 검증 ────────────────────────
+
+
+def test_tag_and_import_returns_canonical_artist_and_title(tmp_path, monkeypatch):
+    """tag_and_import가 4-tuple을 반환하며, canonical_artist와 canonical_title이 포함된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (["some-id"], "IU", "Through the Night"),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("밤편지", "IU", "Through the Night"),
+    )
+
+    music_dir = tmp_path / "music"
+    result = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="아이유",
+        track_name="밤편지",
+    )
+
+    assert len(result) == 4
+    success, dest, canonical_artist, canonical_title = result
+    assert success is True
+    assert canonical_artist == "IU"
+    assert canonical_title == "Through the Night"
+
+
+def test_tag_and_import_returns_empty_canonical_on_file_not_found(tmp_path):
+    """staging 파일이 없으면 canonical_artist, canonical_title도 빈 문자열로 반환한다."""
+    missing = tmp_path / "missing.flac"
+    success, dest, canonical_artist, canonical_title = tag_and_import(
+        str(missing),
+        music_dir=str(tmp_path / "music"),
+    )
+    assert success is False
+    assert dest == ""
+    assert canonical_artist == ""
+    assert canonical_title == ""
+
+
+def test_tag_and_import_returns_canonical_artist_for_duplicate(tmp_path, monkeypatch):
+    """이미 파일이 존재하는 duplicate 케이스에서도 canonical 정보가 반환된다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (["some-id"], "Radiohead", "Creep"),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._enrich_track",
+        lambda *args, **kwargs: ("Pablo Honey", "Radiohead", "Creep"),
+    )
+
+    music_dir = tmp_path / "music"
+    # 첫 번째 import
+    success1, dest1, c_artist1, c_title1 = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="radiohead",
+        track_name="creep",
+    )
+    assert success1 is True
+    assert c_artist1 == "Radiohead"
+    assert c_title1 == "Creep"
+
+    # 두 번째 import: duplicate 경로
+    flac_path2 = _make_flac(tmp_path, name="test2.flac")
+    success2, dest2, c_artist2, c_title2 = tag_and_import(
+        str(flac_path2),
+        music_dir=str(music_dir),
+        artist="radiohead",
+        track_name="creep",
+    )
+    assert success2 is True
+    assert c_artist2 == "Radiohead"
+    assert c_title2 == "Creep"
