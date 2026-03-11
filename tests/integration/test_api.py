@@ -1358,3 +1358,141 @@ def test_rematch_apply_updates_artist_in_db_after_move(client, tmp_state_db, tmp
     assert resp.status_code == 200
     row = get_download_by_mbid(tmp_state_db, "manual-artist-db")
     assert row["artist"] == "NewArtist", "state.db의 artist 컬럼이 NewArtist로 업데이트되어야 한다"
+
+
+# ── _resolve_dir 단위 테스트 ──────────────────────────────────────────────────
+
+def test_resolve_dir_reuses_existing_case_insensitive_folder(tmp_path):
+    """parent 안에 대소문자만 다른 폴더가 있으면 그 실제 이름을 반환한다."""
+    from src.api import _resolve_dir
+
+    existing = tmp_path / "Eminem"
+    existing.mkdir()
+
+    result = _resolve_dir(str(tmp_path), "eminem")
+    assert result == "Eminem"
+
+
+def test_resolve_dir_returns_sanitized_when_no_match(tmp_path):
+    """일치하는 폴더가 없으면 sanitize된 name을 그대로 반환한다."""
+    from src.api import _resolve_dir
+
+    result = _resolve_dir(str(tmp_path), "NewArtist")
+    assert result == "NewArtist"
+
+
+def test_resolve_dir_returns_sanitized_when_parent_not_exist(tmp_path):
+    """parent 디렉토리 자체가 없으면 sanitize된 name을 반환한다."""
+    from src.api import _resolve_dir
+
+    nonexistent = str(tmp_path / "no_such_dir")
+    result = _resolve_dir(nonexistent, "SomeArtist")
+    assert result == "SomeArtist"
+
+
+def test_resolve_dir_does_not_match_file(tmp_path):
+    """파일(디렉토리가 아님)은 매칭 대상에서 제외된다."""
+    from src.api import _resolve_dir
+
+    file_entry = tmp_path / "eminem"
+    file_entry.write_text("not a dir")
+
+    result = _resolve_dir(str(tmp_path), "Eminem")
+    assert result == "Eminem"
+
+
+# ── case-insensitive 폴더 충돌 방지 통합 테스트 ──────────────────────────────
+
+def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(
+    client, tmp_state_db, tmp_path
+):
+    """artist_name의 대소문자가 기존 폴더와 달라도 기존 폴더를 재사용한다."""
+    music_root = tmp_path / "music"
+    existing_artist_dir = music_root / "Eminem"
+    old_album_dir = existing_artist_dir / "OldAlbum"
+    old_album_dir.mkdir(parents=True)
+    dummy_audio = old_album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done, get_download_by_mbid
+
+    mark_pending(tmp_state_db, "manual-case-artist", "Track", "Eminem")
+    mark_done(tmp_state_db, "manual-case-artist", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "NewAlbum"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.write_artist_tag"):
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-case-artist",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                                "artist_name": "eminem",
+                            },
+                        )
+
+    assert resp.status_code == 200
+    # 기존 "Eminem" 폴더를 재사용해야 한다 (대소문자 불일치 입력 "eminem"이 들어와도)
+    expected_path = music_root / "Eminem" / "NewAlbum" / "track.flac"
+    assert expected_path.exists(), "기존 대소문자 폴더(Eminem)를 재사용해야 한다"
+    # Linux(case-sensitive)에서는 별도 "eminem" 폴더가 생기지 않아야 한다.
+    # macOS는 case-insensitive FS이므로 "eminem".exists() == "Eminem".exists() 가 되어 검사 제외.
+    import platform
+    if platform.system() == "Linux":
+        assert not (music_root / "eminem").exists(), "Linux: 새 소문자 폴더가 생기면 안 된다"
+
+
+def test_rematch_apply_reuses_existing_album_dir_case_insensitive(
+    client, tmp_state_db, tmp_path
+):
+    """album_name의 대소문자가 기존 폴더와 달라도 기존 앨범 폴더를 재사용한다."""
+    music_root = tmp_path / "music"
+    artist_dir = music_root / "Artist"
+    existing_album_dir = artist_dir / "The Marshall Mathers LP"
+    old_album_dir = artist_dir / "OldAlbum"
+    old_album_dir.mkdir(parents=True)
+    existing_album_dir.mkdir(parents=True)
+    dummy_audio = old_album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+
+    mark_pending(tmp_state_db, "manual-case-album", "Track", "Artist")
+    mark_done(tmp_state_db, "manual-case-album", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "the marshall mathers lp"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.embed_cover_art", return_value=True):
+                with patch("src.api.threading.Thread") as mock_thread_cls:
+                    mock_thread_cls.return_value = MagicMock()
+                    resp = client.post(
+                        "/api/rematch/apply",
+                        json={
+                            "mbid": "manual-case-album",
+                            "mb_recording_id": "rec-001",
+                            "mb_album_id": "album-001",
+                        },
+                    )
+
+    assert resp.status_code == 200
+    # 기존 "The Marshall Mathers LP" 폴더를 재사용해야 한다
+    expected_path = artist_dir / "The Marshall Mathers LP" / "track.flac"
+    assert expected_path.exists(), "기존 대소문자 앨범 폴더를 재사용해야 한다"
+    # Linux(case-sensitive)에서는 별도 소문자 폴더가 생기지 않아야 한다.
+    import platform
+    if platform.system() == "Linux":
+        assert not (artist_dir / "the marshall mathers lp").exists(), "Linux: 새 소문자 폴더가 생기면 안 된다"

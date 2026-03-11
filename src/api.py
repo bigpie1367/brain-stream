@@ -437,6 +437,18 @@ def _sanitize_path_component(name: str) -> str:
     return sanitized or "Unknown"
 
 
+def _resolve_dir(parent: str, name: str) -> str:
+    """대소문자 무시 기준으로 parent 안에 name과 동일한 폴더가 있으면 그 실제 이름 반환.
+    없으면 sanitize된 name 그대로 반환."""
+    sanitized = _sanitize_path_component(name)
+    if os.path.isdir(parent):
+        lower = sanitized.lower()
+        for entry in os.listdir(parent):
+            if entry.lower() == lower and os.path.isdir(os.path.join(parent, entry)):
+                return entry
+    return sanitized
+
+
 def _navidrome_get_song(url: str, username: str, password: str, song_id: str) -> dict:
     """Call Navidrome getSong and return the song dict, or raise on failure."""
     salt = secrets.token_hex(6)
@@ -564,11 +576,12 @@ async def rematch_apply(req: RematchApplyRequest):
     music_root = os.path.dirname(current_artist_dir)
 
     if req.artist_name:
-        new_artist_dir = os.path.join(music_root, _sanitize_path_component(req.artist_name))
+        new_artist_name = _resolve_dir(music_root, req.artist_name)
+        new_artist_dir = os.path.join(music_root, new_artist_name)
     else:
         new_artist_dir = current_artist_dir
 
-    new_album_dir = os.path.join(new_artist_dir, _sanitize_path_component(album_name))
+    new_album_dir = os.path.join(new_artist_dir, _resolve_dir(new_artist_dir, album_name))
     new_file_path = os.path.join(new_album_dir, filename)
 
     if new_file_path != file_path:
