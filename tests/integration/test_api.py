@@ -482,10 +482,11 @@ def test_rematch_search_returns_candidates(client):
 
     with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
         with patch("src.api.time.sleep"):
-            resp = client.get(
-                "/api/rematch/search",
-                params={"artist": "Radiohead", "track": "Karma Police"},
-            )
+            with patch("src.api.itunes_search", return_value={}):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Radiohead", "track": "Karma Police"},
+                )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -501,13 +502,14 @@ def test_rematch_search_returns_candidates(client):
 
 
 def test_rematch_search_empty_when_no_recording(client):
-    """두 stage 모두 결과 없으면 빈 candidates를 반환한다."""
+    """두 stage 모두 결과 없고 iTunes도 결과 없으면 빈 candidates를 반환한다."""
     with patch("src.api.requests.get", return_value=_mb_search_response([])):
         with patch("src.api.time.sleep"):
-            resp = client.get(
-                "/api/rematch/search",
-                params={"artist": "Unknown", "track": "Nonexistent"},
-            )
+            with patch("src.api.itunes_search", return_value={}):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Unknown", "track": "Nonexistent"},
+                )
 
     assert resp.status_code == 200
     assert resp.json() == {"candidates": []}
@@ -529,24 +531,16 @@ def test_rematch_search_stage2_fallback(client):
 
     with patch("src.api.requests.get", side_effect=side_effect):
         with patch("src.api.time.sleep"):
-            resp = client.get(
-                "/api/rematch/search",
-                params={"artist": "Artist", "track": "Track"},
-            )
+            with patch("src.api.itunes_search", return_value={}):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Artist", "track": "Track"},
+                )
 
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["candidates"]) == 1
     assert data["candidates"][0]["mb_album_id"] == "album-fallback"
-
-
-def test_rematch_search_unsupported_source_returns_400(client):
-    """source가 musicbrainz가 아니면 400을 반환한다."""
-    resp = client.get(
-        "/api/rematch/search",
-        params={"artist": "Artist", "track": "Track", "source": "itunes"},
-    )
-    assert resp.status_code == 400
 
 
 def test_rematch_search_multiple_album_candidates(client):
@@ -560,10 +554,11 @@ def test_rematch_search_multiple_album_candidates(client):
 
     with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
         with patch("src.api.time.sleep"):
-            resp = client.get(
-                "/api/rematch/search",
-                params={"artist": "Radiohead", "track": "Fake Plastic Trees"},
-            )
+            with patch("src.api.itunes_search", return_value={}):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Radiohead", "track": "Fake Plastic Trees"},
+                )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -579,10 +574,11 @@ def test_rematch_search_year_extracted_from_date(client):
 
     with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
         with patch("src.api.time.sleep"):
-            resp = client.get(
-                "/api/rematch/search",
-                params={"artist": "Radiohead", "track": "Paranoid Android"},
-            )
+            with patch("src.api.itunes_search", return_value={}):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Radiohead", "track": "Paranoid Android"},
+                )
 
     data = resp.json()
     assert data["candidates"][0]["year"] == 1997
@@ -596,10 +592,11 @@ def test_rematch_search_deduplicates_album_ids(client):
 
     with patch("src.api.requests.get", return_value=_mb_search_response([rec1, rec2])):
         with patch("src.api.time.sleep"):
-            resp = client.get(
-                "/api/rematch/search",
-                params={"artist": "Artist", "track": "Track"},
-            )
+            with patch("src.api.itunes_search", return_value={}):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Artist", "track": "Track"},
+                )
 
     data = resp.json()
     album_ids = [c["mb_album_id"] for c in data["candidates"]]
@@ -617,6 +614,40 @@ def test_rematch_search_mb_request_error_returns_empty(client):
 
     assert resp.status_code == 200
     assert resp.json() == {"candidates": []}
+
+
+def test_rematch_search_returns_combined_sources(client):
+    """MB 결과 뒤에 iTunes 후보가 source='itunes'로 추가된다."""
+    release = _make_release("album-mb-001", "OK Computer")
+    rec = _make_recording("rec-mb-001", [release])
+    itunes_result = {"album": "OK Computer", "artwork_url": "https://example.com/art.jpg"}
+
+    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
+        with patch("src.api.time.sleep"):
+            with patch("src.api.itunes_search", return_value=itunes_result):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Radiohead", "track": "Karma Police"},
+                )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    candidates = data["candidates"]
+    assert len(candidates) == 2
+
+    mb_c = candidates[0]
+    assert mb_c["source"] == "musicbrainz"
+    assert mb_c["mb_recording_id"] == "rec-mb-001"
+    assert mb_c["mb_album_id"] == "album-mb-001"
+
+    it_c = candidates[1]
+    assert it_c["source"] == "itunes"
+    assert it_c["mb_recording_id"] == ""
+    assert it_c["mb_album_id"] == ""
+    assert it_c["album_name"] == "OK Computer"
+    assert it_c["artist_name"] == "Radiohead"
+    assert it_c["year"] == ""
+    assert it_c["cover_url"] == "https://example.com/art.jpg"
 
 
 # ── POST /api/rematch/apply ───────────────────────────────────────────────────
@@ -642,16 +673,18 @@ def test_rematch_apply_success(client, tmp_path):
                 )
                 with patch("src.api.write_album_tag") as mock_write:
                     with patch("src.api.embed_cover_art", return_value=True):
-                        with patch("src.api.threading.Thread") as mock_thread_cls:
-                            mock_thread_cls.return_value = MagicMock()
-                            resp = client.post(
-                                "/api/rematch/apply",
-                                json={
-                                    "song_id": "nav-song-123",
-                                    "mb_recording_id": "rec-001",
-                                    "mb_album_id": "album-001",
-                                },
-                            )
+                        with patch("src.api.shutil.move"):
+                            with patch("src.api.os.makedirs"):
+                                with patch("src.api.threading.Thread") as mock_thread_cls:
+                                    mock_thread_cls.return_value = MagicMock()
+                                    resp = client.post(
+                                        "/api/rematch/apply",
+                                        json={
+                                            "song_id": "nav-song-123",
+                                            "mb_recording_id": "rec-001",
+                                            "mb_album_id": "album-001",
+                                        },
+                                    )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -731,22 +764,134 @@ def test_rematch_apply_via_mbid_success(client, tmp_state_db, tmp_path):
         )
         with patch("src.api.write_album_tag") as mock_write:
             with patch("src.api.embed_cover_art", return_value=True):
-                with patch("src.api.threading.Thread") as mock_thread_cls:
-                    mock_thread_cls.return_value = MagicMock()
-                    resp = client.post(
-                        "/api/rematch/apply",
-                        json={
-                            "mbid": "manual-abc12345",
-                            "mb_recording_id": "rec-001",
-                            "mb_album_id": "album-001",
-                        },
-                    )
+                with patch("src.api.shutil.move"):
+                    with patch("src.api.os.makedirs"):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "mbid": "manual-abc12345",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                },
+                            )
 
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
     assert data["album_name"] == "The Marshall Mathers LP"
     mock_write.assert_called_once()
+
+
+def test_rematch_apply_moves_file_when_album_changes(client, tmp_state_db, tmp_path):
+    """앨범명이 바뀌면 파일이 새 앨범 폴더로 이동되고 state.db file_path가 업데이트된다."""
+    artist_dir = tmp_path / "Artist"
+    old_album_dir = artist_dir / "OldAlbum"
+    old_album_dir.mkdir(parents=True)
+    dummy_audio = old_album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done, get_download_by_mbid
+    mark_pending(tmp_state_db, "manual-moveme", "Track", "Artist")
+    mark_done(tmp_state_db, "manual-moveme", file_path=str(dummy_audio))
+
+    new_album_name = "NewAlbum"
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": new_album_name}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.embed_cover_art", return_value=True):
+                with patch("src.api.threading.Thread") as mock_thread_cls:
+                    mock_thread_cls.return_value = MagicMock()
+                    resp = client.post(
+                        "/api/rematch/apply",
+                        json={
+                            "mbid": "manual-moveme",
+                            "mb_recording_id": "rec-001",
+                            "mb_album_id": "album-001",
+                        },
+                    )
+
+    assert resp.status_code == 200
+    new_file_path = str(artist_dir / new_album_name / "track.flac")
+    assert not dummy_audio.exists(), "원본 파일이 이동되어 있어야 한다"
+    assert (artist_dir / new_album_name / "track.flac").exists(), "새 경로에 파일이 있어야 한다"
+
+    row = get_download_by_mbid(tmp_state_db, "manual-moveme")
+    assert row["file_path"] == new_file_path
+
+
+def test_rematch_apply_no_move_when_album_unchanged(client, tmp_state_db, tmp_path):
+    """앨범명이 같으면 파일 이동이 발생하지 않는다."""
+    artist_dir = tmp_path / "Artist"
+    same_album_dir = artist_dir / "SameAlbum"
+    same_album_dir.mkdir(parents=True)
+    dummy_audio = same_album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "manual-nomove", "Track", "Artist")
+    mark_done(tmp_state_db, "manual-nomove", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "SameAlbum"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.embed_cover_art", return_value=True):
+                with patch("src.api.threading.Thread") as mock_thread_cls:
+                    mock_thread_cls.return_value = MagicMock()
+                    resp = client.post(
+                        "/api/rematch/apply",
+                        json={
+                            "mbid": "manual-nomove",
+                            "mb_recording_id": "rec-001",
+                            "mb_album_id": "album-001",
+                        },
+                    )
+
+    assert resp.status_code == 200
+    assert dummy_audio.exists(), "앨범명이 같으면 파일이 그대로 있어야 한다"
+
+
+def test_rematch_apply_move_fails_returns_500(client, tmp_state_db, tmp_path):
+    """shutil.move 실패 시 500을 반환한다."""
+    artist_dir = tmp_path / "Artist"
+    old_album_dir = artist_dir / "OldAlbum"
+    old_album_dir.mkdir(parents=True)
+    dummy_audio = old_album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "manual-movefail", "Track", "Artist")
+    mark_done(tmp_state_db, "manual-movefail", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "DifferentAlbum"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.shutil.move", side_effect=OSError("permission denied")):
+                resp = client.post(
+                    "/api/rematch/apply",
+                    json={
+                        "mbid": "manual-movefail",
+                        "mb_recording_id": "rec-001",
+                        "mb_album_id": "album-001",
+                    },
+                )
+
+    assert resp.status_code == 500
+    assert "file move failed" in resp.json()["detail"]
 
 
 def test_rematch_apply_via_mbid_not_in_db_returns_404(client):
@@ -810,16 +955,18 @@ def test_rematch_apply_song_id_absolute_path_used_directly(client):
                 )
                 with patch("src.api.write_album_tag") as mock_write:
                     with patch("src.api.embed_cover_art", return_value=True):
-                        with patch("src.api.threading.Thread") as mock_thread_cls:
-                            mock_thread_cls.return_value = MagicMock()
-                            resp = client.post(
-                                "/api/rematch/apply",
-                                json={
-                                    "song_id": "nav-song-123",
-                                    "mb_recording_id": "rec-001",
-                                    "mb_album_id": "album-001",
-                                },
-                            )
+                        with patch("src.api.shutil.move"):
+                            with patch("src.api.os.makedirs"):
+                                with patch("src.api.threading.Thread") as mock_thread_cls:
+                                    mock_thread_cls.return_value = MagicMock()
+                                    resp = client.post(
+                                        "/api/rematch/apply",
+                                        json={
+                                            "song_id": "nav-song-123",
+                                            "mb_recording_id": "rec-001",
+                                            "mb_album_id": "album-001",
+                                        },
+                                    )
 
     assert resp.status_code == 200
     # write_album_tag의 첫 번째 인자(file_path)가 절대경로 그대로여야 한다
@@ -844,17 +991,370 @@ def test_rematch_apply_song_id_relative_path_gets_prefix(client):
                 )
                 with patch("src.api.write_album_tag") as mock_write:
                     with patch("src.api.embed_cover_art", return_value=True):
-                        with patch("src.api.threading.Thread") as mock_thread_cls:
-                            mock_thread_cls.return_value = MagicMock()
-                            resp = client.post(
-                                "/api/rematch/apply",
-                                json={
-                                    "song_id": "nav-song-456",
-                                    "mb_recording_id": "rec-002",
-                                    "mb_album_id": "album-002",
-                                },
-                            )
+                        with patch("src.api.shutil.move"):
+                            with patch("src.api.os.makedirs"):
+                                with patch("src.api.threading.Thread") as mock_thread_cls:
+                                    mock_thread_cls.return_value = MagicMock()
+                                    resp = client.post(
+                                        "/api/rematch/apply",
+                                        json={
+                                            "song_id": "nav-song-456",
+                                            "mb_recording_id": "rec-002",
+                                            "mb_album_id": "album-002",
+                                        },
+                                    )
 
     assert resp.status_code == 200
     called_path = mock_write.call_args[0][0]
     assert called_path == expected_path
+
+
+# ── iTunes KR 스토어 + rematch apply (mb_album_id 없음) ──────────────────────
+
+def test_rematch_search_itunes_kr_added_when_different_album(client):
+    """US와 KR iTunes 스토어가 다른 앨범을 반환하면 두 후보가 모두 추가된다."""
+    release = _make_release("album-mb", "OK Computer")
+    rec = _make_recording("rec-mb", [release])
+
+    call_count = 0
+
+    def itunes_side_effect(artist, track, country=None):
+        nonlocal call_count
+        call_count += 1
+        if country is None:
+            return {"album": "OK Computer", "artwork_url": "https://example.com/us.jpg"}
+        # KR store returns different album title
+        return {"album": "OK Computer (Korean Edition)", "artwork_url": "https://example.com/kr.jpg"}
+
+    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
+        with patch("src.api.time.sleep"):
+            with patch("src.api.itunes_search", side_effect=itunes_side_effect):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Radiohead", "track": "Karma Police"},
+                )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    candidates = data["candidates"]
+    # MB 1개 + iTunes US 1개 + iTunes KR 1개
+    assert len(candidates) == 3
+    sources = [c["source"] for c in candidates]
+    assert "musicbrainz" in sources
+    assert "itunes" in sources
+    assert "itunes-kr" in sources
+
+    kr_c = next(c for c in candidates if c["source"] == "itunes-kr")
+    assert kr_c["album_name"] == "OK Computer (Korean Edition)"
+    assert kr_c["mb_recording_id"] == ""
+    assert kr_c["mb_album_id"] == ""
+
+
+def test_rematch_search_itunes_kr_deduplicated_when_same_album(client):
+    """US와 KR iTunes 스토어가 같은 앨범을 반환하면 하나만 추가된다."""
+    release = _make_release("album-mb", "OK Computer")
+    rec = _make_recording("rec-mb", [release])
+
+    def itunes_same(artist, track, country=None):
+        return {"album": "OK Computer", "artwork_url": "https://example.com/art.jpg"}
+
+    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
+        with patch("src.api.time.sleep"):
+            with patch("src.api.itunes_search", side_effect=itunes_same):
+                resp = client.get(
+                    "/api/rematch/search",
+                    params={"artist": "Radiohead", "track": "Karma Police"},
+                )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    candidates = data["candidates"]
+    # MB 1개 + iTunes 1개 (중복 제거로 KR은 추가 안 됨)
+    assert len(candidates) == 2
+    itunes_candidates = [c for c in candidates if c["source"] in ("itunes", "itunes-kr")]
+    assert len(itunes_candidates) == 1
+
+
+def test_rematch_apply_itunes_candidate_no_mb_album_id(client):
+    """mb_album_id가 없고 album_name이 있으면 MB 조회 없이 직접 태깅한다."""
+    with patch("src.api._navidrome_get_song", return_value={"path": "Artist/track.flac"}):
+        with patch("src.api.os.path.exists", return_value=True):
+            with patch("src.api.requests.get") as mock_get:
+                with patch("src.api.write_album_tag") as mock_write:
+                    with patch("src.api.embed_art_from_url", return_value=True) as mock_embed:
+                        with patch("src.api.shutil.move"):
+                            with patch("src.api.os.makedirs"):
+                                with patch("src.api.threading.Thread") as mock_thread_cls:
+                                    mock_thread_cls.return_value = MagicMock()
+                                    resp = client.post(
+                                        "/api/rematch/apply",
+                                        json={
+                                            "song_id": "nav-song-itunes",
+                                            "mb_recording_id": "",
+                                            "mb_album_id": "",
+                                            "album_name": "OK Computer",
+                                            "cover_url": "https://example.com/art.jpg",
+                                        },
+                                    )
+
+    # MB API 호출이 없어야 한다
+    mock_get.assert_not_called()
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["album_name"] == "OK Computer"
+    mock_write.assert_called_once()
+    # embed_art_from_url은 이동 후의 new_file_path로 호출된다
+    mock_embed.assert_called_once()
+
+
+def test_rematch_apply_no_mb_album_id_no_album_name_returns_422(client):
+    """mb_album_id와 album_name 모두 없으면 422를 반환한다."""
+    with patch("src.api._navidrome_get_song", return_value={"path": "Artist/track.flac"}):
+        with patch("src.api.os.path.exists", return_value=True):
+            resp = client.post(
+                "/api/rematch/apply",
+                json={
+                    "song_id": "nav-song-bad",
+                    "mb_recording_id": "",
+                    "mb_album_id": "",
+                },
+            )
+    assert resp.status_code == 422
+
+
+def test_rematch_apply_artist_name_rewrites_artist_tag(client, tmp_state_db, tmp_path):
+    """artist_name이 주어지면 artist 태그를 새 이름으로 업데이트한다."""
+    artist_dir = tmp_path / "OldArtist"
+    album_dir = artist_dir / "SameAlbum"
+    album_dir.mkdir(parents=True)
+    dummy_audio = album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "manual-artist-tag", "Track", "OldArtist")
+    mark_done(tmp_state_db, "manual-artist-tag", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "SameAlbum"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.write_artist_tag") as mock_write_artist:
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-artist-tag",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                                "artist_name": "NewArtist",
+                            },
+                        )
+
+    assert resp.status_code == 200
+    mock_write_artist.assert_called_once_with(str(dummy_audio), "NewArtist")
+
+
+def test_rematch_apply_artist_name_moves_to_new_artist_dir(client, tmp_state_db, tmp_path):
+    """artist_name이 주어지면 파일이 새 아티스트 폴더 아래 앨범 폴더로 이동된다."""
+    music_root = tmp_path / "music"
+    artist_dir = music_root / "OldArtist"
+    album_dir = artist_dir / "SameAlbum"
+    album_dir.mkdir(parents=True)
+    dummy_audio = album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done, get_download_by_mbid
+    mark_pending(tmp_state_db, "manual-artist-move", "Track", "OldArtist")
+    mark_done(tmp_state_db, "manual-artist-move", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "SameAlbum"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.write_artist_tag"):
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-artist-move",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                                "artist_name": "NewArtist",
+                            },
+                        )
+
+    assert resp.status_code == 200
+    expected_path = music_root / "NewArtist" / "SameAlbum" / "track.flac"
+    assert not dummy_audio.exists(), "원본 파일이 이동되어 있어야 한다"
+    assert expected_path.exists(), "새 아티스트/앨범 경로에 파일이 있어야 한다"
+
+    row = get_download_by_mbid(tmp_state_db, "manual-artist-move")
+    assert row["file_path"] == str(expected_path)
+
+
+def test_rematch_apply_artist_and_album_change_moves_correctly(client, tmp_state_db, tmp_path):
+    """artist_name과 album_name이 모두 변경되면 새 아티스트/앨범 경로로 이동된다."""
+    music_root = tmp_path / "music"
+    artist_dir = music_root / "OldArtist"
+    album_dir = artist_dir / "OldAlbum"
+    album_dir.mkdir(parents=True)
+    dummy_audio = album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done, get_download_by_mbid
+    mark_pending(tmp_state_db, "manual-both-change", "Track", "OldArtist")
+    mark_done(tmp_state_db, "manual-both-change", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "NewAlbum"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.write_artist_tag"):
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-both-change",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                                "artist_name": "NewArtist",
+                            },
+                        )
+
+    assert resp.status_code == 200
+    expected_path = music_root / "NewArtist" / "NewAlbum" / "track.flac"
+    assert not dummy_audio.exists(), "원본 파일이 이동되어 있어야 한다"
+    assert expected_path.exists(), "새 아티스트/앨범 경로에 파일이 있어야 한다"
+
+    row = get_download_by_mbid(tmp_state_db, "manual-both-change")
+    assert row["file_path"] == str(expected_path)
+
+
+def test_rematch_apply_no_artist_name_keeps_existing_artist_dir(client, tmp_state_db, tmp_path):
+    """artist_name이 없으면 기존 아티스트 폴더를 유지하고 앨범 폴더만 변경된다."""
+    music_root = tmp_path / "music"
+    artist_dir = music_root / "ExistingArtist"
+    old_album_dir = artist_dir / "OldAlbum"
+    old_album_dir.mkdir(parents=True)
+    dummy_audio = old_album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "manual-no-artist", "Track", "ExistingArtist")
+    mark_done(tmp_state_db, "manual-no-artist", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "NewAlbum"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.write_artist_tag") as mock_write_artist:
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-no-artist",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                            },
+                        )
+
+    assert resp.status_code == 200
+    expected_path = artist_dir / "NewAlbum" / "track.flac"
+    assert not dummy_audio.exists(), "앨범이 바뀌었으므로 파일이 이동되어야 한다"
+    assert expected_path.exists(), "기존 아티스트 폴더 안 새 앨범 경로에 파일이 있어야 한다"
+    mock_write_artist.assert_not_called()
+
+
+def test_rematch_apply_removes_empty_album_dir_after_move(client, tmp_state_db, tmp_path):
+    """파일 이동 후 기존 앨범 폴더가 비어있으면 삭제된다."""
+    artist_dir = tmp_path / "Artist"
+    old_album_dir = artist_dir / "OldAlbum"
+    old_album_dir.mkdir(parents=True)
+    dummy_audio = old_album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done
+    mark_pending(tmp_state_db, "manual-rmdir", "Track", "Artist")
+    mark_done(tmp_state_db, "manual-rmdir", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "NewAlbum"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.embed_cover_art", return_value=True):
+                with patch("src.api.threading.Thread") as mock_thread_cls:
+                    mock_thread_cls.return_value = MagicMock()
+                    resp = client.post(
+                        "/api/rematch/apply",
+                        json={
+                            "mbid": "manual-rmdir",
+                            "mb_recording_id": "rec-001",
+                            "mb_album_id": "album-001",
+                        },
+                    )
+
+    assert resp.status_code == 200
+    assert not old_album_dir.exists(), "이동 후 빈 앨범 폴더는 삭제되어야 한다"
+
+
+def test_rematch_apply_updates_artist_in_db_after_move(client, tmp_state_db, tmp_path):
+    """artist_name이 주어지면 파일 이동 후 state.db의 artist 컬럼도 업데이트된다."""
+    music_root = tmp_path / "music"
+    artist_dir = music_root / "OldArtist"
+    album_dir = artist_dir / "Album"
+    album_dir.mkdir(parents=True)
+    dummy_audio = album_dir / "track.flac"
+    dummy_audio.write_bytes(b"fake flac data")
+
+    from src.state import mark_pending, mark_done, get_download_by_mbid
+    mark_pending(tmp_state_db, "manual-artist-db", "Track", "OldArtist")
+    mark_done(tmp_state_db, "manual-artist-db", file_path=str(dummy_audio))
+
+    with patch("src.api.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"title": "Album"}),
+            raise_for_status=MagicMock(),
+        )
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.write_artist_tag"):
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-artist-db",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                                "artist_name": "NewArtist",
+                            },
+                        )
+
+    assert resp.status_code == 200
+    row = get_download_by_mbid(tmp_state_db, "manual-artist-db")
+    assert row["artist"] == "NewArtist", "state.db의 artist 컬럼이 NewArtist로 업데이트되어야 한다"

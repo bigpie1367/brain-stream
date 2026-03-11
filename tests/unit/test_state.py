@@ -11,7 +11,10 @@ from src.state import (
     mark_failed,
     get_all_downloads,
     get_retryable,
+    get_download_by_mbid,
     is_downloaded,
+    update_file_path,
+    update_track_info,
 )
 
 
@@ -162,3 +165,65 @@ def test_get_all_downloads_limit(tmp_state_db):
         mark_pending(tmp_state_db, f"mbid-{i}", f"Track {i}", "Artist")
     rows = get_all_downloads(tmp_state_db, limit=3)
     assert len(rows) == 3
+
+
+# ── update_file_path ──────────────────────────────────────────────────────────
+
+def test_update_file_path_changes_stored_path(tmp_state_db):
+    """update_file_path가 file_path 컬럼을 새 값으로 업데이트한다."""
+    mark_pending(tmp_state_db, "mbid-upfp", "Track", "Artist")
+    mark_done(tmp_state_db, "mbid-upfp", file_path="/old/path/track.flac")
+
+    update_file_path(tmp_state_db, "mbid-upfp", "/new/path/track.flac")
+
+    row = get_download_by_mbid(tmp_state_db, "mbid-upfp")
+    assert row["file_path"] == "/new/path/track.flac"
+
+
+def test_update_file_path_nonexistent_mbid_does_not_raise(tmp_state_db):
+    """존재하지 않는 mbid에 대해 update_file_path를 호출해도 예외가 발생하지 않는다."""
+    update_file_path(tmp_state_db, "mbid-ghost", "/some/path/track.flac")  # should not raise
+
+
+# ── update_track_info ─────────────────────────────────────────────────────────
+
+def test_update_track_info_updates_artist(tmp_state_db):
+    """update_track_info로 artist 컬럼을 업데이트할 수 있다."""
+    mark_pending(tmp_state_db, "mbid-ti1", "Track", "OldArtist")
+    update_track_info(tmp_state_db, "mbid-ti1", artist="NewArtist")
+    row = get_download_by_mbid(tmp_state_db, "mbid-ti1")
+    assert row["artist"] == "NewArtist"
+
+
+def test_update_track_info_updates_file_path(tmp_state_db):
+    """update_track_info로 file_path 컬럼을 업데이트할 수 있다."""
+    mark_pending(tmp_state_db, "mbid-ti2", "Track", "Artist")
+    mark_done(tmp_state_db, "mbid-ti2", file_path="/old/path/track.flac")
+    update_track_info(tmp_state_db, "mbid-ti2", file_path="/new/path/track.flac")
+    row = get_download_by_mbid(tmp_state_db, "mbid-ti2")
+    assert row["file_path"] == "/new/path/track.flac"
+
+
+def test_update_track_info_updates_both(tmp_state_db):
+    """update_track_info로 artist와 file_path를 동시에 업데이트할 수 있다."""
+    mark_pending(tmp_state_db, "mbid-ti3", "Track", "OldArtist")
+    mark_done(tmp_state_db, "mbid-ti3", file_path="/old/path/track.flac")
+    update_track_info(tmp_state_db, "mbid-ti3", artist="NewArtist", file_path="/new/path/track.flac")
+    row = get_download_by_mbid(tmp_state_db, "mbid-ti3")
+    assert row["artist"] == "NewArtist"
+    assert row["file_path"] == "/new/path/track.flac"
+
+
+def test_update_track_info_no_fields_is_noop(tmp_state_db):
+    """필드를 하나도 지정하지 않으면 아무 변화 없이 반환된다."""
+    mark_pending(tmp_state_db, "mbid-ti4", "Track", "Artist")
+    mark_done(tmp_state_db, "mbid-ti4", file_path="/path/track.flac")
+    update_track_info(tmp_state_db, "mbid-ti4")  # no fields — should be no-op
+    row = get_download_by_mbid(tmp_state_db, "mbid-ti4")
+    assert row["artist"] == "Artist"
+    assert row["file_path"] == "/path/track.flac"
+
+
+def test_update_track_info_nonexistent_mbid_does_not_raise(tmp_state_db):
+    """존재하지 않는 mbid에 update_track_info를 호출해도 예외가 발생하지 않는다."""
+    update_track_info(tmp_state_db, "mbid-ghost2", artist="SomeArtist")  # should not raise

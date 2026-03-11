@@ -29,8 +29,10 @@ from src.pipeline.tagger import (
     _primary_artist,
     _read_tags,
     _sanitize_filename,
+    _write_artist_tag,
     _write_tags,
     tag_and_import,
+    write_artist_tag,
 )
 
 # ── FLAC 더미 파일 생성 헬퍼 ─────────────────────────────────────────────────
@@ -181,6 +183,44 @@ def test_pretag_nonexistent_file_does_not_raise(tmp_path):
     """존재하지 않는 파일에 대해 _pretag는 예외를 발생시키지 않는다 (경고 로그만)."""
     bad_path = tmp_path / "nonexistent.flac"
     _pretag(bad_path, artist="Artist", track_name="Track")
+
+
+# ── _write_artist_tag 테스트 ──────────────────────────────────────────────────
+
+
+def test_write_artist_tag_writes_to_flac(tmp_path):
+    """FLAC 파일에 artist 태그를 올바르게 기록한다."""
+    flac_path = _make_flac(tmp_path)
+    _write_artist_tag(str(flac_path), "NewArtist")
+
+    f = mutagen.flac.FLAC(str(flac_path))
+    assert f.get("artist") == ["NewArtist"]
+
+
+def test_write_artist_tag_overwrites_existing_artist(tmp_path):
+    """기존 artist 태그가 있어도 새 값으로 덮어쓴다."""
+    flac_path = _make_flac(tmp_path)
+    _write_tags(str(flac_path), "OldArtist", "Track")
+
+    _write_artist_tag(str(flac_path), "UpdatedArtist")
+
+    f = mutagen.flac.FLAC(str(flac_path))
+    assert f.get("artist") == ["UpdatedArtist"]
+
+
+def test_write_artist_tag_public_alias(tmp_path):
+    """write_artist_tag public alias가 _write_artist_tag와 동일하게 동작한다."""
+    flac_path = _make_flac(tmp_path)
+    write_artist_tag(str(flac_path), "AliasArtist")
+
+    f = mutagen.flac.FLAC(str(flac_path))
+    assert f.get("artist") == ["AliasArtist"]
+
+
+def test_write_artist_tag_nonexistent_file_does_not_raise(tmp_path):
+    """존재하지 않는 파일에 대해 _write_artist_tag는 예외를 발생시키지 않는다 (경고 로그만)."""
+    bad_path = tmp_path / "nonexistent.flac"
+    _write_artist_tag(str(bad_path), "Artist")
 
 
 # ── tag_and_import 테스트 ─────────────────────────────────────────────────────
@@ -691,6 +731,40 @@ def test_itunes_search_returns_first_matching_artist(monkeypatch):
     result = _itunes_search("Radiohead", "Creep")
     assert result.get("album") == "Pablo Honey"
     assert "artwork_url" in result
+
+
+def test_itunes_search_country_param_passed_to_request(monkeypatch):
+    """country 파라미터가 주어지면 requests.get params에 포함된다."""
+    captured_params = {}
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        captured_params.update(params or {})
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {"results": []}
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+
+    _itunes_search("Radiohead", "Creep", country="KR")
+    assert captured_params.get("country") == "KR"
+
+
+def test_itunes_search_no_country_param_when_none(monkeypatch):
+    """country가 None이면 params에 country 키가 없다."""
+    captured_params = {}
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        captured_params.update(params or {})
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {"results": []}
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+
+    _itunes_search("Radiohead", "Creep")
+    assert "country" not in captured_params
 
 
 # ── _deezer_search: artist 검증 ───────────────────────────────────────────────

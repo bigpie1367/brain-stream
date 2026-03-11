@@ -124,6 +124,37 @@ def get_download_by_mbid(db_path: str, mbid: str) -> Optional[dict]:
     return dict(row) if row is not None else None
 
 
+def update_file_path(db_path: str, mbid: str, new_file_path: str):
+    with _conn(db_path) as conn:
+        conn.execute(
+            "UPDATE downloads SET file_path = ? WHERE mbid = ?",
+            (new_file_path, mbid),
+        )
+
+
+def update_track_info(
+    db_path: str,
+    mbid: str,
+    *,
+    artist: str | None = None,
+    file_path: str | None = None,
+):
+    """아티스트·파일경로를 선택적으로 업데이트한다."""
+    fields = []
+    values = []
+    if artist is not None:
+        fields.append("artist = ?")
+        values.append(artist)
+    if file_path is not None:
+        fields.append("file_path = ?")
+        values.append(file_path)
+    if not fields:
+        return
+    values.append(mbid)
+    with _conn(db_path) as conn:
+        conn.execute(f"UPDATE downloads SET {', '.join(fields)} WHERE mbid = ?", values)
+
+
 def delete_download(db_path: str, mbid: str):
     with _conn(db_path) as conn:
         conn.execute("DELETE FROM downloads WHERE mbid = ?", (mbid,))

@@ -2183,7 +2183,6 @@
       const params = new URLSearchParams();
       if (artist) params.set('artist', artist);
       if (track)  params.set('track', track);
-      params.set('source', 'musicbrainz');
 
       const res = await fetch('/api/rematch/search?' + params.toString());
       if (!res.ok) {
@@ -2319,6 +2318,9 @@
       const payload = {
         mb_recording_id: _selectedCandidate.mb_recording_id ?? null,
         mb_album_id:     _selectedCandidate.mb_album_id ?? null,
+        album_name:      _selectedCandidate.album_name ?? "",
+        artist_name:     _selectedCandidate.artist_name ?? "",
+        cover_url:       _selectedCandidate.cover_url ?? "",
       };
       if (_rematchMbid) {
         payload.mbid = _rematchMbid;

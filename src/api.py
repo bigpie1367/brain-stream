@@ -2,7 +2,9 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
+import shutil
 import threading
 import time
 import uuid
@@ -20,9 +22,12 @@ from pydantic import BaseModel
 from src.pipeline.downloader import download_track
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
 from src.pipeline.tagger import (
+    embed_art_from_url,
     embed_cover_art,
+    itunes_search,
     tag_and_import,
     write_album_tag,
+    write_artist_tag,
 )
 from src.state import (
     delete_download,
@@ -32,6 +37,8 @@ from src.state import (
     mark_downloading,
     mark_failed,
     mark_pending,
+    update_file_path,
+    update_track_info,
 )
 from src.utils.logger import get_logger
 
@@ -60,6 +67,9 @@ class RematchApplyRequest(BaseModel):
     mbid: str | None = None
     mb_recording_id: str
     mb_album_id: str
+    album_name: str = ""
+    artist_name: str = ""
+    cover_url: str = ""
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -267,6 +277,16 @@ async def delete_download_entry(mbid: str):
             os.remove(file_path)
             files_removed = 1
             log.info("removed file", file=file_path)
+            # 빈 폴더 정리 (앨범 → 아티스트 순)
+            album_dir = os.path.dirname(file_path)
+            artist_dir = os.path.dirname(album_dir)
+            try:
+                if os.path.isdir(album_dir) and not os.listdir(album_dir):
+                    os.rmdir(album_dir)
+                    if os.path.isdir(artist_dir) and not os.listdir(artist_dir):
+                        os.rmdir(artist_dir)
+            except Exception as exc:
+                log.warning("delete: failed to remove empty dirs", error=str(exc))
         except FileNotFoundError:
             log.info("file already gone, skipping removal", file=file_path)
         except OSError as exc:
@@ -290,17 +310,14 @@ _MB_SEARCH_HEADERS = {"User-Agent": "brainstream/1.0"}
 
 
 @app.get("/api/rematch/search")
-async def rematch_search(artist: str, track: str, source: str = "musicbrainz"):
+async def rematch_search(artist: str, track: str):
     """Search for album candidates to rematch a track.
 
-    Currently supports source=musicbrainz only.
-    Returns up to 10 album candidates with cover art URLs.
+    Queries MusicBrainz (up to 10 results) then appends an iTunes candidate if found.
+    Returns combined results with a 'source' field on each candidate.
     """
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
-
-    if source != "musicbrainz":
-        raise HTTPException(status_code=400, detail=f"unsupported source: {source}")
 
     # Stage 1: strict query with artistname + recording fields
     try:
@@ -386,7 +403,38 @@ async def rematch_search(artist: str, track: str, source: str = "musicbrainz"):
         if len(candidates) >= 10:
             break
 
+    # Append iTunes candidates (US + KR stores) at the end, deduplicated by album name
+    seen_itunes_albums: set[str] = set()
+    for country in (None, "KR"):
+        try:
+            itunes_result = itunes_search(artist, track, country=country)
+        except Exception:
+            itunes_result = {}
+        if itunes_result:
+            album_name = itunes_result.get("album", "")
+            if album_name and album_name not in seen_itunes_albums:
+                seen_itunes_albums.add(album_name)
+                store_label = "itunes-kr" if country == "KR" else "itunes"
+                candidates.append(
+                    {
+                        "mb_recording_id": "",
+                        "mb_album_id": "",
+                        "album_name": album_name,
+                        "artist_name": artist,
+                        "year": "",
+                        "cover_url": itunes_result.get("artwork_url", ""),
+                        "source": store_label,
+                    }
+                )
+
     return {"candidates": candidates}
+
+
+def _sanitize_path_component(name: str) -> str:
+    """파일시스템 안전 문자열로 변환 (tagger.py _sanitize_filename과 동일 규칙)."""
+    sanitized = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "_", name)
+    sanitized = sanitized.strip(". ")
+    return sanitized or "Unknown"
 
 
 def _navidrome_get_song(url: str, username: str, password: str, song_id: str) -> dict:
@@ -464,28 +512,36 @@ async def rematch_apply(req: RematchApplyRequest):
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"audio file not found: {file_path}")
 
-    # 2. Fetch album name from MusicBrainz release
+    # 2. Fetch album name
     _MB_API = "https://musicbrainz.org/ws/2"
     _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
 
-    try:
-        time.sleep(1)  # rate limit
-        r = requests.get(
-            f"{_MB_API}/release/{req.mb_album_id}",
-            params={"fmt": "json"},
-            headers=_MB_HEADERS,
-            timeout=10,
-        )
-        r.raise_for_status()
-        album_name = r.json().get("title", "")
-    except Exception as exc:
-        log.error(
-            "rematch_apply: MB release lookup failed", mb_album_id=req.mb_album_id, error=str(exc)
-        )
-        raise HTTPException(status_code=500, detail=f"MB release lookup failed: {exc}")
-
-    if not album_name:
-        raise HTTPException(status_code=500, detail="MB release returned no title")
+    if req.mb_album_id:
+        try:
+            time.sleep(1)  # rate limit
+            r = requests.get(
+                f"{_MB_API}/release/{req.mb_album_id}",
+                params={"fmt": "json"},
+                headers=_MB_HEADERS,
+                timeout=10,
+            )
+            r.raise_for_status()
+            album_name = r.json().get("title", "")
+        except Exception as exc:
+            log.error(
+                "rematch_apply: MB release lookup failed",
+                mb_album_id=req.mb_album_id,
+                error=str(exc),
+            )
+            raise HTTPException(status_code=500, detail=f"MB release lookup failed: {exc}")
+        if not album_name:
+            raise HTTPException(status_code=500, detail="MB release returned no title")
+    else:
+        album_name = req.album_name
+        if not album_name:
+            raise HTTPException(
+                status_code=422, detail="album_name is required when mb_album_id is empty"
+            )
 
     # 3. Rewrite album tag (mb_albumid NOT written — prevents Navidrome album split)
     try:
@@ -494,13 +550,81 @@ async def rematch_apply(req: RematchApplyRequest):
         log.error("rematch_apply: write_album_tag failed", file=file_path, error=str(exc))
         raise HTTPException(status_code=500, detail=f"tag write failed: {exc}")
 
-    # 4. Embed cover art from Cover Art Archive
-    art_ok = embed_cover_art(file_path, req.mb_album_id)
-    if not art_ok:
-        log.warning(
-            "rematch_apply: CAA cover art not available, skipping",
-            mb_album_id=req.mb_album_id,
-        )
+    # 3-artist. Rewrite artist tag if artist_name is provided
+    if req.artist_name:
+        try:
+            write_artist_tag(file_path, req.artist_name)
+        except Exception as exc:
+            log.warning("rematch_apply: write_artist_tag failed", error=str(exc))
+
+    # 3-1. Move file to new album directory if album name or artist name changed
+    filename = os.path.basename(file_path)
+    old_album_dir = os.path.dirname(file_path)
+    current_artist_dir = os.path.dirname(old_album_dir)
+    music_root = os.path.dirname(current_artist_dir)
+
+    if req.artist_name:
+        new_artist_dir = os.path.join(music_root, _sanitize_path_component(req.artist_name))
+    else:
+        new_artist_dir = current_artist_dir
+
+    new_album_dir = os.path.join(new_artist_dir, _sanitize_path_component(album_name))
+    new_file_path = os.path.join(new_album_dir, filename)
+
+    if new_file_path != file_path:
+        try:
+            os.makedirs(new_album_dir, exist_ok=True)
+            shutil.move(file_path, new_file_path)
+            file_path = new_file_path
+            log.info(
+                "rematch_apply: file moved to new album dir",
+                new_path=file_path,
+                album=album_name,
+            )
+        except Exception as exc:
+            log.error("rematch_apply: file move failed", error=str(exc))
+            raise HTTPException(status_code=500, detail=f"file move failed: {exc}")
+
+        # 빈 폴더 정리
+        try:
+            if os.path.isdir(old_album_dir) and not os.listdir(old_album_dir):
+                os.rmdir(old_album_dir)
+                # 상위 아티스트 폴더도 비어있으면 삭제
+                if os.path.isdir(current_artist_dir) and not os.listdir(current_artist_dir):
+                    os.rmdir(current_artist_dir)
+        except Exception as exc:
+            log.warning("rematch_apply: failed to remove empty dirs", error=str(exc))
+
+        if req.mbid is not None:
+            try:
+                update_track_info(
+                    _cfg.state_db,
+                    req.mbid,
+                    artist=req.artist_name if req.artist_name else None,
+                    file_path=file_path,
+                )
+            except Exception as exc:
+                log.warning(
+                    "rematch_apply: state.db update failed",
+                    mbid=req.mbid,
+                    error=str(exc),
+                )
+
+    # 4. Embed cover art
+    if req.mb_album_id:
+        art_ok = embed_cover_art(file_path, req.mb_album_id)
+        if not art_ok:
+            log.warning(
+                "rematch_apply: CAA cover art not available, skipping",
+                mb_album_id=req.mb_album_id,
+            )
+    elif req.cover_url:
+        art_ok = embed_art_from_url(file_path, req.cover_url)
+        if not art_ok:
+            log.warning(
+                "rematch_apply: cover art embed from URL failed",
+                cover_url=req.cover_url,
+            )
 
     # 5. Trigger Navidrome rescan (fire-and-forget)
     threading.Thread(

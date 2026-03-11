@@ -312,6 +312,32 @@ def _write_album_tag(file_path: str, album: str):
         log.warning("could not write album tag", file=file_path, error=str(exc))
 
 
+def _write_artist_tag(file_path: str, artist: str):
+    """Write artist tag to audio file using mutagen."""
+    try:
+        suffix = Path(file_path).suffix.lower()
+        if suffix == ".flac":
+            f = mutagen.flac.FLAC(file_path)
+            f["artist"] = [artist]
+            f.save()
+        elif suffix in (".opus", ".ogg"):
+            f = mutagen.oggopus.OggOpus(file_path)
+            f["artist"] = [artist]
+            f.save()
+        elif suffix in (".m4a", ".mp4"):
+            f = mutagen.mp4.MP4(file_path)
+            f["\xa9ART"] = [artist]
+            f.save()
+        else:
+            f = mutagen.File(file_path)
+            if f is not None:
+                f["artist"] = artist
+                f.save()
+        log.debug("wrote artist tag", file=file_path, artist=artist)
+    except Exception as exc:
+        log.warning("could not write artist tag", file=file_path, error=str(exc))
+
+
 def _read_tags(file_path: str) -> dict:
     """Read artist, title, album, mb_trackid from audio file tags.
 
@@ -490,57 +516,62 @@ def _pretag(path: Path, artist: str, track_name: str):
     _write_tags(str(path), artist, track_name)
 
 
-def _itunes_search(artist: str, track_name: str) -> dict:
+def _itunes_search(artist: str, track_name: str, country: str | None = None) -> dict:
     """Search iTunes Search API for album name and cover art URL.
 
     Returns {"album": str, "artwork_url": str} or empty dict on failure.
     No API key required. No rate limit documented.
     Validates artistName similarity (>= 0.4) before accepting a result.
+    country: ISO 3166-1 alpha-2 store code (e.g. "KR"). None uses US store (default).
     """
+    term = f"{artist} {track_name}"
+    norm_artist = _normalize_for_match(artist)
+
     try:
-        term = f"{artist} {track_name}"
+        params = {"term": term, "entity": "song", "limit": 5}
+        if country:
+            params["country"] = country
         r = requests.get(
             "https://itunes.apple.com/search",
-            params={"term": term, "entity": "song", "limit": 5},
+            params=params,
             timeout=10,
         )
         r.raise_for_status()
         results = r.json().get("results", [])
-        if not results:
-            return {}
-        norm_artist = _normalize_for_match(artist)
-        item = None
         for candidate in results:
-            candidate_artist = candidate.get("artistName", "")
             ratio = difflib.SequenceMatcher(
-                None, norm_artist, _normalize_for_match(candidate_artist)
+                None, norm_artist, _normalize_for_match(candidate.get("artistName", ""))
             ).ratio()
             if ratio >= 0.4:
-                item = candidate
-                break
-        if item is None:
-            log.info(
-                "iTunes search: no result met artist similarity threshold (0.4)",
-                artist=artist,
-                track=track_name,
-            )
-            return {}
-        album = item.get("collectionName", "")
-        artwork_url = item.get("artworkUrl100", "")
-        if artwork_url:
-            # Upgrade to 600x600 for better quality
-            artwork_url = artwork_url.replace("100x100bb", "600x600bb")
-        log.info(
-            "iTunes search result",
+                album = candidate.get("collectionName", "")
+                artwork_url = candidate.get("artworkUrl100", "").replace(
+                    "100x100bb", "600x600bb"
+                )
+                log.info(
+                    "iTunes search result",
+                    artist=artist,
+                    track=track_name,
+                    album=album,
+                    artwork_url=artwork_url,
+                    country=country or "US",
+                )
+                return {"album": album, "artwork_url": artwork_url}
+    except Exception as exc:
+        log.warning(
+            "iTunes search failed",
             artist=artist,
             track=track_name,
-            album=album,
-            artwork_url=artwork_url,
+            error=str(exc),
+            country=country or "US",
         )
-        return {"album": album, "artwork_url": artwork_url}
-    except Exception as exc:
-        log.warning("iTunes search failed", artist=artist, track=track_name, error=str(exc))
-        return {}
+
+    log.info(
+        "iTunes search: no result met artist similarity threshold (0.4)",
+        artist=artist,
+        track=track_name,
+        country=country or "US",
+    )
+    return {}
 
 
 def _deezer_search(artist: str, track_name: str) -> dict:
@@ -670,13 +701,16 @@ def _primary_artist(artist: str) -> str:
     return result.strip()
 
 
-def _embed_art_from_url(file_path: str, url: str):
-    """Download image from URL and embed into audio file."""
+def _embed_art_from_url(file_path: str, url: str) -> bool:
+    """Download image from URL and embed into audio file.
+
+    Returns True on success, False on failure.
+    """
     try:
         r = requests.get(url, timeout=15, allow_redirects=True)
         if r.status_code != 200:
             log.warning("thumbnail download failed", url=url, status=r.status_code)
-            return
+            return False
         image_data = r.content
         content_type = r.headers.get("Content-Type", "image/jpeg")
         log.info("embedding thumbnail as cover art", file=file_path, size=len(image_data))
@@ -710,11 +744,13 @@ def _embed_art_from_url(file_path: str, url: str):
             f.save()
         else:
             log.warning("unsupported format for art embedding", file=file_path)
-            return
+            return False
 
         log.info("thumbnail embedded as cover art", file=file_path)
+        return True
     except Exception as exc:
         log.warning("thumbnail embedding failed", file=file_path, error=str(exc))
+        return False
 
 
 def _enrich_track(
@@ -955,3 +991,5 @@ mb_album_from_recording_id = _mb_album_from_recording_id
 embed_cover_art = _embed_cover_art
 embed_art_from_url = _embed_art_from_url
 write_album_tag = _write_album_tag
+write_artist_tag = _write_artist_tag
+itunes_search = _itunes_search

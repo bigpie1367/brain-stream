@@ -75,11 +75,11 @@ External APIs:
 |------|------|
 | `src/main.py` | 진입점. 설정 로드 → DB 초기화 → API 설정 주입 → 파이프라인 스레드 시작 → uvicorn 실행 |
 | `src/config.py` | 환경변수로 설정 로드 (config 파일 불필요) |
-| `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD |
+| `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD. `update_track_info`로 artist/file_path 선택적 업데이트 |
 | `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회, 앨범 재매칭 API (`/api/rematch/*`), `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계) |
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출; `recording_mbid`만 반환하므로 `_lookup_recording(mbid)`로 MB API에서 artist/track 조회 |
 | `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `ytsearch5:` 5개 후보 검색 후 차단 영상 감지 시 다음 후보 retry; `(file_path, yt_metadata)` 튜플 반환 |
-| `src/pipeline/tagger.py` | MB API recording 검색 (artist 유사도 검증) → mutagen 전체 태그 쓰기 → shutil 파일 복사 → MB enrichment → CAA/iTunes/Deezer 커버아트 임베딩 → YouTube 썸네일/채널명 폴백 |
+| `src/pipeline/tagger.py` | MB API recording 검색 (artist 유사도 검증) → mutagen 전체 태그 쓰기 → shutil 파일 복사 → MB enrichment → CAA/iTunes/Deezer 커버아트 임베딩 → YouTube 썸네일/채널명 폴백. `_write_artist_tag`, `_write_album_tag`, `_itunes_search(country=)` 등 public alias로 `api.py` 재매칭에도 사용 |
 | `src/pipeline/navidrome.py` | Subsonic API token-auth, startScan + getScanStatus 폴링 |
 | `src/utils/logger.py` | structlog 설정 (TTY: 컬러 콘솔, non-TTY: JSON) |
 | `src/static/index.html` | 다크 테마 단일 파일 Web UI. Downloads 탭 + Library 탭 (아티스트/앨범/트랙 브라우징, 트랙별 앨범 재매칭 버튼) |

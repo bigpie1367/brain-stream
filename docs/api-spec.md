@@ -198,7 +198,7 @@ data: {"status": "done", "message": "완료"}
 **동작 순서**
 
 1. state.db에서 mbid로 file_path 조회
-2. 파일이 존재하면 삭제
+2. 파일이 존재하면 삭제. 삭제 후 비어진 앨범 폴더 → 아티스트 폴더 순으로 자동 정리
 3. state.db에서 레코드 삭제
 4. Navidrome 재스캔 트리거 (파일이 삭제된 경우)
 
@@ -237,7 +237,7 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 
 ## GET `/api/rematch/search`
 
-라이브러리 트랙의 앨범 재매칭을 위해 MusicBrainz에서 후보 앨범 목록을 검색한다.
+라이브러리 트랙의 앨범 재매칭을 위해 MusicBrainz, iTunes US, iTunes KR 세 소스에서 후보 앨범 목록을 한 번에 검색한다.
 
 **Query Parameters**
 
@@ -245,7 +245,6 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 |---------|------|------|------|
 | artist | string | Y | 아티스트명 |
 | track | string | Y | 트랙명 |
-| source | string | N | 검색 소스. 현재 `musicbrainz`만 지원 (기본값: `musicbrainz`) |
 
 **Response** `200 OK`
 
@@ -260,20 +259,48 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
       "artist_name": "Radiohead",
       "year": 1997,
       "cover_url": "https://coverartarchive.org/release/7a1b2c3d-abcd-ef01-2345-678901234567/front"
+    },
+    {
+      "source": "itunes",
+      "mb_recording_id": "",
+      "mb_album_id": "",
+      "album_name": "OK Computer",
+      "artist_name": "Radiohead",
+      "year": "",
+      "cover_url": "https://is1-ssl.mzstatic.com/.../600x600bb.jpg"
+    },
+    {
+      "source": "itunes-kr",
+      "mb_recording_id": "",
+      "mb_album_id": "",
+      "album_name": "가슴이 차가운 여자 - Single",
+      "artist_name": "류민희",
+      "year": "",
+      "cover_url": "https://is1-ssl.mzstatic.com/.../600x600bb.jpg"
     }
   ]
 }
 ```
 
+**소스별 동작**
+
+| source | 설명 |
+|--------|------|
+| `musicbrainz` | MusicBrainz recording 검색 (최대 10개). `mb_album_id`로 CAA 커버아트 사용 가능 |
+| `itunes` | iTunes US 스토어 검색 (아티스트 유사도 0.4 이상 첫 결과). `mb_album_id` 없음 |
+| `itunes-kr` | iTunes KR 스토어 검색. US와 앨범명이 동일하면 중복 제거 |
+
+**응답 필드**
+
 | 필드 | 타입 | 설명 |
 |------|------|------|
-| source | string | 검색 소스 (`musicbrainz`) |
-| mb_recording_id | string \| null | MusicBrainz recording UUID |
-| mb_album_id | string \| null | MusicBrainz release UUID (커버아트 조회에 사용) |
+| source | string | 검색 소스 (`musicbrainz` / `itunes` / `itunes-kr`) |
+| mb_recording_id | string | MusicBrainz recording UUID. iTunes 후보는 빈 문자열 |
+| mb_album_id | string | MusicBrainz release UUID. iTunes 후보는 빈 문자열 |
 | album_name | string | 앨범명 |
 | artist_name | string | 아티스트명 |
-| year | integer \| null | 발매 연도 |
-| cover_url | string \| null | Cover Art Archive 커버아트 URL |
+| year | integer \| string | 발매 연도. iTunes 후보는 빈 문자열 |
+| cover_url | string | 커버아트 URL |
 
 매칭 결과가 없으면 `candidates: []` 반환.
 
@@ -281,14 +308,13 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 
 | Status | 설명 |
 |--------|------|
-| 400 | 지원하지 않는 source |
 | 503 | 서버 설정 미로드 |
 
 ---
 
 ## POST `/api/rematch/apply`
 
-선택한 앨범 후보로 트랙을 재태깅한다. 앨범명 + 커버아트를 파일에 임베딩하고 Navidrome 재스캔을 트리거한다.
+선택한 앨범 후보로 트랙을 재태깅하고, 필요 시 파일을 새 경로로 이동한다.
 
 **Request Body** (`application/json`)
 
@@ -296,23 +322,32 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 {
   "song_id": "navidrome-song-id",
   "mb_recording_id": "3c3e5e5c-1234-5678-abcd-ef0123456789",
-  "mb_album_id": "7a1b2c3d-abcd-ef01-2345-678901234567"
+  "mb_album_id": "7a1b2c3d-abcd-ef01-2345-678901234567",
+  "album_name": "",
+  "artist_name": "Radiohead",
+  "cover_url": ""
 }
 ```
 
 | 필드 | 타입 | 필수 | 설명 |
 |------|------|------|------|
-| song_id | string | Y | Navidrome Subsonic song ID (라이브러리 탭에서 획득) |
+| song_id | string | \* | Navidrome song ID (라이브러리 탭). `mbid`와 둘 중 하나 필수 |
+| mbid | string | \* | state.db의 mbid (다운로드 탭). `song_id`와 둘 중 하나 필수 |
 | mb_recording_id | string | Y | `/api/rematch/search` 응답의 `mb_recording_id` |
-| mb_album_id | string | Y | `/api/rematch/search` 응답의 `mb_album_id` |
+| mb_album_id | string | Y | MusicBrainz release UUID. iTunes 후보는 빈 문자열 |
+| album_name | string | N | iTunes 후보일 때 앨범명 직접 전달 (`mb_album_id`가 비어있을 때 필수) |
+| artist_name | string | N | 재매칭 후보의 아티스트명. 변경 시 파일 경로와 태그 모두 업데이트 |
+| cover_url | string | N | iTunes 후보의 커버아트 URL (`mb_album_id`가 비어있을 때 사용) |
 
 **동작 순서**
 
-1. Navidrome `getSong(song_id)` → `path` 필드로 파일 절대경로 획득
-2. MB API로 release 정보 조회 → 앨범명 확인
-3. mutagen으로 `album` 태그 재기록 (`mb_albumid`는 기록하지 않음 — Navidrome 앨범 분리 방지)
-4. Cover Art Archive에서 커버아트 다운로드 → mutagen 임베딩 (실패 시 warning만, 전체 실패 아님)
-5. Navidrome `startScan` 트리거
+1. `mbid` → state.db에서 `file_path` 직접 조회 / `song_id` → Navidrome `getSong`으로 경로 획득
+2. `mb_album_id`가 있으면 MB API로 release 조회 → 앨범명 확인. 없으면 `album_name` 필드 직접 사용
+3. mutagen으로 `album` 태그 재기록 (`mb_albumid`는 기록 안 함 — Navidrome 앨범 분리 방지)
+4. `artist_name`이 있으면 mutagen으로 `artist` 태그도 재기록
+5. 앨범명·아티스트명 기준으로 새 경로(`data/music/{Artist}/{Album}/{Track}.ext`) 계산 → 변경됐으면 `shutil.move`로 이동. state.db `file_path` / `artist` 업데이트. 이동 후 비어진 폴더 자동 정리
+6. `mb_album_id`가 있으면 CAA 커버아트 임베딩. 없고 `cover_url`이 있으면 URL에서 다운로드 후 임베딩 (실패 시 warning만)
+7. Navidrome `startScan` 트리거
 
 **Response** `200 OK`
 
@@ -327,8 +362,9 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 
 | Status | 설명 |
 |--------|------|
-| 404 | song_id가 Navidrome에 없음 |
-| 500 | 파일 재태깅 실패 |
+| 404 | mbid/song_id가 없거나 파일이 존재하지 않음 |
+| 422 | `mb_album_id`가 비어있는데 `album_name`도 미전달 |
+| 500 | MB 조회 실패 / 태그 쓰기 실패 / 파일 이동 실패 |
 | 503 | 서버 설정 미로드 |
 
 ---
