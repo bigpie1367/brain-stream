@@ -126,6 +126,36 @@ def _extract_mb_recording_title(recordings: list, best_id: str) -> str:
     return ""
 
 
+def _lookup_recording_by_mbid(mbid: str) -> dict[str, str]:
+    """Look up MB recording directly by mbid. Returns {artist, title}, empty strings on failure."""
+    try:
+        time.sleep(1)  # rate limit
+        r = requests.get(
+            f"{_MB_API}/recording/{mbid}",
+            params={"fmt": "json", "inc": "artist-credits"},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+        title = data.get("title", "")
+        artist_credits = data.get("artist-credit", [])
+        artist_parts = []
+        for credit in artist_credits:
+            if isinstance(credit, dict):
+                name = credit.get("artist", {}).get("name", "")
+                if name:
+                    artist_parts.append(name)
+                joinphrase = credit.get("joinphrase", "")
+                if joinphrase:
+                    artist_parts.append(joinphrase)
+        artist = "".join(artist_parts).strip()
+        return {"artist": artist, "title": title}
+    except Exception as exc:
+        log.warning("MB direct recording lookup failed", mbid=mbid, error=str(exc))
+        return {"artist": "", "title": ""}
+
+
 def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, str]:
     """Search MusicBrainz for recordings by artist and title.
 
@@ -1001,16 +1031,33 @@ def tag_and_import(
     recording_ids: list[str] = []
     mb_artist_name: str = ""
     mb_recording_title: str = ""
-    if artist and track_name:
+
+    is_lb_track = mbid and not mbid.startswith("manual-")
+
+    if is_lb_track:
+        # LB track: already have the correct recording_mbid, look it up directly
+        meta = _lookup_recording_by_mbid(mbid)
+        if meta["artist"] or meta["title"]:
+            recording_ids = [mbid]
+            mb_artist_name = meta["artist"]
+            mb_recording_title = meta["title"]
+        else:
+            log.warning("MB direct lookup failed, falling back to search", mbid=mbid)
+            if artist and track_name:
+                recording_ids, mb_artist_name, mb_recording_title = _mb_search_recording(
+                    artist, track_name
+                )
+    elif artist and track_name:
         recording_ids, mb_artist_name, mb_recording_title = _mb_search_recording(
             artist, track_name
         )
-        if not recording_ids:
-            log.warning(
-                "MB recording not found, continuing with iTunes/Deezer",
-                artist=artist,
-                track=track_name,
-            )
+
+    if not recording_ids:
+        log.warning(
+            "MB recording not found, continuing with iTunes/Deezer",
+            artist=artist,
+            track=track_name,
+        )
 
     # Write initial tags to staging file
     _write_tags(str(path), artist, track_name, recording_ids[0] if recording_ids else "")
