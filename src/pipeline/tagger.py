@@ -156,6 +156,24 @@ def _lookup_recording_by_mbid(mbid: str) -> dict[str, str]:
         return {"artist": "", "title": ""}
 
 
+def _mb_lookup_artist_ids(artist: str, limit: int = 3) -> list[str]:
+    """Search MB artist API by name, return list of artist MBIDs (up to `limit`)."""
+    try:
+        time.sleep(1)  # rate limit
+        r = requests.get(
+            f"{_MB_API}/artist",
+            params={"query": f'artistname:"{artist}"', "fmt": "json", "limit": limit},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        artists = r.json().get("artists", [])
+        return [a["id"] for a in artists if a.get("id")]
+    except Exception as exc:
+        log.warning("MB artist lookup failed", artist=artist, error=str(exc))
+        return []
+
+
 def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, str]:
     """Search MusicBrainz for recordings by artist and title.
 
@@ -236,6 +254,46 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
                     mb_recording_title=mb_recording_title,
                 )
                 return candidates, mb_artist_name, mb_recording_title
+
+        # Stage 2.5: artist ID 기반 검색 (아티스트명이 다른 언어/표기로 인덱싱된 경우 대응)
+        artist_ids = _mb_lookup_artist_ids(artist)
+        for arid in artist_ids:
+            time.sleep(1)  # rate limit
+            try:
+                r = requests.get(
+                    f"{_MB_API}/recording",
+                    params={
+                        "query": f'arid:{arid} AND recording:"{track_name}"',
+                        "fmt": "json",
+                        "limit": 5,
+                    },
+                    headers=_MB_HEADERS,
+                    timeout=10,
+                )
+                r.raise_for_status()
+                recordings = r.json().get("recordings", [])
+                for rec in recordings:
+                    rec_title = rec.get("title", "")
+                    if difflib.SequenceMatcher(None, rec_title.lower(), track_name.lower()).ratio() < 0.4:
+                        continue
+                    rec_id = rec.get("id")
+                    if not rec_id:
+                        continue
+                    credits = rec.get("artist-credit", [])
+                    mb_artist = "".join(
+                        c.get("artist", {}).get("name", "") + c.get("joinphrase", "")
+                        for c in credits if isinstance(c, dict)
+                    ).strip()
+                    log.info(
+                        "MB stage 2.5 match",
+                        recording=rec_title,
+                        artist=mb_artist,
+                        arid=arid,
+                    )
+                    return [rec_id], mb_artist, rec_title
+            except Exception as exc:
+                log.warning("MB stage 2.5 search failed", arid=arid, error=str(exc))
+                continue
 
         # Fallback: recording-only search (no artist filter) — pick best artist match
         log.info(

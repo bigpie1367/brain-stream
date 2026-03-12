@@ -24,6 +24,7 @@ from src.pipeline.tagger import (
     _itunes_search,
     _lookup_recording_by_mbid,
     _mb_album_from_recording_id,
+    _mb_lookup_artist_ids,
     _mb_search_recording,
     _pick_best_recording,
     _pretag,
@@ -2362,3 +2363,151 @@ def test_tag_and_import_returns_canonical_artist_for_duplicate(tmp_path, monkeyp
     assert success2 is True
     assert c_artist2 == "Radiohead"
     assert c_title2 == "Creep"
+
+
+# ── _mb_lookup_artist_ids 테스트 ──────────────────────────────────────────────
+
+
+def test_mb_lookup_artist_ids_returns_ids(monkeypatch):
+    """MB artist API 정상 응답 시 artist MBID 목록을 반환한다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "artists": [
+                {"id": "arid-001", "name": "Junho"},
+                {"id": "arid-002", "name": "2PM"},
+                {"id": "arid-003", "name": "Jun. K"},
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_lookup_artist_ids("준호")
+    assert result == ["arid-001", "arid-002", "arid-003"]
+
+
+def test_mb_lookup_artist_ids_returns_empty_on_failure(monkeypatch):
+    """HTTP 오류 발생 시 빈 리스트를 반환한다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("500 Server Error")
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_lookup_artist_ids("준호")
+    assert result == []
+
+
+def test_mb_lookup_artist_ids_skips_entries_without_id(monkeypatch):
+    """id 필드가 없는 artist 항목은 결과에서 제외된다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "artists": [
+                {"id": "arid-001", "name": "Junho"},
+                {"name": "No ID Artist"},  # id 없음
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_lookup_artist_ids("준호")
+    assert result == ["arid-001"]
+
+
+# ── _mb_search_recording: Stage 2.5 arid 기반 매칭 테스트 ─────────────────────
+
+
+def test_mb_search_recording_stage25_matches_via_arid(monkeypatch):
+    """stage 1(strict), stage 2(plain) 모두 실패하면 stage 2.5(arid 기반 검색)로 매칭한다.
+    호출 순서: 1=strict(empty), 2=plain(empty), 3=artist lookup, 4=arid recording search(data).
+    """
+    call_count = [0]
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+
+        if "/artist" in url:
+            # stage 2.5: artist ID 조회
+            resp.json.return_value = {"artists": [{"id": "junho-arid-001"}]}
+        elif call_count[0] <= 2:
+            # stage 1, 2: recording 검색 (empty)
+            resp.json.return_value = {"recordings": []}
+        else:
+            # stage 2.5: arid 기반 recording 검색
+            resp.json.return_value = {
+                "recordings": [
+                    {
+                        "id": "junho-rec-001",
+                        "title": "해야 (The Day)",
+                        "artist-credit": [
+                            {
+                                "artist": {"name": "Junho"},
+                                "joinphrase": "",
+                            }
+                        ],
+                    }
+                ]
+            }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result, mb_artist, mb_title = _mb_search_recording("준호", "해야 (The Day)")
+    assert result == ["junho-rec-001"]
+    assert mb_artist == "Junho"
+    assert mb_title == "해야 (The Day)"
+
+
+def test_mb_search_recording_stage25_skips_low_title_similarity(monkeypatch):
+    """stage 2.5에서 recording title 유사도 0.4 미만인 결과는 건너뛴다."""
+    call_count = [0]
+    artist_lookup_called = [False]
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+
+        if "/artist" in url:
+            artist_lookup_called[0] = True
+            resp.json.return_value = {"artists": [{"id": "some-arid-001"}]}
+        elif call_count[0] <= 2:
+            resp.json.return_value = {"recordings": []}
+        else:
+            # title 유사도가 0.4 미만인 recording만 반환
+            resp.json.return_value = {
+                "recordings": [
+                    {
+                        "id": "wrong-rec-001",
+                        "title": "완전히 다른 곡",
+                        "artist-credit": [
+                            {"artist": {"name": "Junho"}, "joinphrase": ""}
+                        ],
+                    }
+                ]
+            }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    # stage 2.5가 실패하면 stage 3(recording-only)으로 넘어가 최종 빈 리스트 반환
+    result, mb_artist, mb_title = _mb_search_recording("준호", "해야")
+    # stage 2.5에서 아무것도 매칭되지 않고 stage 3도 빈 결과 → 빈 리스트
+    assert result == []
+    assert artist_lookup_called[0] is True
