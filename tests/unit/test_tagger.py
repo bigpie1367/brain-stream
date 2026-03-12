@@ -468,6 +468,57 @@ def test_tag_and_import_no_artist_no_mb_search(tmp_path, monkeypatch):
     assert dest != ""
 
 
+def test_tag_and_import_returns_6tuple_on_success(tmp_path, monkeypatch):
+    """tag_and_import 성공 시 6-tuple (bool, str, str, str, str, str)을 반환한다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (["fake-rec-id"], "Radiohead", "Creep"),
+    )
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("Pablo Honey", "Radiohead", "Creep"))
+
+    music_dir = tmp_path / "music"
+    result = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+    )
+    assert len(result) == 6
+    success, dest, canonical_artist, canonical_title, canonical_album, mb_recording_id = result
+    assert success is True
+    assert dest != ""
+    assert mb_recording_id == "fake-rec-id"
+
+
+def test_tag_and_import_returns_6tuple_on_failure(tmp_path):
+    """tag_and_import 실패 시 6-tuple을 반환하며 첫 번째 요소가 False이다."""
+    missing = tmp_path / "missing.flac"
+    result = tag_and_import(str(missing), music_dir=str(tmp_path / "music"))
+    assert len(result) == 6
+    assert result[0] is False
+    assert all(v == "" for v in result[1:])
+
+
+def test_tag_and_import_mb_recording_id_empty_when_no_mb_search(tmp_path, monkeypatch):
+    """MB 검색이 빈 결과를 반환하면 mb_recording_id는 빈 문자열이다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", ""))
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
+
+    music_dir = tmp_path / "music"
+    result = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Artist",
+        track_name="Track",
+    )
+    assert len(result) == 6
+    success, dest, _, _, _, mb_recording_id = result
+    assert success is True
+    assert mb_recording_id == ""
+
+
 # ── _mb_search_recording fallback: artist 유사도 기반 선택 ─────────────────────
 
 
@@ -2392,7 +2443,7 @@ def test_tag_and_import_writes_mb_recording_title_when_itunes_fails(tmp_path, mo
 
 
 def test_tag_and_import_returns_canonical_artist_and_title(tmp_path, monkeypatch):
-    """tag_and_import가 5-tuple을 반환하며, canonical_artist, canonical_title, canonical_album이 포함된다."""
+    """tag_and_import가 6-tuple을 반환하며, canonical_artist, canonical_title, canonical_album이 포함된다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
         "src.pipeline.tagger._mb_search_recording",
@@ -2411,18 +2462,19 @@ def test_tag_and_import_returns_canonical_artist_and_title(tmp_path, monkeypatch
         track_name="밤편지",
     )
 
-    assert len(result) == 5
-    success, dest, canonical_artist, canonical_title, canonical_album = result
+    assert len(result) == 6
+    success, dest, canonical_artist, canonical_title, canonical_album, mb_recording_id = result
     assert success is True
     assert canonical_artist == "IU"
     assert canonical_title == "Through the Night"
     assert canonical_album == "밤편지"
+    assert mb_recording_id == "some-id"
 
 
 def test_tag_and_import_returns_empty_canonical_on_file_not_found(tmp_path):
-    """staging 파일이 없으면 canonical_artist, canonical_title, canonical_album도 빈 문자열로 반환한다."""
+    """staging 파일이 없으면 canonical_artist, canonical_title, canonical_album, mb_recording_id도 빈 문자열로 반환한다."""
     missing = tmp_path / "missing.flac"
-    success, dest, canonical_artist, canonical_title, canonical_album = tag_and_import(
+    success, dest, canonical_artist, canonical_title, canonical_album, mb_recording_id = tag_and_import(
         str(missing),
         music_dir=str(tmp_path / "music"),
     )
@@ -2431,6 +2483,7 @@ def test_tag_and_import_returns_empty_canonical_on_file_not_found(tmp_path):
     assert canonical_artist == ""
     assert canonical_title == ""
     assert canonical_album == ""
+    assert mb_recording_id == ""
 
 
 def test_tag_and_import_returns_canonical_artist_for_duplicate(tmp_path, monkeypatch):

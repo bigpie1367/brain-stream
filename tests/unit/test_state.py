@@ -255,3 +255,34 @@ def test_update_track_info_no_fields_is_noop(tmp_state_db):
 def test_update_track_info_nonexistent_mbid_does_not_raise(tmp_state_db):
     """존재하지 않는 mbid에 update_track_info를 호출해도 예외가 발생하지 않는다."""
     update_track_info(tmp_state_db, "mbid-ghost2", artist="SomeArtist")  # should not raise
+
+
+def test_update_track_info_updates_mb_recording_id(tmp_state_db):
+    """update_track_info로 mb_recording_id 컬럼을 업데이트할 수 있다."""
+    mark_pending(tmp_state_db, "mbid-rec1", "Track", "Artist")
+    update_track_info(tmp_state_db, "mbid-rec1", mb_recording_id="some-recording-uuid")
+    row = get_download_by_mbid(tmp_state_db, "mbid-rec1")
+    assert row["mb_recording_id"] == "some-recording-uuid"
+
+
+def test_get_all_downloads_includes_mb_recording_id(tmp_state_db):
+    """get_all_downloads 결과에 mb_recording_id 컬럼이 포함된다."""
+    mark_pending(tmp_state_db, "mbid-rec2", "Track", "Artist")
+    update_track_info(tmp_state_db, "mbid-rec2", mb_recording_id="rec-uuid-001")
+    rows = get_all_downloads(tmp_state_db)
+    assert rows[0]["mb_recording_id"] == "rec-uuid-001"
+
+
+def test_get_download_by_mbid_includes_mb_recording_id(tmp_state_db):
+    """get_download_by_mbid 결과에 mb_recording_id 컬럼이 포함된다."""
+    mark_pending(tmp_state_db, "mbid-rec3", "Track", "Artist")
+    update_track_info(tmp_state_db, "mbid-rec3", mb_recording_id="rec-uuid-002")
+    row = get_download_by_mbid(tmp_state_db, "mbid-rec3")
+    assert row["mb_recording_id"] == "rec-uuid-002"
+
+
+def test_mb_recording_id_defaults_to_none(tmp_state_db):
+    """mb_recording_id를 설정하지 않으면 None으로 조회된다."""
+    mark_pending(tmp_state_db, "mbid-rec4", "Track", "Artist")
+    row = get_download_by_mbid(tmp_state_db, "mbid-rec4")
+    assert row["mb_recording_id"] is None

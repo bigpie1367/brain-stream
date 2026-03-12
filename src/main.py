@@ -77,19 +77,22 @@ def run_pipeline(cfg):
             continue
 
         # 5. Tag + import
-        success, dest_path, canonical_artist, canonical_title, canonical_album = tag_and_import(
+        success, dest_path, canonical_artist, canonical_title, canonical_album, tagger_mb_recording_id = tag_and_import(
             file_path, cfg.beets.music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata,
             db_path=cfg.state_db, mbid=mbid,
         )
         if success:
             mark_done(cfg.state_db, mbid, file_path=dest_path, album=canonical_album if canonical_album else None)
-            if canonical_artist or canonical_title or canonical_album:
+            # LB 트랙은 mbid 자체가 MB recording UUID이므로 그것을 우선 사용
+            lb_mb_recording_id = mbid if not mbid.startswith("manual-") else tagger_mb_recording_id
+            if canonical_artist or canonical_title or canonical_album or lb_mb_recording_id:
                 update_track_info(
                     cfg.state_db,
                     mbid,
                     artist=canonical_artist if canonical_artist else None,
                     track_name=canonical_title if canonical_title else None,
                     album=canonical_album if canonical_album else None,
+                    mb_recording_id=lb_mb_recording_id if lb_mb_recording_id else None,
                 )
             imported_any = True
         else:
