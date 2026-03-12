@@ -1,6 +1,6 @@
 # 데이터 모델
 
-- **버전**: 1.1.0
+- **버전**: 1.2.0
 - **작성일**: 2026-03-12
 
 ---
@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS downloads (
     error_msg     TEXT,                   -- 실패 사유
     source        TEXT DEFAULT 'listenbrainz',  -- 'listenbrainz' | 'manual'
     file_path     TEXT,                   -- 임포트된 파일 경로 (beets 제거 후 직접 관리)
-    album         TEXT                    -- canonical 앨범명 (태깅 완료 후 기록)
+    album         TEXT,                   -- canonical 앨범명 (태깅 완료 후 기록)
+    mb_recording_id TEXT                  -- MusicBrainz recording UUID (태깅 완료 후 기록, 수동 트랙은 null 가능)
 );
 ```
 
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS downloads (
 | source | TEXT | 트랙 출처 | `listenbrainz` / `manual` |
 | file_path | TEXT | 임포트된 파일 경로. 삭제 API 및 enrichment에서 사용 | `/app/data/music/Radiohead/Pablo Honey/Creep.flac` |
 | album | TEXT | 태깅 완료 후 canonical album명으로 업데이트됨 | `Pablo Honey` |
+| mb_recording_id | TEXT | MusicBrainz recording UUID. LB 트랙은 mbid와 동일 값 저장. 수동 트랙은 MB 매칭 성공 시 기록, 실패 시 null | `3c3e5e5c-1234-5678-abcd-ef0123456789` |
 
 ---
 
