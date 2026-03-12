@@ -1,8 +1,8 @@
 # API 명세서
 
-- **버전**: 1.3.0
+- **버전**: 1.4.0
 - **Base URL**: `http://localhost:8080`
-- **작성일**: 2026-03-11
+- **작성일**: 2026-03-12
 
 ---
 
@@ -11,6 +11,7 @@
 | Method | Path | 설명 |
 |--------|------|------|
 | GET | `/` | Web UI |
+| GET | `/api/download/candidates` | YouTube 후보 목록 검색 (다운로드 없음) |
 | POST | `/api/download` | 수동 다운로드 시작 |
 | GET | `/api/sse/{job_id}` | SSE 실시간 진행 스트림 |
 | GET | `/api/downloads` | 다운로드 이력 조회 |
@@ -30,6 +31,59 @@ Web UI HTML을 반환한다.
 
 ---
 
+## GET `/api/download/candidates`
+
+yt-dlp로 YouTube를 검색하여 후보 영상 5개의 메타데이터를 반환한다. 실제 다운로드는 수행하지 않는다.
+
+**Query Parameters**
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|---------|------|------|------|
+| artist | string | Y | 아티스트명 |
+| track | string | Y | 트랙명 |
+
+**Response** `200 OK` (`application/json`)
+
+```json
+{
+  "candidates": [
+    {
+      "video_id": "XFkzRNyygfk",
+      "title": "Radiohead - Creep",
+      "channel": "Radiohead",
+      "duration": 238,
+      "thumbnail_url": "https://i.ytimg.com/vi/XFkzRNyygfk/hqdefault.jpg",
+      "url": "https://www.youtube.com/watch?v=XFkzRNyygfk",
+      "is_live": false,
+      "is_cover": false
+    }
+  ]
+}
+```
+
+**응답 필드 (candidates 항목)**
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| video_id | string | YouTube 영상 ID |
+| title | string | 영상 제목 |
+| channel | string | 업로드 채널명 |
+| duration | integer | 영상 길이 (초) |
+| thumbnail_url | string | 썸네일 이미지 URL |
+| url | string | 영상 전체 URL |
+| is_live | boolean | 라이브/공연 영상 여부 |
+| is_cover | boolean | 커버곡 영상 여부 |
+
+검색 결과가 없으면 `candidates: []` 반환.
+
+**Error Responses**
+
+| Status | 설명 |
+|--------|------|
+| 503 | 서버 설정 미로드 |
+
+---
+
 ## POST `/api/download`
 
 아티스트와 트랙명을 입력받아 수동 다운로드 잡을 시작한다.
@@ -39,7 +93,8 @@ Web UI HTML을 반환한다.
 ```json
 {
   "artist": "Radiohead",
-  "track": "Creep"
+  "track": "Creep",
+  "video_id": "XFkzRNyygfk"
 }
 ```
 
@@ -47,6 +102,7 @@ Web UI HTML을 반환한다.
 |------|------|------|------|
 | artist | string | Y | 아티스트명 |
 | track | string | Y | 트랙명 |
+| video_id | string | N | `/api/download/candidates` 응답의 `video_id`. 지정 시 해당 영상을 직접 다운로드. 미지정 시 자동 선택 (기존 동작) |
 
 **Response** `200 OK`
 

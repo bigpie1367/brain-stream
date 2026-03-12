@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from queue import Empty, Queue
+from typing import Optional
 
 import httpx
 import mutagen.flac
@@ -19,7 +20,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.pipeline.downloader import download_track
+from src.pipeline.downloader import download_track, download_track_by_id, search_candidates
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
 from src.pipeline.tagger import (
     embed_art_from_url,
@@ -61,6 +62,7 @@ _job_queues: dict[str, Queue] = {}
 class DownloadRequest(BaseModel):
     artist: str
     track: str
+    video_id: Optional[str] = None  # 선택 모드에서 특정 영상 지정 시
 
 
 class RematchApplyRequest(BaseModel):
@@ -82,7 +84,7 @@ def _emit(job_id: str, status: str, message: str):
         q.put({"status": status, "message": message})
 
 
-def _run_download_job(job_id: str, artist: str, track: str):
+def _run_download_job(job_id: str, artist: str, track: str, video_id: Optional[str] = None):
     cfg = _cfg
     mbid = job_id  # use job_id as the unique key in the DB
 
@@ -90,13 +92,20 @@ def _run_download_job(job_id: str, artist: str, track: str):
         _emit(job_id, "downloading", "YouTube 검색 중...")
         mark_downloading(cfg.state_db, mbid)
 
-        file_path, yt_metadata = download_track(
-            mbid=mbid,
-            artist=artist,
-            track_name=track,
-            staging_dir=cfg.download.staging_dir,
-            prefer_flac=cfg.download.prefer_flac,
-        )
+        if video_id:
+            file_path, yt_metadata = download_track_by_id(
+                video_id=video_id,
+                mbid=mbid,
+                staging_dir=cfg.download.staging_dir,
+            )
+        else:
+            file_path, yt_metadata = download_track(
+                mbid=mbid,
+                artist=artist,
+                track_name=track,
+                staging_dir=cfg.download.staging_dir,
+                prefer_flac=cfg.download.prefer_flac,
+            )
         if not file_path:
             mark_failed(cfg.state_db, mbid, "download failed")
             _emit(job_id, "failed", "다운로드 실패")
@@ -151,6 +160,13 @@ async def index():
         return f.read()
 
 
+@app.get("/api/download/candidates")
+async def get_download_candidates(artist: str, track: str):
+    """YouTube 후보 목록 반환 (다운로드 없음)"""
+    candidates = search_candidates(artist, track)
+    return {"candidates": candidates}
+
+
 @app.post("/api/download")
 async def start_download(req: DownloadRequest):
     if not _cfg:
@@ -170,6 +186,7 @@ async def start_download(req: DownloadRequest):
     threading.Thread(
         target=_run_download_job,
         args=(job_id, req.artist, req.track),
+        kwargs={"video_id": req.video_id},
         daemon=True,
     ).start()
 

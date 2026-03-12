@@ -50,6 +50,7 @@
       transition: background 0.15s, border-color 0.15s, color 0.15s;
       white-space: nowrap;
       align-self: auto;
+      min-width: 0;
     }
     .tab-btn:hover { background: #1a1d27; border-color: #4a5568; color: #a0aec0; }
     .tab-btn.active {
@@ -124,6 +125,7 @@
       transition: background 0.15s;
       white-space: nowrap;
       align-self: flex-end;
+      min-width: 100px;
     }
     button:hover { background: #3182ce; }
     button:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
@@ -131,6 +133,7 @@
     .btn-secondary {
       background: #2d3147;
       color: #a0aec0;
+      min-width: 0;
     }
     .btn-secondary:hover { background: #363b55; color: #e2e8f0; }
 
@@ -174,6 +177,7 @@
       width: 100%;
       border-collapse: collapse;
       font-size: 0.83rem;
+      table-layout: fixed;
     }
 
     thead th {
@@ -182,11 +186,19 @@
       font-weight: 500;
       padding: 6px 10px;
       border-bottom: 1px solid #2d3147;
+      overflow: hidden;
     }
 
     tbody tr { border-bottom: 1px solid #1e2235; }
     tbody tr:last-child { border-bottom: none; }
-    tbody td { padding: 8px 10px; color: #cbd5e0; vertical-align: top; }
+    tbody td {
+      padding: 8px 10px;
+      color: #cbd5e0;
+      vertical-align: top;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
     .badge {
       display: inline-block;
@@ -225,6 +237,7 @@
       align-self: auto;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
       line-height: 1.5;
+      min-width: 0;
     }
     .btn-danger:hover { background: #3b1515; border-color: #fc8181; color: #fc8181; }
     .btn-danger:disabled { background: none; border-color: #2d3147; color: #2d3147; cursor: not-allowed; }
@@ -282,6 +295,7 @@
       padding: 7px 16px;
       transition: background 0.12s, color 0.12s;
       align-self: auto;
+      min-width: 0;
     }
     .btn-modal-cancel:hover { background: #363b55; color: #e2e8f0; }
 
@@ -296,6 +310,7 @@
       padding: 7px 16px;
       transition: background 0.12s, color 0.12s;
       align-self: auto;
+      min-width: 0;
     }
     .btn-modal-confirm:hover { background: #991b1b; color: #fecaca; }
     .btn-modal-confirm:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
@@ -436,6 +451,7 @@
       align-self: auto;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
       line-height: 1.4;
+      min-width: 0;
     }
     .btn-album-action:hover { background: #2d3147; border-color: #4a5568; color: #e2e8f0; }
 
@@ -499,6 +515,7 @@
       align-self: auto;
       flex-shrink: 0;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
+      min-width: 0;
     }
     .btn-play:hover { background: #2d3147; border-color: #4a5568; color: #e2e8f0; }
     .btn-play:disabled { background: none; border-color: #1e2235; color: #2d3147; cursor: not-allowed; }
@@ -606,6 +623,7 @@
       border-radius: 4px;
       transition: color 0.12s, background 0.12s;
       align-self: auto;
+      min-width: 0;
     }
     .ctrl-btn:hover { color: #e2e8f0; background: #1e2235; }
     .ctrl-btn:disabled { color: #2d3147; cursor: not-allowed; background: none; }
@@ -626,6 +644,7 @@
       align-self: auto;
       flex-shrink: 0;
       transition: background 0.12s;
+      min-width: 0;
     }
     .ctrl-btn-play:hover { background: #3182ce; }
     .ctrl-btn-play:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
@@ -684,6 +703,7 @@
       flex-shrink: 0;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
       line-height: 1.5;
+      min-width: 0;
     }
     .rematch-btn:hover { background: #2d3147; border-color: #a78bfa; color: #a78bfa; }
 
@@ -727,10 +747,11 @@
       font-size: 0.85rem;
       font-weight: 500;
       padding: 8px 16px;
-      min-width: 88px;
+      min-width: 100px;
       white-space: nowrap;
       align-self: flex-end;
       transition: background 0.12s;
+      text-align: center;
     }
     .btn-rematch-search:hover { background: #5a4d82; }
     .btn-rematch-search:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
@@ -837,6 +858,7 @@
       padding: 7px 16px;
       transition: background 0.12s, color 0.12s;
       align-self: auto;
+      min-width: 0;
     }
     .btn-modal-apply:hover { background: #2b6cb0; color: #bee3f8; }
     .btn-modal-apply:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
@@ -936,6 +958,7 @@
       align-self: auto;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
       line-height: 1.5;
+      min-width: 0;
     }
     .btn-expand-rematch:hover { background: #2d3147; border-color: #a78bfa; color: #a78bfa; }
 
@@ -952,8 +975,183 @@
       align-self: auto;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
       line-height: 1.5;
+      min-width: 0;
     }
     .btn-expand-delete:hover { background: #3b1515; border-color: #fc8181; color: #fc8181; }
+
+    /* ── 수동 다운로드 모드 토글 ── */
+    .mode-toggle {
+      display: flex;
+      background: #0f1117;
+      border: 1px solid #2d3147;
+      border-radius: 20px;
+      padding: 3px;
+      gap: 0;
+      align-self: flex-end;
+      flex-shrink: 0;
+    }
+
+    .mode-toggle-btn {
+      background: none;
+      border: none;
+      border-radius: 16px;
+      color: #718096;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 4px 14px;
+      transition: background 0.15s, color 0.15s;
+      white-space: nowrap;
+      align-self: auto;
+      min-width: 52px;
+      text-align: center;
+    }
+    .mode-toggle-btn:hover { color: #a0aec0; }
+    .mode-toggle-btn.active {
+      background: #2b6cb0;
+      color: #fff;
+    }
+
+    /* ── YouTube 후보 목록 ── */
+    #yt-candidates-wrap {
+      margin-top: 14px;
+      display: none;
+    }
+    #yt-candidates-wrap.visible { display: block; }
+
+    .yt-candidates-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .yt-candidate-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #0f1117;
+      border: 1px solid #2d3147;
+      border-radius: 8px;
+      padding: 10px 12px;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .yt-candidate-card:hover { background: #141728; border-color: #4a5568; }
+
+    .yt-thumb-wrap {
+      position: relative;
+      flex-shrink: 0;
+      width: 120px;
+      height: 68px;
+    }
+    .yt-thumb {
+      width: 120px;
+      height: 68px;
+      border-radius: 4px;
+      object-fit: cover;
+      background: #2d3147;
+      display: block;
+    }
+    .yt-thumb-placeholder {
+      width: 120px;
+      height: 68px;
+      border-radius: 4px;
+      background: #2d3147;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #4a5568;
+      font-size: 1.6rem;
+    }
+
+    .yt-card-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .yt-card-title {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .yt-card-channel {
+      font-size: 0.78rem;
+      color: #718096;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .yt-card-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .yt-card-duration {
+      font-size: 0.75rem;
+      color: #718096;
+    }
+
+    .badge-live { background: #3b1515; color: #fc8181; }
+    .badge-cover { background: #3a2a10; color: #f6ad55; }
+
+    .yt-card-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+      align-items: flex-end;
+    }
+
+    .btn-yt-preview {
+      background: none;
+      border: 1px solid #2d3147;
+      border-radius: 5px;
+      color: #718096;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 5px 12px;
+      white-space: nowrap;
+      align-self: auto;
+      transition: border-color 0.12s, color 0.12s, background 0.12s;
+      line-height: 1.4;
+      min-width: 0;
+    }
+    .btn-yt-preview:hover { border-color: #63b3ed; color: #63b3ed; background: #1a2a3a; }
+
+    .btn-yt-download {
+      background: #2b6cb0;
+      border: none;
+      border-radius: 5px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 5px 12px;
+      white-space: nowrap;
+      align-self: auto;
+      transition: background 0.12s;
+      line-height: 1.4;
+      min-width: 0;
+    }
+    .btn-yt-download:hover { background: #3182ce; }
+    .btn-yt-download:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
+
+    .yt-candidates-msg {
+      text-align: center;
+      color: #4a5568;
+      padding: 20px;
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
@@ -974,7 +1172,7 @@
 
   <!-- Manual Download -->
   <section>
-    <h2>수동 다운로드</h2>
+    <h2>Manual Download</h2>
     <div class="input-row">
       <div class="field">
         <label for="inp-artist">Artist</label>
@@ -984,17 +1182,25 @@
         <label for="inp-track">Track</label>
         <input type="text" id="inp-track" placeholder="Creep">
       </div>
-      <button id="btn-download" onclick="startDownload()">Download</button>
+      <div class="mode-toggle" id="mode-toggle" title="Auto: download immediately / Pick: show YouTube candidate list">
+        <button class="mode-toggle-btn active" id="mode-auto-btn" onclick="setDownloadMode('auto')">Auto</button>
+        <button class="mode-toggle-btn" id="mode-pick-btn" onclick="setDownloadMode('pick')">Pick</button>
+      </div>
+      <button id="btn-download" onclick="handleDownloadBtn()">Download</button>
+    </div>
+    <!-- YouTube candidate list (shown in pick mode only) -->
+    <div id="yt-candidates-wrap">
+      <div id="yt-candidates-list" class="yt-candidates-list"></div>
     </div>
     <div id="status-bar">
       <span class="status-dot dot-idle" id="status-dot"></span>
-      <span id="status-msg">대기 중</span>
+      <span id="status-msg">Idle</span>
     </div>
   </section>
 
   <!-- LB Pipeline -->
   <section>
-    <h2>ListenBrainz 파이프라인</h2>
+    <h2>ListenBrainz Pipeline</h2>
     <div class="lb-row">
       <button class="btn-secondary" onclick="runPipeline()">Run LB Pipeline</button>
       <span id="lb-msg" style="font-size:0.83rem; color:#718096;"></span>
@@ -1004,11 +1210,19 @@
   <!-- Download History -->
   <section>
     <div class="table-header">
-      <h2 style="margin-bottom:0">다운로드 이력</h2>
-      <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem;" onclick="loadHistory()">Refresh</button>
+      <h2 style="margin-bottom:0">Download History</h2>
+      <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem; min-width:0;" onclick="loadHistory()">Refresh</button>
     </div>
     <div class="table-wrapper">
       <table>
+        <colgroup>
+          <col style="width:25%">
+          <col style="width:25%">
+          <col style="width:10%">
+          <col style="width:12%">
+          <col style="width:18%">
+          <col style="width:10%">
+        </colgroup>
         <thead>
           <tr>
             <th>Artist</th>
@@ -1022,7 +1236,7 @@
         <tbody id="history-body">
         </tbody>
       </table>
-      <p id="no-data">이력 없음</p>
+      <p id="no-data">No records</p>
     </div>
   </section>
 
@@ -1036,7 +1250,7 @@
       <div class="pane-header">Artists</div>
       <div id="artist-list">
         <div class="library-msg">
-          <span class="loading-spinner"></span>불러오는 중...
+          <span class="loading-spinner"></span>Loading...
         </div>
       </div>
     </div>
@@ -1044,7 +1258,7 @@
     <div class="album-pane" id="album-pane">
       <div class="pane-header">Albums &amp; Tracks</div>
       <div id="album-list">
-        <div class="library-msg">아티스트를 선택하세요.</div>
+        <div class="library-msg">Select an artist.</div>
       </div>
     </div>
   </div>
@@ -1061,10 +1275,10 @@
     <div class="player-artist" id="player-artist">-</div>
   </div>
   <div class="player-controls">
-    <button class="ctrl-btn" id="btn-shuffle" onclick="toggleShuffle()" title="셔플">&#8652;</button>
-    <button class="ctrl-btn" id="btn-prev" onclick="playPrev()" title="이전 곡">&#9664;&#9664;</button>
-    <button class="ctrl-btn-play" id="btn-play-pause" onclick="togglePlay()" title="재생/정지">&#9654;</button>
-    <button class="ctrl-btn" id="btn-next" onclick="playNext()" title="다음 곡">&#9654;&#9654;</button>
+    <button class="ctrl-btn" id="btn-shuffle" onclick="toggleShuffle()" title="Shuffle">&#8652;</button>
+    <button class="ctrl-btn" id="btn-prev" onclick="playPrev()" title="Previous">&#9664;&#9664;</button>
+    <button class="ctrl-btn-play" id="btn-play-pause" onclick="togglePlay()" title="Play / Pause">&#9654;</button>
+    <button class="ctrl-btn" id="btn-next" onclick="playNext()" title="Next">&#9654;&#9654;</button>
   </div>
   <div class="player-progress">
     <span class="time-label" id="time-current">0:00</span>
@@ -1077,11 +1291,11 @@
 <!-- 삭제 확인 모달 -->
 <div class="modal-overlay hidden" id="delete-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title-text">
   <div class="modal-box">
-    <div class="modal-title" id="modal-title-text">트랙 삭제</div>
+    <div class="modal-title" id="modal-title-text">Delete Track</div>
     <p class="modal-msg" id="modal-msg"></p>
     <div class="modal-actions">
-      <button class="btn-modal-cancel" id="modal-cancel-btn" onclick="closeDeleteModal()">취소</button>
-      <button class="btn-modal-confirm" id="modal-confirm-btn" onclick="confirmDelete()">삭제</button>
+      <button class="btn-modal-cancel" id="modal-cancel-btn" onclick="closeDeleteModal()">Cancel</button>
+      <button class="btn-modal-confirm" id="modal-confirm-btn" onclick="confirmDelete()">Delete</button>
     </div>
   </div>
 </div>
@@ -1089,29 +1303,29 @@
 <!-- 재매칭 모달 -->
 <div class="modal-overlay hidden" id="rematch-modal" role="dialog" aria-modal="true" aria-labelledby="rematch-modal-title">
   <div class="rematch-modal-box">
-    <div class="modal-title" id="rematch-modal-title" style="margin-bottom:16px;">앨범 재매칭</div>
+    <div class="modal-title" id="rematch-modal-title" style="margin-bottom:16px;">Rematch Album</div>
 
     <div class="rematch-search-row">
       <div class="field">
-        <label for="rematch-artist">아티스트</label>
-        <input type="text" id="rematch-artist" placeholder="아티스트명">
+        <label for="rematch-artist">Artist</label>
+        <input type="text" id="rematch-artist" placeholder="Artist name">
       </div>
       <div class="field">
-        <label for="rematch-track">트랙명</label>
-        <input type="text" id="rematch-track" placeholder="트랙명">
+        <label for="rematch-track">Track</label>
+        <input type="text" id="rematch-track" placeholder="Track name">
       </div>
-      <button class="btn-rematch-search" id="rematch-search-btn" onclick="searchRematch()">검색</button>
+      <button class="btn-rematch-search" id="rematch-search-btn" onclick="searchRematch()">Search</button>
     </div>
 
     <div class="rematch-candidates" id="rematch-candidates">
-      <div class="rematch-placeholder">아티스트와 트랙명을 입력 후 검색하세요.</div>
+      <div class="rematch-placeholder">Enter artist and track name, then click Search.</div>
     </div>
 
     <div class="rematch-feedback" id="rematch-feedback"></div>
 
     <div class="modal-actions">
-      <button class="btn-modal-cancel" onclick="closeRematchModal()">취소</button>
-      <button class="btn-modal-apply" id="rematch-apply-btn" onclick="applyRematch()">적용</button>
+      <button class="btn-modal-cancel" onclick="closeRematchModal()">Cancel</button>
+      <button class="btn-modal-apply" id="rematch-apply-btn" onclick="applyRematch()">Apply</button>
     </div>
   </div>
 </div>
@@ -1144,18 +1358,244 @@
 
   // ── Manual Download ────────────────────────────────────────────────────────
   let isDownloading = false;
+  let _downloadMode = 'auto'; // 'auto' | 'pick'
 
-  async function startDownload() {
-    // 재진입 방지: 이미 진행 중이면 즉시 반환
+  function setDownloadMode(mode) {
+    _downloadMode = mode;
+    document.getElementById('mode-auto-btn').classList.toggle('active', mode === 'auto');
+    document.getElementById('mode-pick-btn').classList.toggle('active', mode === 'pick');
+    dlBtn.textContent = (mode === 'pick') ? 'Search' : 'Download';
+    // 모드 전환 시 후보 목록 초기화
+    hideCandidates();
+  }
+
+  function handleDownloadBtn() {
+    if (_downloadMode === 'pick') {
+      fetchCandidates();
+    } else {
+      startDownload();
+    }
+  }
+
+  // 후보 목록 표시/숨김 헬퍼
+  function showCandidatesWrap() {
+    document.getElementById('yt-candidates-wrap').classList.add('visible');
+  }
+  function hideCandidates() {
+    const wrap = document.getElementById('yt-candidates-wrap');
+    wrap.classList.remove('visible');
+    document.getElementById('yt-candidates-list').innerHTML = '';
+  }
+
+  // ── 선택 모드: YouTube 후보 조회 ──────────────────────────────────────────
+  async function fetchCandidates() {
     if (isDownloading || dlBtn.disabled) return;
 
     const artist = document.getElementById('inp-artist').value.trim();
     const track  = document.getElementById('inp-track').value.trim();
-    if (!artist || !track) { alert('Artist와 Track을 입력하세요.'); return; }
+    if (!artist || !track) { alert('Please enter Artist and Track.'); return; }
+
+    dlBtn.disabled = true;
+    setStatus('progress', 'Searching YouTube candidates...');
+    hideCandidates();
+
+    const listEl = document.getElementById('yt-candidates-list');
+    showCandidatesWrap();
+    listEl.innerHTML = '<div class="yt-candidates-msg"><span class="loading-spinner"></span>Searching...</div>';
+
+    try {
+      const params = new URLSearchParams({ artist, track });
+      const res = await fetch('/api/download/candidates?' + params.toString());
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      renderYtCandidates(data.candidates ?? []);
+      setStatus('idle', 'Idle');
+    } catch (e) {
+      listEl.innerHTML = '<div class="yt-candidates-msg">Search failed: ' + esc(e.message) + '</div>';
+      setStatus('failed', 'Candidate search failed: ' + e.message);
+    } finally {
+      dlBtn.disabled = false;
+    }
+  }
+
+  function renderYtCandidates(candidates) {
+    const listEl = document.getElementById('yt-candidates-list');
+    listEl.innerHTML = '';
+
+    if (!candidates || !candidates.length) {
+      listEl.innerHTML = '<div class="yt-candidates-msg">No results found.</div>';
+      return;
+    }
+
+    candidates.forEach(c => {
+      const card = document.createElement('div');
+      card.className = 'yt-candidate-card';
+
+      // 썸네일
+      const thumbWrap = document.createElement('div');
+      thumbWrap.className = 'yt-thumb-wrap';
+      if (c.thumbnail_url) {
+        const img = document.createElement('img');
+        img.className = 'yt-thumb';
+        img.alt = '';
+        img.src = c.thumbnail_url;
+        const phDiv = document.createElement('div');
+        phDiv.className = 'yt-thumb-placeholder';
+        phDiv.style.display = 'none';
+        phDiv.textContent = '\u25B6';
+        img.onerror = function() {
+          this.style.display = 'none';
+          phDiv.style.display = 'flex';
+        };
+        thumbWrap.appendChild(img);
+        thumbWrap.appendChild(phDiv);
+      } else {
+        const phDiv = document.createElement('div');
+        phDiv.className = 'yt-thumb-placeholder';
+        phDiv.textContent = '\u25B6';
+        thumbWrap.appendChild(phDiv);
+      }
+      card.appendChild(thumbWrap);
+
+      // 정보 영역
+      const info = document.createElement('div');
+      info.className = 'yt-card-info';
+
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'yt-card-title';
+      titleDiv.textContent = c.title || '';
+
+      const channelDiv = document.createElement('div');
+      channelDiv.className = 'yt-card-channel';
+      channelDiv.textContent = c.channel || '';
+
+      const metaDiv = document.createElement('div');
+      metaDiv.className = 'yt-card-meta';
+
+      if (c.duration != null) {
+        const durSpan = document.createElement('span');
+        durSpan.className = 'yt-card-duration';
+        const m = Math.floor(c.duration / 60);
+        const s = String(c.duration % 60).padStart(2, '0');
+        durSpan.textContent = m + ':' + s;
+        metaDiv.appendChild(durSpan);
+      }
+      if (c.is_live) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-live';
+        badge.style.fontSize = '0.7rem';
+        badge.style.padding = '1px 6px';
+        badge.textContent = 'LIVE';
+        metaDiv.appendChild(badge);
+      }
+      if (c.is_cover) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-cover';
+        badge.style.fontSize = '0.7rem';
+        badge.style.padding = '1px 6px';
+        badge.textContent = 'COVER';
+        metaDiv.appendChild(badge);
+      }
+
+      info.appendChild(titleDiv);
+      info.appendChild(channelDiv);
+      info.appendChild(metaDiv);
+      card.appendChild(info);
+
+      // 액션 버튼
+      const actionsDiv = document.createElement('div');
+      actionsDiv.className = 'yt-card-actions';
+
+      const previewBtn = document.createElement('button');
+      previewBtn.className = 'btn-yt-preview';
+      previewBtn.textContent = 'Preview';
+      previewBtn.addEventListener('click', () => {
+        if (c.url) window.open(c.url, '_blank');
+      });
+
+      const downloadBtn = document.createElement('button');
+      downloadBtn.className = 'btn-yt-download';
+      downloadBtn.textContent = 'Download';
+      downloadBtn.addEventListener('click', () => {
+        startDownloadWithVideoId(c.video_id, downloadBtn);
+      });
+
+      actionsDiv.appendChild(previewBtn);
+      actionsDiv.appendChild(downloadBtn);
+      card.appendChild(actionsDiv);
+
+      listEl.appendChild(card);
+    });
+  }
+
+  // 선택한 video_id로 다운로드 요청 (기존 SSE 흐름 동일)
+  async function startDownloadWithVideoId(videoId, triggerBtn) {
+    if (isDownloading) return;
+
+    const artist = document.getElementById('inp-artist').value.trim();
+    const track  = document.getElementById('inp-track').value.trim();
+    if (!artist || !track) { alert('Please enter Artist and Track.'); return; }
 
     isDownloading = true;
     dlBtn.disabled = true;
-    setStatus('progress', '요청 중...');
+    if (triggerBtn) triggerBtn.disabled = true;
+    setStatus('progress', 'Requesting...');
+
+    // hide candidates
+    hideCandidates();
+
+    let jobId;
+    try {
+      const body = { artist, track };
+      if (videoId) body.video_id = videoId;
+      const res = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      ({ job_id: jobId } = await res.json());
+    } catch (e) {
+      setStatus('failed', 'Request failed: ' + e.message);
+      isDownloading = false;
+      dlBtn.disabled = false;
+      if (triggerBtn) triggerBtn.disabled = false;
+      return;
+    }
+
+    // SSE (기존과 동일)
+    const es = new EventSource('/api/sse/' + jobId);
+    es.onmessage = (ev) => {
+      const { status, message } = JSON.parse(ev.data);
+      const dotType = (status === 'done') ? 'done' : (status === 'failed') ? 'failed' : 'progress';
+      setStatus(dotType, message);
+
+      if (status === 'done' || status === 'failed') {
+        es.close();
+        isDownloading = false;
+        dlBtn.disabled = false;
+        loadHistory();
+      }
+    };
+    es.onerror = () => {
+      setStatus('failed', 'SSE connection error');
+      es.close();
+      isDownloading = false;
+      dlBtn.disabled = false;
+    };
+  }
+
+  async function startDownload(videoId) {
+    // guard against re-entry while in progress
+    if (isDownloading || dlBtn.disabled) return;
+
+    const artist = document.getElementById('inp-artist').value.trim();
+    const track  = document.getElementById('inp-track').value.trim();
+    if (!artist || !track) { alert('Please enter Artist and Track.'); return; }
+
+    isDownloading = true;
+    dlBtn.disabled = true;
+    setStatus('progress', 'Requesting...');
 
     let jobId;
     try {
@@ -1167,7 +1607,7 @@
       if (!res.ok) throw new Error(await res.text());
       ({ job_id: jobId } = await res.json());
     } catch (e) {
-      setStatus('failed', '요청 실패: ' + e.message);
+      setStatus('failed', 'Request failed: ' + e.message);
       isDownloading = false;
       dlBtn.disabled = false;
       return;
@@ -1188,7 +1628,7 @@
       }
     };
     es.onerror = () => {
-      setStatus('failed', 'SSE 연결 오류');
+      setStatus('failed', 'SSE connection error');
       es.close();
       isDownloading = false;
       dlBtn.disabled = false;
@@ -1198,20 +1638,20 @@
   // Enter key submits (preventDefault: 브라우저가 button에 암묵적 클릭 보내는 것 차단)
   ['inp-artist', 'inp-track'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); startDownload(); }
+      if (e.key === 'Enter') { e.preventDefault(); handleDownloadBtn(); }
     });
   });
 
   // ── LB Pipeline ────────────────────────────────────────────────────────────
   async function runPipeline() {
     const lbMsg = document.getElementById('lb-msg');
-    lbMsg.textContent = '실행 중...';
+    lbMsg.textContent = 'Running...';
     try {
       const res = await fetch('/api/pipeline/run', { method: 'POST' });
       if (!res.ok) throw new Error(await res.text());
-      lbMsg.textContent = '파이프라인 시작됨 ✓';
+      lbMsg.textContent = 'Pipeline started ✓';
     } catch (e) {
-      lbMsg.textContent = '오류: ' + e.message;
+      lbMsg.textContent = 'Error: ' + e.message;
     }
     setTimeout(() => { lbMsg.textContent = ''; }, 5000);
   }
@@ -1220,10 +1660,10 @@
   function relativeTime(isoStr) {
     if (!isoStr) return '—';
     const diff = Math.floor((Date.now() - new Date(isoStr + 'Z')) / 1000);
-    if (diff < 60)   return diff + '초 전';
-    if (diff < 3600) return Math.floor(diff / 60) + '분 전';
-    if (diff < 86400) return Math.floor(diff / 3600) + '시간 전';
-    return Math.floor(diff / 86400) + '일 전';
+    if (diff < 60)   return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
   }
 
   function statusBadge(status) {
@@ -1372,7 +1812,7 @@
     // 로딩 중 텍스트 (detail 로드 전)
     const loadingDiv = document.createElement('div');
     loadingDiv.className = 'expand-loading';
-    loadingDiv.textContent = '불러오는 중...';
+    loadingDiv.textContent = 'Loading...';
 
     // 앨범명 (로드 후 교체)
     const albumNameDiv = document.createElement('div');
@@ -1390,8 +1830,8 @@
 
     const rematchBtn = document.createElement('button');
     rematchBtn.className = 'btn-expand-rematch';
-    rematchBtn.textContent = '재매칭';
-    rematchBtn.title = '앨범 재매칭';
+    rematchBtn.textContent = 'Rematch';
+    rematchBtn.title = 'Rematch album';
     rematchBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       openRematchModalForDownload(r.mbid, r.artist, r.track_name);
@@ -1399,8 +1839,8 @@
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-expand-delete';
-    deleteBtn.textContent = '삭제';
-    deleteBtn.title = '이 항목을 이력에서 삭제합니다';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.title = 'Delete this entry from history';
     deleteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       openDeleteModal(r.mbid, r.artist, r.track_name, mainTr, expandTr);
@@ -1444,7 +1884,7 @@
       }
 
       // 앨범명
-      els.albumNameDiv.textContent = detail.album_name || '앨범 정보 없음';
+      els.albumNameDiv.textContent = detail.album_name || 'No album info';
       els.albumNameDiv.style.display = '';
 
       // 아티스트 · 연도
@@ -1457,7 +1897,7 @@
       els.loadingDiv.style.display = 'none';
     } catch (e) {
       els.loadingDiv.style.display = 'none';
-      els.albumNameDiv.textContent = '앨범 정보 없음';
+      els.albumNameDiv.textContent = 'No album info';
       els.albumNameDiv.style.display = '';
       els.metaDiv.textContent = artist;
       els.metaDiv.style.display = '';
@@ -1481,11 +1921,11 @@
     strong.textContent = artist + ' - ' + trackName;
     msgEl.appendChild(document.createTextNode(''));
     msgEl.appendChild(strong);
-    msgEl.appendChild(document.createTextNode('을(를) 이력에서 삭제하시겠습니까?'));
+    msgEl.appendChild(document.createTextNode(' will be deleted from history. Are you sure?'));
 
     const confirmBtn = document.getElementById('modal-confirm-btn');
     confirmBtn.disabled = false;
-    confirmBtn.textContent = '삭제';
+    confirmBtn.textContent = 'Delete';
 
     document.getElementById('delete-modal').classList.remove('hidden');
   }
@@ -1502,7 +1942,7 @@
 
     const confirmBtn = document.getElementById('modal-confirm-btn');
     confirmBtn.disabled = true;
-    confirmBtn.textContent = '삭제 중...';
+    confirmBtn.textContent = 'Deleting...';
 
     try {
       const res = await fetch('/api/downloads/' + encodeURIComponent(_pendingDeleteMbid), {
@@ -1536,15 +1976,15 @@
       closeDeleteModal();
     } catch (e) {
       confirmBtn.disabled = false;
-      confirmBtn.textContent = '삭제';
-      // 모달은 열어둔 채로 에러 메시지 표시
+      confirmBtn.textContent = 'Delete';
+      // keep modal open and show error
       const msgEl = document.getElementById('modal-msg');
       const errSpan = document.createElement('span');
       errSpan.style.color = '#fc8181';
       errSpan.style.display = 'block';
       errSpan.style.marginTop = '8px';
       errSpan.style.fontSize = '0.8rem';
-      errSpan.textContent = '삭제 실패: ' + e.message;
+      errSpan.textContent = 'Delete failed: ' + e.message;
       // 이전 에러 메시지가 있으면 교체
       const prevErr = msgEl.querySelector('.delete-err');
       if (prevErr) prevErr.remove();
@@ -1590,7 +2030,7 @@
 
   async function loadArtists() {
     const listEl = document.getElementById('artist-list');
-    listEl.innerHTML = '<div class="library-msg"><span class="loading-spinner"></span>불러오는 중...</div>';
+    listEl.innerHTML = '<div class="library-msg"><span class="loading-spinner"></span>Loading...</div>';
     try {
       const res = await fetch('/api/subsonic/getArtists?f=json');
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1599,7 +2039,7 @@
       const artists = indexes.flatMap(idx => idx.artist ?? []);
 
       if (!artists.length) {
-        listEl.innerHTML = '<div class="library-msg">아티스트 없음</div>';
+        listEl.innerHTML = '<div class="library-msg">No artists found</div>';
         return;
       }
 
@@ -1625,7 +2065,7 @@
 
       libraryLoaded = true;
     } catch (e) {
-      listEl.innerHTML = '<div class="library-msg">불러오기 실패: ' + esc(e.message) + '</div>';
+      listEl.innerHTML = '<div class="library-msg">Failed to load: ' + esc(e.message) + '</div>';
     }
   }
 
@@ -1636,7 +2076,7 @@
     selectedArtistId = artistId;
 
     const albumListEl = document.getElementById('album-list');
-    albumListEl.innerHTML = '<div class="library-msg"><span class="loading-spinner"></span>불러오는 중...</div>';
+    albumListEl.innerHTML = '<div class="library-msg"><span class="loading-spinner"></span>Loading...</div>';
 
     try {
       const res = await fetch('/api/subsonic/getArtist?id=' + encodeURIComponent(artistId) + '&f=json');
@@ -1645,7 +2085,7 @@
       const albums = data['subsonic-response']?.artist?.album ?? [];
 
       if (!albums.length) {
-        albumListEl.innerHTML = '<div class="library-msg">앨범 없음</div>';
+        albumListEl.innerHTML = '<div class="library-msg">No albums found</div>';
         return;
       }
 
@@ -1667,7 +2107,7 @@
         }
       });
     } catch (e) {
-      albumListEl.innerHTML = '<div class="library-msg">불러오기 실패: ' + esc(e.message) + '</div>';
+      albumListEl.innerHTML = '<div class="library-msg">Failed to load: ' + esc(e.message) + '</div>';
     }
   }
 
@@ -1704,7 +2144,7 @@
     metaDiv.className = 'album-meta';
     const parts = [];
     if (album.year) parts.push(album.year);
-    if (album.songCount) parts.push(album.songCount + '곡');
+    if (album.songCount) parts.push(album.songCount + ' tracks');
     metaDiv.textContent = parts.join(' · ');
 
     info.appendChild(nameDiv);
@@ -1720,8 +2160,8 @@
 
     const btnPlay = document.createElement('button');
     btnPlay.className = 'btn-album-action';
-    btnPlay.textContent = '\u25B6 전체 재생';
-    btnPlay.title = '앨범 전체 재생';
+    btnPlay.textContent = '\u25B6 Play All';
+    btnPlay.title = 'Play all tracks in album';
     btnPlay.addEventListener('click', (e) => {
       e.stopPropagation();
       playAlbum(album.id, false);
@@ -1729,8 +2169,8 @@
 
     const btnShuffle = document.createElement('button');
     btnShuffle.className = 'btn-album-action';
-    btnShuffle.textContent = '\u21C4 셔플';
-    btnShuffle.title = '앨범 셔플 재생';
+    btnShuffle.textContent = '\u21C4 Shuffle';
+    btnShuffle.title = 'Shuffle play album';
     btnShuffle.addEventListener('click', (e) => {
       e.stopPropagation();
       playAlbum(album.id, true);
@@ -1766,7 +2206,7 @@
       if (albumCache[albumId]) {
         renderTracks(block, albumCache[albumId]);
       } else {
-        trackListEl.innerHTML = '<div class="library-msg"><span class="loading-spinner"></span>불러오는 중...</div>';
+        trackListEl.innerHTML = '<div class="library-msg"><span class="loading-spinner"></span>Loading...</div>';
         loadTracks(block, albumId);
       }
     }
@@ -1782,7 +2222,7 @@
       albumCache[albumId] = songs;
       renderTracks(block, songs);
     } catch (e) {
-      trackListEl.innerHTML = '<div class="library-msg">트랙 불러오기 실패: ' + esc(e.message) + '</div>';
+      trackListEl.innerHTML = '<div class="library-msg">Failed to load tracks: ' + esc(e.message) + '</div>';
     }
   }
 
@@ -1791,7 +2231,7 @@
     trackListEl.innerHTML = '';
 
     if (!songs.length) {
-      trackListEl.innerHTML = '<div class="library-msg">트랙 없음</div>';
+      trackListEl.innerHTML = '<div class="library-msg">No tracks found</div>';
       return;
     }
 
@@ -1818,7 +2258,7 @@
 
       const playBtn = document.createElement('button');
       playBtn.className = 'btn-play';
-      playBtn.title = '재생';
+      playBtn.title = 'Play';
       // 현재 재생 중이면 ■ 아이콘, 아니면 ▶
       playBtn.innerHTML = (currentSongId === song.id) ? '&#9646;&#9646;' : '&#9654;';
       playBtn.addEventListener('click', () => {
@@ -1827,8 +2267,8 @@
 
       const rematchBtn = document.createElement('button');
       rematchBtn.className = 'rematch-btn';
-      rematchBtn.title = '앨범 재매칭';
-      rematchBtn.textContent = '재매칭';
+      rematchBtn.title = 'Rematch album';
+      rematchBtn.textContent = 'Rematch';
       rematchBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openRematchModal(song.id, song.artist ?? '', song.title ?? '');
@@ -1983,7 +2423,7 @@
     shuffleMode = !shuffleMode;
     const btn = document.getElementById('btn-shuffle');
     btn.classList.toggle('shuffle-active', shuffleMode);
-    btn.title = shuffleMode ? '셔플 끄기' : '셔플';
+    btn.title = shuffleMode ? 'Shuffle off' : 'Shuffle';
   }
 
   async function playAlbum(albumId, shuffle) {
@@ -2111,16 +2551,16 @@
 
     // 후보 목록 초기화
     const candidatesEl = document.getElementById('rematch-candidates');
-    candidatesEl.innerHTML = '<div class="rematch-placeholder">아티스트와 트랙명을 입력 후 검색하세요.</div>';
+    candidatesEl.innerHTML = '<div class="rematch-placeholder">Enter artist and track name, then click Search.</div>';
 
-    // 피드백 초기화
+    // reset feedback
     const feedbackEl = document.getElementById('rematch-feedback');
     feedbackEl.textContent = '';
     feedbackEl.className = 'rematch-feedback';
 
     const applyBtn = document.getElementById('rematch-apply-btn');
     applyBtn.disabled = false;
-    applyBtn.textContent = '적용';
+    applyBtn.textContent = 'Apply';
 
     document.getElementById('rematch-modal').classList.remove('hidden');
     document.getElementById('rematch-artist').focus();
@@ -2143,7 +2583,7 @@
     document.getElementById('rematch-track').value = title;
 
     const candidatesEl = document.getElementById('rematch-candidates');
-    candidatesEl.innerHTML = '<div class="rematch-placeholder">아티스트와 트랙명을 입력 후 검색하세요.</div>';
+    candidatesEl.innerHTML = '<div class="rematch-placeholder">Enter artist and track name, then click Search.</div>';
 
     const feedbackEl = document.getElementById('rematch-feedback');
     feedbackEl.textContent = '';
@@ -2151,7 +2591,7 @@
 
     const applyBtn = document.getElementById('rematch-apply-btn');
     applyBtn.disabled = false;
-    applyBtn.textContent = '적용';
+    applyBtn.textContent = 'Apply';
 
     document.getElementById('rematch-modal').classList.remove('hidden');
     document.getElementById('rematch-artist').focus();
@@ -2162,13 +2602,13 @@
     const track  = document.getElementById('rematch-track').value.trim();
 
     if (!artist && !track) {
-      setRematchFeedback('error', '아티스트 또는 트랙명을 입력하세요.');
+      setRematchFeedback('error', 'Please enter artist or track name.');
       return;
     }
 
     const searchBtn = document.getElementById('rematch-search-btn');
     searchBtn.disabled = true;
-    searchBtn.textContent = '검색 중...';
+    searchBtn.textContent = 'Searching...';
 
     _selectedCandidate = null;
 
@@ -2177,7 +2617,7 @@
     feedbackEl.className = 'rematch-feedback';
 
     const candidatesEl = document.getElementById('rematch-candidates');
-    candidatesEl.innerHTML = '<div class="rematch-placeholder"><span class="loading-spinner"></span>검색 중...</div>';
+    candidatesEl.innerHTML = '<div class="rematch-placeholder"><span class="loading-spinner"></span>Searching...</div>';
 
     try {
       const params = new URLSearchParams();
@@ -2193,10 +2633,10 @@
       renderRematchCandidates(data.candidates);
     } catch (e) {
       candidatesEl.innerHTML = '';
-      setRematchFeedback('error', '검색 실패: ' + e.message);
+      setRematchFeedback('error', 'Search failed: ' + e.message);
     } finally {
       searchBtn.disabled = false;
-      searchBtn.textContent = '검색';
+      searchBtn.textContent = 'Search';
     }
   }
 
@@ -2205,7 +2645,7 @@
     candidatesEl.innerHTML = '';
 
     if (!candidates || !candidates.length) {
-      candidatesEl.innerHTML = '<div class="rematch-placeholder">검색 결과가 없습니다.</div>';
+      candidatesEl.innerHTML = '<div class="rematch-placeholder">No results found.</div>';
       return;
     }
 
@@ -2242,7 +2682,7 @@
 
       const albumDiv = document.createElement('div');
       albumDiv.className = 'rematch-card-album';
-      albumDiv.textContent = c.album_name || '(앨범명 없음)';
+      albumDiv.textContent = c.album_name || '(No album name)';
       if (c.year) {
         const yearSpan = document.createElement('span');
         yearSpan.style.color = '#718096';
@@ -2298,17 +2738,17 @@
 
   async function applyRematch() {
     if (!_selectedCandidate) {
-      setRematchFeedback('error', '적용할 후보를 선택하세요.');
+      setRematchFeedback('error', 'Please select a candidate to apply.');
       return;
     }
     if (!_rematchSongId && !_rematchMbid) {
-      setRematchFeedback('error', '대상 트랙 정보가 없습니다. 모달을 다시 열어주세요.');
+      setRematchFeedback('error', 'Target track info is missing. Please reopen the modal.');
       return;
     }
 
     const applyBtn = document.getElementById('rematch-apply-btn');
     applyBtn.disabled = true;
-    applyBtn.textContent = '적용 중...';
+    applyBtn.textContent = 'Applying...';
 
     const searchBtn = document.getElementById('rematch-search-btn');
     searchBtn.disabled = true;
@@ -2339,7 +2779,7 @@
         throw new Error(text || 'HTTP ' + res.status);
       }
 
-      setRematchFeedback('success', '재매칭 적용 완료. 라이브러리를 새로고침합니다...');
+      setRematchFeedback('success', 'Rematch applied. Refreshing library...');
 
       // 모달 닫고 현재 아티스트 다시 로드
       setTimeout(() => {
@@ -2355,9 +2795,9 @@
         }
       }, 1200);
     } catch (e) {
-      setRematchFeedback('error', '적용 실패: ' + e.message);
+      setRematchFeedback('error', 'Apply failed: ' + e.message);
       applyBtn.disabled = false;
-      applyBtn.textContent = '적용';
+      applyBtn.textContent = 'Apply';
       searchBtn.disabled = false;
     }
   }

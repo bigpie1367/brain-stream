@@ -305,3 +305,104 @@ def download_track(
 
     log.error("all download attempts failed", mbid=mbid)
     return None, None
+
+
+def search_candidates(artist: str, track_name: str) -> list[dict]:
+    """YouTube 후보 5개를 검색하고 메타데이터만 반환 (다운로드 없음).
+
+    반환: [
+        {
+            "video_id": str,
+            "title": str,
+            "channel": str,
+            "duration": int,  # seconds
+            "thumbnail_url": str,
+            "url": str,  # https://www.youtube.com/watch?v={video_id}
+            "is_live": bool,
+            "is_cover": bool,
+        },
+        ...
+    ]
+    """
+    query = f"ytsearch5:{artist} {track_name}"
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",
+        "skip_download": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            if not info:
+                return []
+            raw_entries = info.get("entries") or [info]
+            entries = [e for e in raw_entries if e]
+            results = []
+            for entry in entries:
+                video_id = entry.get("id") or ""
+                title = entry.get("title") or ""
+                channel = entry.get("channel") or entry.get("uploader") or ""
+                duration = entry.get("duration") or 0
+                thumbnail_url = entry.get("thumbnail") or ""
+                url = f"https://www.youtube.com/watch?v={video_id}" if video_id else ""
+                results.append(
+                    {
+                        "video_id": video_id,
+                        "title": title,
+                        "channel": channel,
+                        "duration": int(duration),
+                        "thumbnail_url": thumbnail_url,
+                        "url": url,
+                        "is_live": _is_live(title),
+                        "is_cover": _is_cover(title),
+                    }
+                )
+            return results
+    except Exception as exc:
+        log.warning(
+            "search_candidates failed", artist=artist, track=track_name, error=str(exc)
+        )
+        return []
+
+
+def download_track_by_id(video_id: str, mbid: str, staging_dir: str) -> tuple[str, dict]:
+    """특정 YouTube video_id로 직접 다운로드.
+
+    반환: (file_path, yt_metadata)
+    file_path: staging_dir/{mbid}.flac 또는 .opus
+    yt_metadata: {"thumbnail_url": str, "channel": str}
+    """
+    os.makedirs(staging_dir, exist_ok=True)
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    output_template = str(Path(staging_dir) / f"{mbid}.%(ext)s")
+
+    log.info("downloading by video_id", video_id=video_id, mbid=mbid)
+
+    for opts in (_flac_opts(output_template), _opus_opts(output_template)):
+        try:
+            yt_metadata = None
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if info:
+                    thumbnail_url = info.get("thumbnail", "")
+                    channel = info.get("channel") or info.get("uploader", "")
+                    if thumbnail_url or channel:
+                        yt_metadata = {"thumbnail_url": thumbnail_url, "channel": channel}
+
+            for ext in ("flac", "opus", "webm", "m4a", "mp3"):
+                candidate_file = Path(staging_dir) / f"{mbid}.{ext}"
+                if candidate_file.exists():
+                    log.info("download_by_id complete", file=str(candidate_file))
+                    return str(candidate_file), yt_metadata or {}
+
+        except Exception as exc:
+            log.warning(
+                "download_track_by_id attempt failed",
+                video_id=video_id,
+                error=str(exc),
+                fmt=opts.get("format"),
+            )
+            continue
+
+    raise RuntimeError(f"download_track_by_id failed for video_id={video_id}")

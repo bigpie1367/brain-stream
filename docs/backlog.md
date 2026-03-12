@@ -63,6 +63,13 @@
 | US-42 | import log / `_beet_lock` 직렬화 로직 제거 | 2026-03-10 |
 | US-43 | beets 관련 의존성 제거 (requirements.txt, Dockerfile, beets/config.yaml) | 2026-03-10 |
 
+### Epic 10: YouTube 후보 선택 다운로드 및 UI 개선 (2026-03-12)
+
+| ID | User Story | 완료일 |
+|----|-----------|--------|
+| US-44 | Pick 모드에서 YouTube 후보 목록을 미리 확인하고 원하는 영상을 선택하여 다운로드할 수 있다 (`GET /api/download/candidates`, `POST /api/download` video_id 필드) | 2026-03-12 |
+| US-45 | UI 텍스트 영어 통일 및 레이아웃 안정화 (버튼 min-width 고정, 테이블 fixed layout) | 2026-03-12 |
+
 ### Epic 8: 파이프라인 안정성 개선 (2026-03-09)
 
 | ID | User Story | 완료일 |
