@@ -1752,10 +1752,10 @@
         const tdMb = document.createElement('td');
         if (r.mb_recording_id) {
           const mbLink = document.createElement('a');
-          mbLink.href = 'https://musicbrainz.org/recording/' + encodeURIComponent(r.mb_recording_id);
+          mbLink.href = 'https://listenbrainz.org/player/recording/' + encodeURIComponent(r.mb_recording_id) + '/';
           mbLink.target = '_blank';
-          mbLink.textContent = 'MB';
-          mbLink.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#1e3a5f; color:#60a5fa; font-size:11px; text-decoration:none; white-space:nowrap;';
+          mbLink.textContent = 'LB';
+          mbLink.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#353070; color:#eb743b; font-size:11px; text-decoration:none; white-space:nowrap;';
           mbLink.addEventListener('click', e => e.stopPropagation());
           tdMb.appendChild(mbLink);
         } else {
