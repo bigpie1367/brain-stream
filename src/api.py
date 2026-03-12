@@ -112,7 +112,7 @@ def _run_download_job(job_id: str, artist: str, track: str, video_id: Optional[s
             return
 
         _emit(job_id, "tagging", "태깅 중...")
-        success, dest_path, canonical_artist, canonical_title = tag_and_import(
+        success, dest_path, canonical_artist, canonical_title, canonical_album = tag_and_import(
             file_path,
             cfg.beets.music_dir,
             artist=artist,
@@ -126,14 +126,15 @@ def _run_download_job(job_id: str, artist: str, track: str, video_id: Optional[s
             _emit(job_id, "failed", "태깅 실패")
             return
 
-        mark_done(cfg.state_db, mbid, file_path=dest_path)
+        mark_done(cfg.state_db, mbid, file_path=dest_path, album=canonical_album if canonical_album else None)
 
-        if canonical_artist or canonical_title:
+        if canonical_artist or canonical_title or canonical_album:
             update_track_info(
                 cfg.state_db,
                 mbid,
                 artist=canonical_artist if canonical_artist else None,
                 track_name=canonical_title if canonical_title else None,
+                album=canonical_album if canonical_album else None,
             )
 
         _emit(job_id, "scanning", "Navidrome 스캔 중...")

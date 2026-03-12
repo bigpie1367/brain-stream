@@ -2126,7 +2126,7 @@ def test_tag_and_import_writes_mb_recording_title_when_itunes_fails(tmp_path, mo
 
 
 def test_tag_and_import_returns_canonical_artist_and_title(tmp_path, monkeypatch):
-    """tag_and_import가 4-tuple을 반환하며, canonical_artist와 canonical_title이 포함된다."""
+    """tag_and_import가 5-tuple을 반환하며, canonical_artist, canonical_title, canonical_album이 포함된다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
         "src.pipeline.tagger._mb_search_recording",
@@ -2145,17 +2145,18 @@ def test_tag_and_import_returns_canonical_artist_and_title(tmp_path, monkeypatch
         track_name="밤편지",
     )
 
-    assert len(result) == 4
-    success, dest, canonical_artist, canonical_title = result
+    assert len(result) == 5
+    success, dest, canonical_artist, canonical_title, canonical_album = result
     assert success is True
     assert canonical_artist == "IU"
     assert canonical_title == "Through the Night"
+    assert canonical_album == "밤편지"
 
 
 def test_tag_and_import_returns_empty_canonical_on_file_not_found(tmp_path):
-    """staging 파일이 없으면 canonical_artist, canonical_title도 빈 문자열로 반환한다."""
+    """staging 파일이 없으면 canonical_artist, canonical_title, canonical_album도 빈 문자열로 반환한다."""
     missing = tmp_path / "missing.flac"
-    success, dest, canonical_artist, canonical_title = tag_and_import(
+    success, dest, canonical_artist, canonical_title, canonical_album = tag_and_import(
         str(missing),
         music_dir=str(tmp_path / "music"),
     )
@@ -2163,6 +2164,7 @@ def test_tag_and_import_returns_empty_canonical_on_file_not_found(tmp_path):
     assert dest == ""
     assert canonical_artist == ""
     assert canonical_title == ""
+    assert canonical_album == ""
 
 
 def test_tag_and_import_returns_canonical_artist_for_duplicate(tmp_path, monkeypatch):
@@ -2179,7 +2181,7 @@ def test_tag_and_import_returns_canonical_artist_for_duplicate(tmp_path, monkeyp
 
     music_dir = tmp_path / "music"
     # 첫 번째 import
-    success1, dest1, c_artist1, c_title1 = tag_and_import(
+    success1, dest1, c_artist1, c_title1, *_ = tag_and_import(
         str(flac_path),
         music_dir=str(music_dir),
         artist="radiohead",
@@ -2191,7 +2193,7 @@ def test_tag_and_import_returns_canonical_artist_for_duplicate(tmp_path, monkeyp
 
     # 두 번째 import: duplicate 경로
     flac_path2 = _make_flac(tmp_path, name="test2.flac")
-    success2, dest2, c_artist2, c_title2 = tag_and_import(
+    success2, dest2, c_artist2, c_title2, *_ = tag_and_import(
         str(flac_path2),
         music_dir=str(music_dir),
         artist="radiohead",

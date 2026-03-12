@@ -1216,17 +1216,19 @@
     <div class="table-wrapper">
       <table>
         <colgroup>
-          <col style="width:25%">
-          <col style="width:25%">
-          <col style="width:10%">
-          <col style="width:12%">
+          <col style="width:20%">
+          <col style="width:20%">
           <col style="width:18%">
+          <col style="width:9%">
+          <col style="width:10%">
+          <col style="width:13%">
           <col style="width:10%">
         </colgroup>
         <thead>
           <tr>
             <th>Artist</th>
             <th>Track</th>
+            <th>Album</th>
             <th>Source</th>
             <th>Status</th>
             <th>Time</th>
@@ -1714,6 +1716,9 @@
         const tdTrack = document.createElement('td');
         tdTrack.textContent = r.track_name;
 
+        const tdAlbum = document.createElement('td');
+        tdAlbum.textContent = r.album || '—';
+
         const tdSource = document.createElement('td');
         tdSource.innerHTML = sourceBadge(r.source);
 
@@ -1729,6 +1734,7 @@
 
         tr.appendChild(tdArtist);
         tr.appendChild(tdTrack);
+        tr.appendChild(tdAlbum);
         tr.appendChild(tdSource);
         tr.appendChild(tdStatus);
         tr.appendChild(tdTime);
@@ -1741,7 +1747,7 @@
         expandTr.style.display = 'none';
 
         const expandTd = document.createElement('td');
-        expandTd.colSpan = 6;
+        expandTd.colSpan = 7;
         expandTr.appendChild(expandTd);
         tbody.appendChild(expandTr);
 

@@ -986,16 +986,16 @@ def tag_and_import(
     yt_metadata: dict | None = None,
     db_path: str | None = None,
     mbid: str | None = None,
-) -> tuple[bool, str, str, str]:
+) -> tuple[bool, str, str, str, str]:
     """Tag staging file in-place, then copy to final music_dir path in one step.
 
-    Returns (success, dest_path, canonical_artist, canonical_title).
-    canonical_artist and canonical_title are empty strings on failure or when unavailable.
+    Returns (success, dest_path, canonical_artist, canonical_title, canonical_album).
+    canonical_artist, canonical_title and canonical_album are empty strings on failure or when unavailable.
     """
     path = Path(staging_file)
     if not path.exists():
         log.error("staging file not found", file=staging_file)
-        return False, "", "", ""
+        return False, "", "", "", ""
 
     # Search MB for recording IDs (best-effort; failure does not abort import)
     recording_ids: list[str] = []
@@ -1067,7 +1067,7 @@ def tag_and_import(
     if dest_path.exists():
         log.info("file already exists in music_dir, treating as duplicate", dest=str(dest_path))
         _cleanup_staging(path)
-        return True, str(dest_path), effective_artist, effective_track
+        return True, str(dest_path), effective_artist, effective_track, album
 
     # Copy enriched staging file to final destination
     try:
@@ -1080,10 +1080,10 @@ def tag_and_import(
             dest=str(dest_path),
             error=str(exc),
         )
-        return False, "", "", ""
+        return False, "", "", "", ""
 
     _cleanup_staging(path)
-    return True, str(dest_path), effective_artist, effective_track
+    return True, str(dest_path), effective_artist, effective_track, album
 
 
 def _cleanup_staging(path: Path):

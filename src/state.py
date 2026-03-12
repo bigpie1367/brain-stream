@@ -45,6 +45,11 @@ def init_db(db_path: str):
             conn.execute("ALTER TABLE downloads ADD COLUMN file_path TEXT")
         except sqlite3.OperationalError:
             pass  # already exists
+        # Migrate: add album column if missing
+        try:
+            conn.execute("ALTER TABLE downloads ADD COLUMN album TEXT")
+        except sqlite3.OperationalError:
+            pass  # already exists
     log.info("state.db initialised", path=db_path)
 
 
@@ -73,13 +78,13 @@ def mark_downloading(db_path: str, mbid: str):
         """, (mbid,))
 
 
-def mark_done(db_path: str, mbid: str, file_path: str = None):
+def mark_done(db_path: str, mbid: str, file_path: str = None, album: str = None):
     with _conn(db_path) as conn:
         conn.execute("""
             UPDATE downloads
-            SET status = 'done', downloaded_at = ?, file_path = ?
+            SET status = 'done', downloaded_at = ?, file_path = ?, album = ?
             WHERE mbid = ?
-        """, (datetime.utcnow().isoformat(), file_path, mbid))
+        """, (datetime.utcnow().isoformat(), file_path, album, mbid))
 
 
 def mark_failed(db_path: str, mbid: str, error: str):
@@ -106,7 +111,7 @@ def get_retryable(db_path: str, max_attempts: int = 3) -> List[sqlite3.Row]:
 def get_all_downloads(db_path: str, limit: int = 100) -> List[dict]:
     with _conn(db_path) as conn:
         rows = conn.execute("""
-            SELECT mbid, track_name, artist, status, source,
+            SELECT mbid, track_name, artist, album, status, source,
                    attempts, downloaded_at, error_msg, file_path
             FROM downloads
             ORDER BY rowid DESC
@@ -118,7 +123,7 @@ def get_all_downloads(db_path: str, limit: int = 100) -> List[dict]:
 def get_download_by_mbid(db_path: str, mbid: str) -> Optional[dict]:
     with _conn(db_path) as conn:
         row = conn.execute("""
-            SELECT mbid, track_name, artist, status, source,
+            SELECT mbid, track_name, artist, album, status, source,
                    attempts, downloaded_at, error_msg, file_path
             FROM downloads
             WHERE mbid = ?
@@ -141,8 +146,9 @@ def update_track_info(
     artist: str | None = None,
     track_name: str | None = None,
     file_path: str | None = None,
+    album: str | None = None,
 ):
-    """아티스트·트랙명·파일경로를 선택적으로 업데이트한다."""
+    """아티스트·트랙명·파일경로·앨범명을 선택적으로 업데이트한다."""
     fields = []
     values = []
     if artist is not None:
@@ -154,6 +160,9 @@ def update_track_info(
     if file_path is not None:
         fields.append("file_path = ?")
         values.append(file_path)
+    if album is not None:
+        fields.append("album = ?")
+        values.append(album)
     if not fields:
         return
     values.append(mbid)

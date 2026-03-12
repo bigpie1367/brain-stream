@@ -77,18 +77,19 @@ def run_pipeline(cfg):
             continue
 
         # 5. Tag + import
-        success, dest_path, canonical_artist, canonical_title = tag_and_import(
+        success, dest_path, canonical_artist, canonical_title, canonical_album = tag_and_import(
             file_path, cfg.beets.music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata,
             db_path=cfg.state_db, mbid=mbid,
         )
         if success:
-            mark_done(cfg.state_db, mbid, file_path=dest_path)
-            if canonical_artist or canonical_title:
+            mark_done(cfg.state_db, mbid, file_path=dest_path, album=canonical_album if canonical_album else None)
+            if canonical_artist or canonical_title or canonical_album:
                 update_track_info(
                     cfg.state_db,
                     mbid,
                     artist=canonical_artist if canonical_artist else None,
                     track_name=canonical_title if canonical_title else None,
+                    album=canonical_album if canonical_album else None,
                 )
             imported_any = True
         else:
