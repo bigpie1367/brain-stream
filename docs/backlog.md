@@ -1,7 +1,7 @@
 # 프로젝트 백로그
 
 - **작성일**: 2026-03-04
-- **현재 버전**: 1.0.0
+- **현재 버전**: 1.0.1
 
 ---
 
@@ -63,6 +63,15 @@
 | US-42 | import log / `_beet_lock` 직렬화 로직 제거 | 2026-03-10 |
 | US-43 | beets 관련 의존성 제거 (requirements.txt, Dockerfile, beets/config.yaml) | 2026-03-10 |
 
+### Epic 11: MB 매칭 정확도 및 태그 품질 개선 (2026-03-12)
+
+| ID | User Story | 완료일 |
+|----|-----------|--------|
+| US-48 | LB 트랙은 `_lookup_recording_by_mbid(mbid)` 직접 조회로 오매칭 방지 — 직접 조회 실패 시 기존 `_mb_search_recording()`으로 폴백 | 2026-03-12 |
+| US-49 | `_mb_search_recording()`에 Stage 2.5(artist-id 기반 검색) 추가 — MB Artist API로 아티스트 MBID 목록 획득 후 arid:{mbid} AND recording:{t} 재검색. 한국 아티스트 등 다른 언어/표기로 인덱싱된 경우 대응 | 2026-03-12 |
+| US-50 | `rematch/apply`에서 `mb_recording_id`가 있을 때 `write_mb_trackid_tag()`로 파일 태그 업데이트 (기존 버그 수정: mb_recording_id를 받아놓고 파일에 쓰지 않음) | 2026-03-12 |
+| US-51 | `_select_best_entry()`에 strict 모드 추가 — 라이브/커버 영상을 점수 패널티 대신 사전 필터링으로 제외. 클린 후보가 없을 때만 전체 후보 대상 기존 스코어링으로 폴백. Auto/LB 다운로드는 strict=True 기본값 사용 | 2026-03-12 |
+
 ### Epic 10: YouTube 후보 선택 다운로드 및 UI 개선 (2026-03-12)
 
 | ID | User Story | 완료일 |
@@ -113,6 +122,10 @@
 | ~~BUG-08~~ | ~~Medium~~ | ~~앨범 매칭 성공 후에도 파일이 Unknown Album/ 폴더에 남아있음~~ | **수정 완료 (2026-03-10)** |
 | ~~BUG-09~~ | ~~Medium~~ | ~~모든 enrichment 실패 시 album 태그 미기록 → Navidrome "Non-album" 표시~~ | **수정 완료 (2026-03-10)** |
 | ~~BUG-10~~ | ~~Medium~~ | ~~rematch/apply에서 Navidrome getSong 절대 경로에 /app/data/music/ 이중 접두사 → 파일 미발견~~ | **수정 완료 (2026-03-10)** |
+| ~~BUG-11~~ | ~~Medium~~ | ~~rematch/apply에서 mb_recording_id를 요청으로 받아도 파일 태그에 쓰지 않아 mb_trackid 태그가 누락됨~~ | **수정 완료 (2026-03-12)** |
+| ~~BUG-12~~ | ~~Medium~~ | ~~LB 트랙을 artist/track 텍스트 검색으로 MB 매칭 → 동명 아티스트/트랙에 오매칭 위험. mbid 직접 조회로 대체~~ | **수정 완료 (2026-03-12)** |
+| ~~BUG-13~~ | ~~Low~~ | ~~한국 아티스트 등 비영어권 아티스트명이 MB에 다른 표기로 인덱싱된 경우 Stage 1/2 검색 실패 → Stage 2.5 artist-id 기반 검색으로 대응~~ | **수정 완료 (2026-03-12)** |
+| ~~BUG-14~~ | ~~Low~~ | ~~Auto/LB 다운로드 시 라이브/커버 영상이 점수 패널티만 적용되어 후보가 클린 영상뿐일 때도 선택될 수 있었음 → strict 모드 사전 필터링으로 강화~~ | **수정 완료 (2026-03-12)** |
 | BUG-01 | Low | staging 디렉토리에 이전 세션의 `.flac` 파일이 남아있을 수 있음 (컨테이너 재시작 시) | 미해결 |
 | BUG-02 | Low | Navidrome 자동 스캔 비활성화 설정(`ND_SCANSCHEDULE: "0"`)이 docker-compose.yml에 하드코딩됨 | 미해결 |
 | BUG-03 | Low | 수동 다운로드 잡의 SSE Queue가 메모리에만 존재하여 컨테이너 재시작 시 in-progress 잡 상태 유실 | 미해결 |

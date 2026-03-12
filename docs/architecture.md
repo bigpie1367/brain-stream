@@ -1,6 +1,6 @@
 # 시스템 아키텍처
 
-- **버전**: 1.4.0
+- **버전**: 1.4.1
 - **작성일**: 2026-03-12
 
 ---
@@ -78,8 +78,8 @@ External APIs:
 | `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD. `update_track_info`로 artist/file_path 선택적 업데이트 |
 | `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회, 앨범 재매칭 API (`/api/rematch/*`), 오디오 스트리밍 (`GET /api/stream/{mbid}`, state.db `file_path` 기반), `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계). `_resolve_dir`로 대소문자 무시 기준 기존 폴더 재사용 (Navidrome conflicts 방지) |
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출; `recording_mbid`만 반환하므로 `_lookup_recording(mbid)`로 MB API에서 artist/track 조회 |
-| `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `ytsearch5:` 5개 후보 검색 후 차단 영상 감지 시 다음 후보 retry; `(file_path, yt_metadata)` 튜플 반환. `search_candidates(artist, track)`: 다운로드 없이 후보 5개 메타데이터 반환. `download_track_by_id(video_id, ...)`: 지정 video_id로 직접 다운로드 |
-| `src/pipeline/tagger.py` | MB API recording 검색 (artist 유사도 검증) → mutagen 전체 태그 쓰기 → shutil 파일 복사 → MB enrichment → CAA/iTunes/Deezer 커버아트 임베딩 → YouTube 썸네일/채널명 폴백. `_write_artist_tag`, `_write_album_tag`, `_itunes_search(country=)` 등 public alias로 `api.py` 재매칭에도 사용 |
+| `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `ytsearch5:` 5개 후보 검색 후 차단 영상 감지 시 다음 후보 retry; `(file_path, yt_metadata)` 튜플 반환. `search_candidates(artist, track)`: 다운로드 없이 후보 5개 메타데이터 반환. `download_track_by_id(video_id, ...)`: 지정 video_id로 직접 다운로드. `_select_best_entry(entries, artist, track_name, strict=True)`: strict 모드에서 라이브/커버 영상을 점수 패널티 대신 사전 필터링으로 제외하고 클린 후보가 없을 때만 전체 후보 대상 스코어링으로 폴백. `download_track()`은 기본값 strict=True 사용 |
+| `src/pipeline/tagger.py` | MB API recording 검색 (artist 유사도 검증, 4단계 폴백) → mutagen 전체 태그 쓰기 → shutil 파일 복사 → MB enrichment → CAA/iTunes/Deezer 커버아트 임베딩 → YouTube 썸네일/채널명 폴백. `_lookup_recording_by_mbid(mbid)`: MB recording UUID로 직접 recording 조회. `_mb_lookup_artist_ids(artist, limit=3)`: MB Artist API로 아티스트명 검색 → MBID 목록 반환 (Stage 2.5에서 사용). `write_mb_trackid_tag(file_path, recording_id)`: 파일 포맷별(FLAC/Opus/MP4/기타) mb_trackid 태그 기록. `_write_artist_tag`, `_write_album_tag`, `_itunes_search(country=)` 등 public alias로 `api.py` 재매칭에도 사용. LB 트랙은 `_lookup_recording_by_mbid(mbid)` 직접 조회 후 실패 시 `_mb_search_recording()`으로 폴백 |
 | `src/pipeline/navidrome.py` | Subsonic API token-auth, startScan + getScanStatus 폴링 |
 | `src/utils/logger.py` | structlog 설정 (TTY: 컬러 콘솔, non-TTY: JSON) |
 | `src/static/index.html` | 다크 테마 단일 파일 Web UI. Downloads 탭 + Library 탭 (아티스트/앨범/트랙 브라우징, 트랙별 앨범 재매칭 버튼). 수동 다운로드 섹션에 Auto/Pick 모드 토글 — Pick 모드에서 YouTube 후보 카드(썸네일, 제목, 채널, 재생시간, Live/Cover 배지) 표시 후 원하는 영상 선택 다운로드. 다운로드 이력 테이블에 Album 컬럼 및 Actions 컬럼 ▶ Play 버튼(done/ignored 상태 + file_path 있는 행만) 표시. 하단 고정 미니 플레이어(HTML5 audio, 트랙명/아티스트명 표시, ✕ 닫기). UI 텍스트 영어 통일, 버튼 min-width 고정, 테이블 fixed layout |
@@ -119,11 +119,19 @@ state.db 중복 체크 (mbid 기준)
         │    출력: staging/{mbid}.flac
         │    실패 → mark_failed
         │
-        ├─ _mb_search_recording(artist, track_name)  ← 다운로드 전에 실행
+        ├─ LB 트랙: _lookup_recording_by_mbid(mbid)  ← mbid가 "manual-"로 시작하지 않는 경우
+        │    MB API /ws/2/recording/{mbid}?inc=artist-credits+releases 직접 조회
+        │    조회 성공 시 recording_ids / mb_artist_name / mb_recording_title 획득
+        │    조회 실패 시 _mb_search_recording()으로 폴백
+        │
+        ├─ 수동 트랙 또는 LB 직접 조회 실패 시: _mb_search_recording(artist, track_name)
         │    stage 1 (strict):  artistname:{a} AND recording:{t}
         │                       + primarytype:Album + status:Official
         │                       + NOT secondarytype:Live/Compilation/Soundtrack/...
         │    stage 2 (plain):   artistname:{a} AND recording:{t}  (release-type 필터 없음)
+        │    stage 2.5 (artist-id):  _mb_lookup_artist_ids(artist) → MBID 목록 획득
+        │                       arid:{mbid} AND recording:{t} 로 각 MBID별 재검색
+        │                       한국 아티스트 등 다른 언어/표기로 인덱싱된 경우 대응
         │    stage 3 (fallback): recording:{t} 만 검색,
         │                        artist-credit + aliases 유사도 0.3 이상인 것 선택
         │    반환: (recording_ids, mb_artist_name, mb_recording_title)
