@@ -411,6 +411,34 @@ def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = 
         log.warning("could not write tags to file", file=file_path, error=str(exc))
 
 
+def _write_mb_trackid_tag(file_path: str, recording_id: str):
+    """Write MusicBrainz recording ID (mb_trackid) tag to audio file."""
+    try:
+        suffix = Path(file_path).suffix.lower()
+        if suffix == ".flac":
+            f = mutagen.flac.FLAC(file_path)
+            f["musicbrainz_trackid"] = recording_id
+            f.save()
+        elif suffix in (".opus", ".ogg"):
+            f = mutagen.oggopus.OggOpus(file_path)
+            f["musicbrainz_trackid"] = [recording_id]
+            f.save()
+        elif suffix in (".m4a", ".mp4"):
+            f = mutagen.mp4.MP4(file_path)
+            f["----:com.apple.iTunes:MusicBrainz Track Id"] = [
+                mutagen.mp4.MP4FreeForm(recording_id.encode())
+            ]
+            f.save()
+        else:
+            f = mutagen.File(file_path)
+            if f is not None:
+                f["musicbrainz_trackid"] = recording_id
+                f.save()
+        log.debug("wrote mb_trackid tag", file=file_path, recording_id=recording_id)
+    except Exception as exc:
+        log.warning("could not write mb_trackid tag", file=file_path, error=str(exc))
+
+
 def _write_album_tag(file_path: str, album: str):
     """Write album tag to audio file using mutagen."""
     try:
@@ -1206,4 +1234,5 @@ embed_cover_art = _embed_cover_art
 embed_art_from_url = _embed_art_from_url
 write_album_tag = _write_album_tag
 write_artist_tag = _write_artist_tag
+write_mb_trackid_tag = _write_mb_trackid_tag
 itunes_search = _itunes_search

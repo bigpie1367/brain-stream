@@ -29,6 +29,7 @@ from src.pipeline.tagger import (
     tag_and_import,
     write_album_tag,
     write_artist_tag,
+    write_mb_trackid_tag,
 )
 from src.state import (
     delete_download,
@@ -608,6 +609,13 @@ async def rematch_apply(req: RematchApplyRequest):
     except Exception as exc:
         log.error("rematch_apply: write_album_tag failed", file=file_path, error=str(exc))
         raise HTTPException(status_code=500, detail=f"tag write failed: {exc}")
+
+    # 3-mb. Write mb_trackid tag if mb_recording_id is provided
+    if req.mb_recording_id:
+        try:
+            write_mb_trackid_tag(file_path, req.mb_recording_id)
+        except Exception as exc:
+            log.warning("rematch_apply: write_mb_trackid_tag failed", error=str(exc))
 
     # 3-artist. Rewrite artist tag if artist_name is provided
     if req.artist_name:

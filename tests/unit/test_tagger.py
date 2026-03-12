@@ -32,9 +32,11 @@ from src.pipeline.tagger import (
     _read_tags,
     _sanitize_filename,
     _write_artist_tag,
+    _write_mb_trackid_tag,
     _write_tags,
     tag_and_import,
     write_artist_tag,
+    write_mb_trackid_tag,
 )
 
 # ── FLAC 더미 파일 생성 헬퍼 ─────────────────────────────────────────────────
@@ -223,6 +225,109 @@ def test_write_artist_tag_nonexistent_file_does_not_raise(tmp_path):
     """존재하지 않는 파일에 대해 _write_artist_tag는 예외를 발생시키지 않는다 (경고 로그만)."""
     bad_path = tmp_path / "nonexistent.flac"
     _write_artist_tag(str(bad_path), "Artist")
+
+
+# ── _write_mb_trackid_tag 테스트 ──────────────────────────────────────────────
+
+
+def test_write_mb_trackid_tag_flac(tmp_path):
+    """FLAC 파일에 musicbrainz_trackid 태그를 올바르게 기록한다."""
+    flac_path = _make_flac(tmp_path)
+    recording_id = "aaaabbbb-cccc-dddd-eeee-ffff00001111"
+
+    _write_mb_trackid_tag(str(flac_path), recording_id)
+
+    f = mutagen.flac.FLAC(str(flac_path))
+    assert f.get("musicbrainz_trackid") == [recording_id]
+
+
+def test_write_mb_trackid_tag_opus(tmp_path):
+    """Opus 파일에 musicbrainz_trackid 태그를 올바르게 기록한다."""
+    import mutagen.oggopus
+
+    opus_path = tmp_path / "test.opus"
+
+    # 최소 OggOpus 파일 생성 (mutagen이 읽을 수 있는 실제 OggOpus 포맷)
+    # OggOpus 헤더: OpusHead + OpusTags 페이지 필요
+    def _make_ogg_page(header_type, granule, serial, seq, data):
+        import struct as _struct
+        import zlib
+
+        segments = []
+        offset = 0
+        while offset < len(data):
+            seg = data[offset : offset + 255]
+            segments.append(seg)
+            offset += 255
+        segment_table = bytes([len(s) for s in segments])
+        lacing = len(segments)
+        header = (
+            b"OggS"
+            + _struct.pack("<B", 0)  # version
+            + _struct.pack("<B", header_type)
+            + _struct.pack("<Q", granule)
+            + _struct.pack("<I", serial)
+            + _struct.pack("<I", seq)
+            + _struct.pack("<I", 0)  # checksum placeholder
+            + _struct.pack("<B", lacing)
+            + segment_table
+        )
+        page = header + b"".join(segments)
+        crc = zlib.crc32(page) & 0xFFFFFFFF
+        page = page[:22] + _struct.pack("<I", crc) + page[26:]
+        return page
+
+    import struct as _struct
+
+    # OpusHead
+    opus_head = (
+        b"OpusHead"
+        + _struct.pack("<B", 1)  # version
+        + _struct.pack("<B", 2)  # channels
+        + _struct.pack("<H", 312)  # pre-skip
+        + _struct.pack("<I", 48000)  # input sample rate
+        + _struct.pack("<H", 0)  # output gain
+        + _struct.pack("<B", 0)  # channel mapping
+    )
+    page0 = _make_ogg_page(0x02, 0, 1, 0, opus_head)
+
+    # OpusTags (vendor string + 0 comments)
+    vendor = b"libopus"
+    opus_tags = (
+        b"OpusTags"
+        + _struct.pack("<I", len(vendor))
+        + vendor
+        + _struct.pack("<I", 0)  # user comment list length
+    )
+    page1 = _make_ogg_page(0x00, 0, 1, 1, opus_tags)
+
+    with open(opus_path, "wb") as fp:
+        fp.write(page0 + page1)
+
+    recording_id = "11112222-3333-4444-5555-666677778888"
+    _write_mb_trackid_tag(str(opus_path), recording_id)
+
+    import mutagen.oggopus as _oggopus
+
+    f = _oggopus.OggOpus(str(opus_path))
+    assert f.get("musicbrainz_trackid") == [recording_id]
+
+
+def test_write_mb_trackid_tag_public_alias(tmp_path):
+    """write_mb_trackid_tag public alias가 _write_mb_trackid_tag와 동일하게 동작한다."""
+    flac_path = _make_flac(tmp_path)
+    recording_id = "deadbeef-dead-beef-dead-beefdeadbeef"
+
+    write_mb_trackid_tag(str(flac_path), recording_id)
+
+    f = mutagen.flac.FLAC(str(flac_path))
+    assert f.get("musicbrainz_trackid") == [recording_id]
+
+
+def test_write_mb_trackid_tag_nonexistent_file_does_not_raise(tmp_path):
+    """존재하지 않는 파일에 대해 _write_mb_trackid_tag는 예외를 발생시키지 않는다."""
+    bad_path = tmp_path / "nonexistent.flac"
+    _write_mb_trackid_tag(str(bad_path), "some-uuid")
 
 
 # ── tag_and_import 테스트 ─────────────────────────────────────────────────────
