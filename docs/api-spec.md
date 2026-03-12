@@ -1,6 +1,6 @@
 # API 명세서
 
-- **버전**: 1.4.0
+- **버전**: 1.5.0
 - **Base URL**: `http://localhost:8080`
 - **작성일**: 2026-03-12
 
@@ -20,6 +20,7 @@
 | GET | `/api/downloads/{mbid}/detail` | 트랙 상세 정보 조회 (앨범명, 연도, 커버아트) |
 | GET | `/api/rematch/search` | 앨범 재매칭 후보 검색 |
 | POST | `/api/rematch/apply` | 선택한 앨범으로 재태깅 |
+| GET | `/api/stream/{mbid}` | 다운로드된 트랙 오디오 스트리밍 |
 
 ---
 
@@ -188,6 +189,7 @@ data: {"status": "done", "message": "완료"}
     "mbid": "a3e48b38-1234-5678-abcd-ef0123456789",
     "track_name": "Creep",
     "artist": "Radiohead",
+    "album": "Pablo Honey",
     "status": "done",
     "source": "listenbrainz",
     "attempts": 1,
@@ -199,6 +201,7 @@ data: {"status": "done", "message": "완료"}
     "mbid": "manual-a1b2c3d4",
     "track_name": "밤편지",
     "artist": "IU",
+    "album": "밤의 편지",
     "status": "done",
     "source": "manual",
     "attempts": 1,
@@ -216,6 +219,7 @@ data: {"status": "done", "message": "완료"}
 | mbid | string | LB 트랙은 MusicBrainz recording UUID, 수동 트랙은 `manual-{uuid8}` |
 | track_name | string | 트랙명 |
 | artist | string | 아티스트명 |
+| album | string \| null | canonical 앨범명. 태깅 완료 전 null |
 | status | string | `pending` / `downloading` / `done` / `failed` / `ignored` |
 | source | string | `listenbrainz` / `manual` |
 | attempts | integer | 시도 횟수 |
@@ -465,6 +469,34 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 | 422 | `mb_album_id`가 비어있는데 `album_name`도 미전달 |
 | 500 | MB 조회 실패 / 태그 쓰기 실패 / 파일 이동 실패 |
 | 503 | 서버 설정 미로드 |
+
+---
+
+## GET `/api/stream/{mbid}`
+
+state.db에 기록된 `file_path`를 기반으로 다운로드된 트랙의 오디오를 스트리밍한다.
+
+**Path Parameters**
+
+| 파라미터 | 설명 |
+|---------|------|
+| mbid | state.db의 mbid (LB 트랙: MB UUID, 수동 트랙: `manual-{uuid8}`) |
+
+**Response** `200 OK`
+
+오디오 파일을 바이트 스트림으로 반환한다. `Content-Type`은 파일 확장자에 따라 결정된다.
+
+| 확장자 | Content-Type |
+|--------|-------------|
+| `.flac` | `audio/flac` |
+| `.opus` | `audio/ogg; codecs=opus` |
+| 기타 | `audio/mpeg` |
+
+**Error Responses**
+
+| Status | 설명 |
+|--------|------|
+| 404 | mbid가 state.db에 없거나, `file_path`가 기록되지 않았거나, 파일이 존재하지 않음 |
 
 ---
 

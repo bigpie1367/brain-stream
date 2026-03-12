@@ -69,6 +69,8 @@
 |----|-----------|--------|
 | US-44 | Pick 모드에서 YouTube 후보 목록을 미리 확인하고 원하는 영상을 선택하여 다운로드할 수 있다 (`GET /api/download/candidates`, `POST /api/download` video_id 필드) | 2026-03-12 |
 | US-45 | UI 텍스트 영어 통일 및 레이아웃 안정화 (버튼 min-width 고정, 테이블 fixed layout) | 2026-03-12 |
+| US-46 | 다운로드 이력에 album 컬럼 표시 — 태깅된 canonical 앨범명을 state.db에 저장하고 이력 테이블에 노출한다 (`downloads.album TEXT`, `mark_done`/`update_track_info` album 파라미터, `GET /api/downloads` album 필드) | 2026-03-12 |
+| US-47 | 다운로드 이력 미리듣기 — `GET /api/stream/{mbid}` 오디오 스트리밍 엔드포인트 + 다운로드 이력 Actions 열 ▶ Play 버튼 + 하단 고정 미니 플레이어 (HTML5 audio, 트랙명/아티스트명 표시, ✕ 닫기) | 2026-03-12 |
 
 ### Epic 8: 파이프라인 안정성 개선 (2026-03-09)
 

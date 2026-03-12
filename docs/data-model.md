@@ -1,7 +1,7 @@
 # 데이터 모델
 
-- **버전**: 1.0.0
-- **작성일**: 2026-03-04
+- **버전**: 1.1.0
+- **작성일**: 2026-03-12
 
 ---
 
@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS downloads (
     downloaded_at TEXT,                   -- UTC ISO 8601, 완료 시 기록
     error_msg     TEXT,                   -- 실패 사유
     source        TEXT DEFAULT 'listenbrainz',  -- 'listenbrainz' | 'manual'
-    file_path     TEXT                    -- 임포트된 파일 경로 (beets 제거 후 직접 관리)
+    file_path     TEXT,                   -- 임포트된 파일 경로 (beets 제거 후 직접 관리)
+    album         TEXT                    -- canonical 앨범명 (태깅 완료 후 기록)
 );
 ```
 
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS downloads (
 | error_msg | TEXT | 마지막 실패 사유 | `download failed` |
 | source | TEXT | 트랙 출처 | `listenbrainz` / `manual` |
 | file_path | TEXT | 임포트된 파일 경로. 삭제 API 및 enrichment에서 사용 | `/app/data/music/Radiohead/Pablo Honey/Creep.flac` |
+| album | TEXT | 태깅 완료 후 canonical album명으로 업데이트됨 | `Pablo Honey` |
 
 ---
 
