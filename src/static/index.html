@@ -173,6 +173,13 @@
 
     .table-wrapper { overflow-x: auto; }
 
+    /* Download History 전폭 레이아웃 */
+    #section-history {
+      margin-left: -24px;
+      margin-right: -24px;
+      border-radius: 0;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -1208,7 +1215,7 @@
   </section>
 
   <!-- Download History -->
-  <section>
+  <section id="section-history">
     <div class="table-header">
       <h2 style="margin-bottom:0">Download History</h2>
       <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem; min-width:0;" onclick="loadHistory()">Refresh</button>
