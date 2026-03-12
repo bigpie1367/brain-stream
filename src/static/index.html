@@ -1754,8 +1754,10 @@
           const mbLink = document.createElement('a');
           mbLink.href = 'https://listenbrainz.org/track/' + encodeURIComponent(r.mb_recording_id);
           mbLink.target = '_blank';
-          mbLink.textContent = 'LB';
-          mbLink.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#353070; color:#eb743b; font-size:11px; text-decoration:none; white-space:nowrap;';
+          mbLink.textContent = 'LB ↗';
+          mbLink.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#353070; color:#eb743b; font-size:11px; text-decoration:none; white-space:nowrap; cursor:pointer; border:1px solid #eb743b55;';
+          mbLink.addEventListener('mouseover', () => mbLink.style.background = '#4a3f8a');
+          mbLink.addEventListener('mouseout', () => mbLink.style.background = '#353070');
           mbLink.addEventListener('click', e => e.stopPropagation());
           tdMb.appendChild(mbLink);
         } else {
