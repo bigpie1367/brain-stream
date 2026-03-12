@@ -1,8 +1,8 @@
 # API 명세서
 
-- **버전**: 1.5.0
+- **버전**: 1.7.0
 - **Base URL**: `http://localhost:8080`
-- **작성일**: 2026-03-12
+- **작성일**: 2026-03-13
 
 ---
 
@@ -195,7 +195,8 @@ data: {"status": "done", "message": "완료"}
     "attempts": 1,
     "downloaded_at": "2026-03-04T10:23:45.123456",
     "error_msg": null,
-    "file_path": "/app/data/music/Radiohead/Pablo Honey/Creep.flac"
+    "file_path": "/app/data/music/Radiohead/Pablo Honey/Creep.flac",
+    "mb_recording_id": "a3e48b38-1234-5678-abcd-ef0123456789"
   },
   {
     "mbid": "manual-a1b2c3d4",
@@ -207,7 +208,8 @@ data: {"status": "done", "message": "완료"}
     "attempts": 1,
     "downloaded_at": "2026-03-04T11:00:00.000000",
     "error_msg": null,
-    "file_path": "/app/data/music/IU/밤의 편지/밤편지.flac"
+    "file_path": "/app/data/music/IU/밤의 편지/밤편지.flac",
+    "mb_recording_id": null
   }
 ]
 ```
@@ -226,6 +228,7 @@ data: {"status": "done", "message": "완료"}
 | downloaded_at | string \| null | 완료 시각 (UTC ISO 8601), 미완료 시 null |
 | error_msg | string \| null | 실패 사유, 성공 시 null |
 | file_path | string \| null | 임포트된 파일의 컨테이너 내 절대 경로. 미완료 시 null |
+| mb_recording_id | string \| null | MusicBrainz recording UUID. LB 트랙은 mbid와 동일. 수동 트랙은 MB 매칭 성공 시 기록, 실패 시 null |
 
 **Error Responses**
 
@@ -447,6 +450,7 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 1. `mbid` → state.db에서 `file_path` 직접 조회 / `song_id` → Navidrome `getSong`으로 경로 획득
 2. `mb_album_id`가 있으면 MB API로 release 조회 → 앨범명 확인. 없으면 `album_name` 필드 직접 사용
 3. mutagen으로 `album` 태그 재기록 (`mb_albumid`는 기록 안 함 — Navidrome 앨범 분리 방지)
+3a. `mb_recording_id`가 있으면 `write_mb_trackid_tag()`로 파일 포맷별 mb_trackid 태그 업데이트 (FLAC/Opus/MP4/기타 포맷 자동 감지). state.db `mb_recording_id` 컬럼도 해당 값으로 업데이트
 4. `artist_name`이 있으면 mutagen으로 `artist` 태그도 재기록
 5. 앨범명·아티스트명 기준으로 새 경로(`data/music/{Artist}/{Album}/{Track}.ext`) 계산 → 변경됐으면 `shutil.move`로 이동. state.db `file_path` / `artist` 업데이트. 이동 후 비어진 폴더 자동 정리
 6. `mb_album_id`가 있으면 CAA 커버아트 임베딩. 없고 `cover_url`이 있으면 URL에서 다운로드 후 임베딩 (실패 시 warning만)

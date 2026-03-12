@@ -126,6 +126,54 @@ def _extract_mb_recording_title(recordings: list, best_id: str) -> str:
     return ""
 
 
+def _lookup_recording_by_mbid(mbid: str) -> dict[str, str]:
+    """Look up MB recording directly by mbid. Returns {artist, title}, empty strings on failure."""
+    try:
+        time.sleep(1)  # rate limit
+        r = requests.get(
+            f"{_MB_API}/recording/{mbid}",
+            params={"fmt": "json", "inc": "artist-credits"},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+        title = data.get("title", "")
+        artist_credits = data.get("artist-credit", [])
+        artist_parts = []
+        for credit in artist_credits:
+            if isinstance(credit, dict):
+                name = credit.get("artist", {}).get("name", "")
+                if name:
+                    artist_parts.append(name)
+                joinphrase = credit.get("joinphrase", "")
+                if joinphrase:
+                    artist_parts.append(joinphrase)
+        artist = "".join(artist_parts).strip()
+        return {"artist": artist, "title": title}
+    except Exception as exc:
+        log.warning("MB direct recording lookup failed", mbid=mbid, error=str(exc))
+        return {"artist": "", "title": ""}
+
+
+def _mb_lookup_artist_ids(artist: str, limit: int = 3) -> list[str]:
+    """Search MB artist API by name, return list of artist MBIDs (up to `limit`)."""
+    try:
+        time.sleep(1)  # rate limit
+        r = requests.get(
+            f"{_MB_API}/artist",
+            params={"query": f'artistname:"{artist}"', "fmt": "json", "limit": limit},
+            headers=_MB_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        artists = r.json().get("artists", [])
+        return [a["id"] for a in artists if a.get("id")]
+    except Exception as exc:
+        log.warning("MB artist lookup failed", artist=artist, error=str(exc))
+        return []
+
+
 def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, str]:
     """Search MusicBrainz for recordings by artist and title.
 
@@ -206,6 +254,46 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
                     mb_recording_title=mb_recording_title,
                 )
                 return candidates, mb_artist_name, mb_recording_title
+
+        # Stage 2.5: artist ID 기반 검색 (아티스트명이 다른 언어/표기로 인덱싱된 경우 대응)
+        artist_ids = _mb_lookup_artist_ids(artist)
+        for arid in artist_ids:
+            time.sleep(1)  # rate limit
+            try:
+                r = requests.get(
+                    f"{_MB_API}/recording",
+                    params={
+                        "query": f'arid:{arid} AND recording:"{track_name}"',
+                        "fmt": "json",
+                        "limit": 5,
+                    },
+                    headers=_MB_HEADERS,
+                    timeout=10,
+                )
+                r.raise_for_status()
+                recordings = r.json().get("recordings", [])
+                for rec in recordings:
+                    rec_title = rec.get("title", "")
+                    if difflib.SequenceMatcher(None, rec_title.lower(), track_name.lower()).ratio() < 0.4:
+                        continue
+                    rec_id = rec.get("id")
+                    if not rec_id:
+                        continue
+                    credits = rec.get("artist-credit", [])
+                    mb_artist = "".join(
+                        c.get("artist", {}).get("name", "") + c.get("joinphrase", "")
+                        for c in credits if isinstance(c, dict)
+                    ).strip()
+                    log.info(
+                        "MB stage 2.5 match",
+                        recording=rec_title,
+                        artist=mb_artist,
+                        arid=arid,
+                    )
+                    return [rec_id], mb_artist, rec_title
+            except Exception as exc:
+                log.warning("MB stage 2.5 search failed", arid=arid, error=str(exc))
+                continue
 
         # Fallback: recording-only search (no artist filter) — pick best artist match
         log.info(
@@ -321,6 +409,34 @@ def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = 
         log.debug("wrote tags to file", file=file_path, artist=artist, title=track_name)
     except Exception as exc:
         log.warning("could not write tags to file", file=file_path, error=str(exc))
+
+
+def _write_mb_trackid_tag(file_path: str, recording_id: str):
+    """Write MusicBrainz recording ID (mb_trackid) tag to audio file."""
+    try:
+        suffix = Path(file_path).suffix.lower()
+        if suffix == ".flac":
+            f = mutagen.flac.FLAC(file_path)
+            f["musicbrainz_trackid"] = recording_id
+            f.save()
+        elif suffix in (".opus", ".ogg"):
+            f = mutagen.oggopus.OggOpus(file_path)
+            f["musicbrainz_trackid"] = [recording_id]
+            f.save()
+        elif suffix in (".m4a", ".mp4"):
+            f = mutagen.mp4.MP4(file_path)
+            f["----:com.apple.iTunes:MusicBrainz Track Id"] = [
+                mutagen.mp4.MP4FreeForm(recording_id.encode())
+            ]
+            f.save()
+        else:
+            f = mutagen.File(file_path)
+            if f is not None:
+                f["musicbrainz_trackid"] = recording_id
+                f.save()
+        log.debug("wrote mb_trackid tag", file=file_path, recording_id=recording_id)
+    except Exception as exc:
+        log.warning("could not write mb_trackid tag", file=file_path, error=str(exc))
 
 
 def _write_album_tag(file_path: str, album: str):
@@ -986,31 +1102,48 @@ def tag_and_import(
     yt_metadata: dict | None = None,
     db_path: str | None = None,
     mbid: str | None = None,
-) -> tuple[bool, str, str, str, str]:
+) -> tuple[bool, str, str, str, str, str]:
     """Tag staging file in-place, then copy to final music_dir path in one step.
 
-    Returns (success, dest_path, canonical_artist, canonical_title, canonical_album).
-    canonical_artist, canonical_title and canonical_album are empty strings on failure or when unavailable.
+    Returns (success, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id).
+    All string fields are empty strings on failure or when unavailable.
     """
     path = Path(staging_file)
     if not path.exists():
         log.error("staging file not found", file=staging_file)
-        return False, "", "", "", ""
+        return False, "", "", "", "", ""
 
     # Search MB for recording IDs (best-effort; failure does not abort import)
     recording_ids: list[str] = []
     mb_artist_name: str = ""
     mb_recording_title: str = ""
-    if artist and track_name:
+
+    is_lb_track = mbid and not mbid.startswith("manual-")
+
+    if is_lb_track:
+        # LB track: already have the correct recording_mbid, look it up directly
+        meta = _lookup_recording_by_mbid(mbid)
+        if meta["artist"] or meta["title"]:
+            recording_ids = [mbid]
+            mb_artist_name = meta["artist"]
+            mb_recording_title = meta["title"]
+        else:
+            log.warning("MB direct lookup failed, falling back to search", mbid=mbid)
+            if artist and track_name:
+                recording_ids, mb_artist_name, mb_recording_title = _mb_search_recording(
+                    artist, track_name
+                )
+    elif artist and track_name:
         recording_ids, mb_artist_name, mb_recording_title = _mb_search_recording(
             artist, track_name
         )
-        if not recording_ids:
-            log.warning(
-                "MB recording not found, continuing with iTunes/Deezer",
-                artist=artist,
-                track=track_name,
-            )
+
+    if not recording_ids:
+        log.warning(
+            "MB recording not found, continuing with iTunes/Deezer",
+            artist=artist,
+            track=track_name,
+        )
 
     # Write initial tags to staging file
     _write_tags(str(path), artist, track_name, recording_ids[0] if recording_ids else "")
@@ -1063,11 +1196,13 @@ def tag_and_import(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / (sanitized_track + path.suffix)
 
+    result_mb_recording_id = recording_ids[0] if recording_ids else ""
+
     # If file already exists at dest, treat as already in library
     if dest_path.exists():
         log.info("file already exists in music_dir, treating as duplicate", dest=str(dest_path))
         _cleanup_staging(path)
-        return True, str(dest_path), effective_artist, effective_track, album
+        return True, str(dest_path), effective_artist, effective_track, album, result_mb_recording_id
 
     # Copy enriched staging file to final destination
     try:
@@ -1080,10 +1215,10 @@ def tag_and_import(
             dest=str(dest_path),
             error=str(exc),
         )
-        return False, "", "", "", ""
+        return False, "", "", "", "", ""
 
     _cleanup_staging(path)
-    return True, str(dest_path), effective_artist, effective_track, album
+    return True, str(dest_path), effective_artist, effective_track, album, result_mb_recording_id
 
 
 def _cleanup_staging(path: Path):
@@ -1101,4 +1236,5 @@ embed_cover_art = _embed_cover_art
 embed_art_from_url = _embed_art_from_url
 write_album_tag = _write_album_tag
 write_artist_tag = _write_artist_tag
+write_mb_trackid_tag = _write_mb_trackid_tag
 itunes_search = _itunes_search

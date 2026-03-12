@@ -29,6 +29,7 @@ from src.pipeline.tagger import (
     tag_and_import,
     write_album_tag,
     write_artist_tag,
+    write_mb_trackid_tag,
 )
 from src.state import (
     delete_download,
@@ -112,7 +113,7 @@ def _run_download_job(job_id: str, artist: str, track: str, video_id: Optional[s
             return
 
         _emit(job_id, "tagging", "태깅 중...")
-        success, dest_path, canonical_artist, canonical_title, canonical_album = tag_and_import(
+        success, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id = tag_and_import(
             file_path,
             cfg.beets.music_dir,
             artist=artist,
@@ -128,13 +129,14 @@ def _run_download_job(job_id: str, artist: str, track: str, video_id: Optional[s
 
         mark_done(cfg.state_db, mbid, file_path=dest_path, album=canonical_album if canonical_album else None)
 
-        if canonical_artist or canonical_title or canonical_album:
+        if canonical_artist or canonical_title or canonical_album or mb_recording_id:
             update_track_info(
                 cfg.state_db,
                 mbid,
                 artist=canonical_artist if canonical_artist else None,
                 track_name=canonical_title if canonical_title else None,
                 album=canonical_album if canonical_album else None,
+                mb_recording_id=mb_recording_id if mb_recording_id else None,
             )
 
         _emit(job_id, "scanning", "Navidrome 스캔 중...")
@@ -609,6 +611,13 @@ async def rematch_apply(req: RematchApplyRequest):
         log.error("rematch_apply: write_album_tag failed", file=file_path, error=str(exc))
         raise HTTPException(status_code=500, detail=f"tag write failed: {exc}")
 
+    # 3-mb. Write mb_trackid tag if mb_recording_id is provided
+    if req.mb_recording_id:
+        try:
+            write_mb_trackid_tag(file_path, req.mb_recording_id)
+        except Exception as exc:
+            log.warning("rematch_apply: write_mb_trackid_tag failed", error=str(exc))
+
     # 3-artist. Rewrite artist tag if artist_name is provided
     if req.artist_name:
         try:
@@ -684,6 +693,21 @@ async def rematch_apply(req: RematchApplyRequest):
             log.warning(
                 "rematch_apply: cover art embed from URL failed",
                 cover_url=req.cover_url,
+            )
+
+    # 4-1. Update mb_recording_id in state.db if mbid is provided
+    if req.mbid is not None and req.mb_recording_id:
+        try:
+            update_track_info(
+                _cfg.state_db,
+                req.mbid,
+                mb_recording_id=req.mb_recording_id,
+            )
+        except Exception as exc:
+            log.warning(
+                "rematch_apply: mb_recording_id state.db update failed",
+                mbid=req.mbid,
+                error=str(exc),
             )
 
     # 5. Trigger Navidrome rescan (fire-and-forget)

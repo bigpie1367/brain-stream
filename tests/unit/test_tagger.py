@@ -22,7 +22,9 @@ from src.pipeline.tagger import (
     _enrich_track,
     _is_live_title,
     _itunes_search,
+    _lookup_recording_by_mbid,
     _mb_album_from_recording_id,
+    _mb_lookup_artist_ids,
     _mb_search_recording,
     _pick_best_recording,
     _pretag,
@@ -30,9 +32,11 @@ from src.pipeline.tagger import (
     _read_tags,
     _sanitize_filename,
     _write_artist_tag,
+    _write_mb_trackid_tag,
     _write_tags,
     tag_and_import,
     write_artist_tag,
+    write_mb_trackid_tag,
 )
 
 # ── FLAC 더미 파일 생성 헬퍼 ─────────────────────────────────────────────────
@@ -223,6 +227,109 @@ def test_write_artist_tag_nonexistent_file_does_not_raise(tmp_path):
     _write_artist_tag(str(bad_path), "Artist")
 
 
+# ── _write_mb_trackid_tag 테스트 ──────────────────────────────────────────────
+
+
+def test_write_mb_trackid_tag_flac(tmp_path):
+    """FLAC 파일에 musicbrainz_trackid 태그를 올바르게 기록한다."""
+    flac_path = _make_flac(tmp_path)
+    recording_id = "aaaabbbb-cccc-dddd-eeee-ffff00001111"
+
+    _write_mb_trackid_tag(str(flac_path), recording_id)
+
+    f = mutagen.flac.FLAC(str(flac_path))
+    assert f.get("musicbrainz_trackid") == [recording_id]
+
+
+def test_write_mb_trackid_tag_opus(tmp_path):
+    """Opus 파일에 musicbrainz_trackid 태그를 올바르게 기록한다."""
+    import mutagen.oggopus
+
+    opus_path = tmp_path / "test.opus"
+
+    # 최소 OggOpus 파일 생성 (mutagen이 읽을 수 있는 실제 OggOpus 포맷)
+    # OggOpus 헤더: OpusHead + OpusTags 페이지 필요
+    def _make_ogg_page(header_type, granule, serial, seq, data):
+        import struct as _struct
+        import zlib
+
+        segments = []
+        offset = 0
+        while offset < len(data):
+            seg = data[offset : offset + 255]
+            segments.append(seg)
+            offset += 255
+        segment_table = bytes([len(s) for s in segments])
+        lacing = len(segments)
+        header = (
+            b"OggS"
+            + _struct.pack("<B", 0)  # version
+            + _struct.pack("<B", header_type)
+            + _struct.pack("<Q", granule)
+            + _struct.pack("<I", serial)
+            + _struct.pack("<I", seq)
+            + _struct.pack("<I", 0)  # checksum placeholder
+            + _struct.pack("<B", lacing)
+            + segment_table
+        )
+        page = header + b"".join(segments)
+        crc = zlib.crc32(page) & 0xFFFFFFFF
+        page = page[:22] + _struct.pack("<I", crc) + page[26:]
+        return page
+
+    import struct as _struct
+
+    # OpusHead
+    opus_head = (
+        b"OpusHead"
+        + _struct.pack("<B", 1)  # version
+        + _struct.pack("<B", 2)  # channels
+        + _struct.pack("<H", 312)  # pre-skip
+        + _struct.pack("<I", 48000)  # input sample rate
+        + _struct.pack("<H", 0)  # output gain
+        + _struct.pack("<B", 0)  # channel mapping
+    )
+    page0 = _make_ogg_page(0x02, 0, 1, 0, opus_head)
+
+    # OpusTags (vendor string + 0 comments)
+    vendor = b"libopus"
+    opus_tags = (
+        b"OpusTags"
+        + _struct.pack("<I", len(vendor))
+        + vendor
+        + _struct.pack("<I", 0)  # user comment list length
+    )
+    page1 = _make_ogg_page(0x00, 0, 1, 1, opus_tags)
+
+    with open(opus_path, "wb") as fp:
+        fp.write(page0 + page1)
+
+    recording_id = "11112222-3333-4444-5555-666677778888"
+    _write_mb_trackid_tag(str(opus_path), recording_id)
+
+    import mutagen.oggopus as _oggopus
+
+    f = _oggopus.OggOpus(str(opus_path))
+    assert f.get("musicbrainz_trackid") == [recording_id]
+
+
+def test_write_mb_trackid_tag_public_alias(tmp_path):
+    """write_mb_trackid_tag public alias가 _write_mb_trackid_tag와 동일하게 동작한다."""
+    flac_path = _make_flac(tmp_path)
+    recording_id = "deadbeef-dead-beef-dead-beefdeadbeef"
+
+    write_mb_trackid_tag(str(flac_path), recording_id)
+
+    f = mutagen.flac.FLAC(str(flac_path))
+    assert f.get("musicbrainz_trackid") == [recording_id]
+
+
+def test_write_mb_trackid_tag_nonexistent_file_does_not_raise(tmp_path):
+    """존재하지 않는 파일에 대해 _write_mb_trackid_tag는 예외를 발생시키지 않는다."""
+    bad_path = tmp_path / "nonexistent.flac"
+    _write_mb_trackid_tag(str(bad_path), "some-uuid")
+
+
 # ── tag_and_import 테스트 ─────────────────────────────────────────────────────
 
 
@@ -359,6 +466,57 @@ def test_tag_and_import_no_artist_no_mb_search(tmp_path, monkeypatch):
     assert mb_called == []
     assert success is True
     assert dest != ""
+
+
+def test_tag_and_import_returns_6tuple_on_success(tmp_path, monkeypatch):
+    """tag_and_import 성공 시 6-tuple (bool, str, str, str, str, str)을 반환한다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (["fake-rec-id"], "Radiohead", "Creep"),
+    )
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("Pablo Honey", "Radiohead", "Creep"))
+
+    music_dir = tmp_path / "music"
+    result = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+    )
+    assert len(result) == 6
+    success, dest, canonical_artist, canonical_title, canonical_album, mb_recording_id = result
+    assert success is True
+    assert dest != ""
+    assert mb_recording_id == "fake-rec-id"
+
+
+def test_tag_and_import_returns_6tuple_on_failure(tmp_path):
+    """tag_and_import 실패 시 6-tuple을 반환하며 첫 번째 요소가 False이다."""
+    missing = tmp_path / "missing.flac"
+    result = tag_and_import(str(missing), music_dir=str(tmp_path / "music"))
+    assert len(result) == 6
+    assert result[0] is False
+    assert all(v == "" for v in result[1:])
+
+
+def test_tag_and_import_mb_recording_id_empty_when_no_mb_search(tmp_path, monkeypatch):
+    """MB 검색이 빈 결과를 반환하면 mb_recording_id는 빈 문자열이다."""
+    flac_path = _make_flac(tmp_path)
+    monkeypatch.setattr("src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", ""))
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
+
+    music_dir = tmp_path / "music"
+    result = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Artist",
+        track_name="Track",
+    )
+    assert len(result) == 6
+    success, dest, _, _, _, mb_recording_id = result
+    assert success is True
+    assert mb_recording_id == ""
 
 
 # ── _mb_search_recording fallback: artist 유사도 기반 선택 ─────────────────────
@@ -1076,6 +1234,165 @@ def test_mb_search_recording_fallback_matches_via_alias(monkeypatch):
     result, mb_artist, mb_title = _mb_search_recording("아이유", "밤편지")
     assert result == ["iu-recording-001"]
     assert mb_artist == "IU"
+
+
+# ── _lookup_recording_by_mbid 테스트 ──────────────────────────────────────────
+
+
+def test_lookup_recording_by_mbid_returns_artist_and_title(monkeypatch):
+    """MB recording 직접 조회가 성공하면 artist와 title을 반환한다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "title": "Creep",
+            "artist-credit": [
+                {"artist": {"name": "Radiohead"}, "joinphrase": ""},
+            ],
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _lookup_recording_by_mbid("some-uuid-001")
+    assert result["artist"] == "Radiohead"
+    assert result["title"] == "Creep"
+
+
+def test_lookup_recording_by_mbid_joins_multiple_artist_credits(monkeypatch):
+    """여러 artist-credit이 있을 때 joinphrase를 포함해 이어붙인 artist 이름을 반환한다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "title": "Collab Track",
+            "artist-credit": [
+                {"artist": {"name": "Artist A"}, "joinphrase": " feat. "},
+                {"artist": {"name": "Artist B"}, "joinphrase": ""},
+            ],
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _lookup_recording_by_mbid("some-uuid-002")
+    assert result["artist"] == "Artist A feat. Artist B"
+    assert result["title"] == "Collab Track"
+
+
+def test_lookup_recording_by_mbid_returns_empty_on_http_error(monkeypatch):
+    """HTTP 오류 발생 시 빈 문자열 dict를 반환한다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("404 Not Found")
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _lookup_recording_by_mbid("nonexistent-uuid")
+    assert result == {"artist": "", "title": ""}
+
+
+# ── tag_and_import: LB mbid 직접 조회 테스트 ─────────────────────────────────
+
+
+def test_tag_and_import_uses_direct_lookup_for_lb_track(tmp_path, monkeypatch):
+    """mbid가 'manual-'로 시작하지 않으면 _mb_search_recording 대신
+    _lookup_recording_by_mbid를 호출한다."""
+    flac_path = _make_flac(tmp_path)
+
+    search_called = []
+    lookup_called = []
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (search_called.append((a, t)) or ([], "", "")),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._lookup_recording_by_mbid",
+        lambda m: (lookup_called.append(m) or {"artist": "Radiohead", "title": "Creep"}),
+    )
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+        mbid="valid-lb-uuid-001",
+    )
+
+    assert success is True
+    assert lookup_called == ["valid-lb-uuid-001"]
+    assert search_called == []
+
+
+def test_tag_and_import_uses_search_for_manual_track(tmp_path, monkeypatch):
+    """mbid가 'manual-'로 시작하면 _lookup_recording_by_mbid 대신
+    _mb_search_recording을 호출한다."""
+    flac_path = _make_flac(tmp_path)
+
+    search_called = []
+    lookup_called = []
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (search_called.append((a, t)) or (["fake-id"], "", "")),
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._lookup_recording_by_mbid",
+        lambda m: (lookup_called.append(m) or {"artist": "", "title": ""}),
+    )
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+        mbid="manual-abc12345",
+    )
+
+    assert success is True
+    assert lookup_called == []
+    assert search_called == [("Radiohead", "Creep")]
+
+
+def test_tag_and_import_lb_track_falls_back_to_search_on_lookup_failure(tmp_path, monkeypatch):
+    """LB mbid로 직접 조회가 실패(빈 응답)하면 _mb_search_recording으로 폴백한다."""
+    flac_path = _make_flac(tmp_path)
+
+    search_called = []
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger._lookup_recording_by_mbid",
+        lambda m: {"artist": "", "title": ""},
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger._mb_search_recording",
+        lambda a, t: (search_called.append((a, t)) or ([], "", "")),
+    )
+    monkeypatch.setattr("src.pipeline.tagger._enrich_track", lambda *args, **kwargs: ("", "", ""))
+
+    music_dir = tmp_path / "music"
+    success, dest, *_ = tag_and_import(
+        str(flac_path),
+        music_dir=str(music_dir),
+        artist="Radiohead",
+        track_name="Creep",
+        mbid="valid-lb-uuid-002",
+    )
+
+    assert success is True
+    assert search_called == [("Radiohead", "Creep")]
 
 
 def test_mb_search_recording_fallback_no_aliases_uses_name(monkeypatch):
@@ -2126,7 +2443,7 @@ def test_tag_and_import_writes_mb_recording_title_when_itunes_fails(tmp_path, mo
 
 
 def test_tag_and_import_returns_canonical_artist_and_title(tmp_path, monkeypatch):
-    """tag_and_import가 5-tuple을 반환하며, canonical_artist, canonical_title, canonical_album이 포함된다."""
+    """tag_and_import가 6-tuple을 반환하며, canonical_artist, canonical_title, canonical_album이 포함된다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
         "src.pipeline.tagger._mb_search_recording",
@@ -2145,18 +2462,19 @@ def test_tag_and_import_returns_canonical_artist_and_title(tmp_path, monkeypatch
         track_name="밤편지",
     )
 
-    assert len(result) == 5
-    success, dest, canonical_artist, canonical_title, canonical_album = result
+    assert len(result) == 6
+    success, dest, canonical_artist, canonical_title, canonical_album, mb_recording_id = result
     assert success is True
     assert canonical_artist == "IU"
     assert canonical_title == "Through the Night"
     assert canonical_album == "밤편지"
+    assert mb_recording_id == "some-id"
 
 
 def test_tag_and_import_returns_empty_canonical_on_file_not_found(tmp_path):
-    """staging 파일이 없으면 canonical_artist, canonical_title, canonical_album도 빈 문자열로 반환한다."""
+    """staging 파일이 없으면 canonical_artist, canonical_title, canonical_album, mb_recording_id도 빈 문자열로 반환한다."""
     missing = tmp_path / "missing.flac"
-    success, dest, canonical_artist, canonical_title, canonical_album = tag_and_import(
+    success, dest, canonical_artist, canonical_title, canonical_album, mb_recording_id = tag_and_import(
         str(missing),
         music_dir=str(tmp_path / "music"),
     )
@@ -2165,6 +2483,7 @@ def test_tag_and_import_returns_empty_canonical_on_file_not_found(tmp_path):
     assert canonical_artist == ""
     assert canonical_title == ""
     assert canonical_album == ""
+    assert mb_recording_id == ""
 
 
 def test_tag_and_import_returns_canonical_artist_for_duplicate(tmp_path, monkeypatch):
@@ -2202,3 +2521,151 @@ def test_tag_and_import_returns_canonical_artist_for_duplicate(tmp_path, monkeyp
     assert success2 is True
     assert c_artist2 == "Radiohead"
     assert c_title2 == "Creep"
+
+
+# ── _mb_lookup_artist_ids 테스트 ──────────────────────────────────────────────
+
+
+def test_mb_lookup_artist_ids_returns_ids(monkeypatch):
+    """MB artist API 정상 응답 시 artist MBID 목록을 반환한다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "artists": [
+                {"id": "arid-001", "name": "Junho"},
+                {"id": "arid-002", "name": "2PM"},
+                {"id": "arid-003", "name": "Jun. K"},
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_lookup_artist_ids("준호")
+    assert result == ["arid-001", "arid-002", "arid-003"]
+
+
+def test_mb_lookup_artist_ids_returns_empty_on_failure(monkeypatch):
+    """HTTP 오류 발생 시 빈 리스트를 반환한다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("500 Server Error")
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_lookup_artist_ids("준호")
+    assert result == []
+
+
+def test_mb_lookup_artist_ids_skips_entries_without_id(monkeypatch):
+    """id 필드가 없는 artist 항목은 결과에서 제외된다."""
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "artists": [
+                {"id": "arid-001", "name": "Junho"},
+                {"name": "No ID Artist"},  # id 없음
+            ]
+        }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result = _mb_lookup_artist_ids("준호")
+    assert result == ["arid-001"]
+
+
+# ── _mb_search_recording: Stage 2.5 arid 기반 매칭 테스트 ─────────────────────
+
+
+def test_mb_search_recording_stage25_matches_via_arid(monkeypatch):
+    """stage 1(strict), stage 2(plain) 모두 실패하면 stage 2.5(arid 기반 검색)로 매칭한다.
+    호출 순서: 1=strict(empty), 2=plain(empty), 3=artist lookup, 4=arid recording search(data).
+    """
+    call_count = [0]
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+
+        if "/artist" in url:
+            # stage 2.5: artist ID 조회
+            resp.json.return_value = {"artists": [{"id": "junho-arid-001"}]}
+        elif call_count[0] <= 2:
+            # stage 1, 2: recording 검색 (empty)
+            resp.json.return_value = {"recordings": []}
+        else:
+            # stage 2.5: arid 기반 recording 검색
+            resp.json.return_value = {
+                "recordings": [
+                    {
+                        "id": "junho-rec-001",
+                        "title": "해야 (The Day)",
+                        "artist-credit": [
+                            {
+                                "artist": {"name": "Junho"},
+                                "joinphrase": "",
+                            }
+                        ],
+                    }
+                ]
+            }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    result, mb_artist, mb_title = _mb_search_recording("준호", "해야 (The Day)")
+    assert result == ["junho-rec-001"]
+    assert mb_artist == "Junho"
+    assert mb_title == "해야 (The Day)"
+
+
+def test_mb_search_recording_stage25_skips_low_title_similarity(monkeypatch):
+    """stage 2.5에서 recording title 유사도 0.4 미만인 결과는 건너뛴다."""
+    call_count = [0]
+    artist_lookup_called = [False]
+
+    def fake_get(url, params=None, headers=None, timeout=10):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+
+        if "/artist" in url:
+            artist_lookup_called[0] = True
+            resp.json.return_value = {"artists": [{"id": "some-arid-001"}]}
+        elif call_count[0] <= 2:
+            resp.json.return_value = {"recordings": []}
+        else:
+            # title 유사도가 0.4 미만인 recording만 반환
+            resp.json.return_value = {
+                "recordings": [
+                    {
+                        "id": "wrong-rec-001",
+                        "title": "완전히 다른 곡",
+                        "artist-credit": [
+                            {"artist": {"name": "Junho"}, "joinphrase": ""}
+                        ],
+                    }
+                ]
+            }
+        return resp
+
+    monkeypatch.setattr("src.pipeline.tagger.requests.get", fake_get)
+    monkeypatch.setattr("src.pipeline.tagger.time.sleep", lambda s: None)
+
+    # stage 2.5가 실패하면 stage 3(recording-only)으로 넘어가 최종 빈 리스트 반환
+    result, mb_artist, mb_title = _mb_search_recording("준호", "해야")
+    # stage 2.5에서 아무것도 매칭되지 않고 stage 3도 빈 결과 → 빈 리스트
+    assert result == []
+    assert artist_lookup_called[0] is True

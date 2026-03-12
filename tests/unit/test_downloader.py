@@ -410,6 +410,64 @@ def test_select_best_entry_duration_none_treated_as_zero():
     assert result["title"] == "Radiohead - Creep (Official)"
 
 
+# ── strict 모드 단위 테스트 ───────────────────────────────────────────────────
+
+
+def test_strict_mode_filters_live_entries():
+    """strict=True(기본값): 클린 entry가 있으면 라이브 entry를 사전 필터링한다."""
+    entries = [
+        _entry("Radiohead - Creep Live at MSG", 232.0),
+        _entry("Radiohead - Creep (Official Audio)", 238.0),
+    ]
+    result = _select_best_entry(entries, mb_duration=230.0, strict=True)
+    assert result["title"] == "Radiohead - Creep (Official Audio)"
+
+
+def test_strict_mode_falls_back_when_all_live():
+    """strict=True: 모든 entry가 라이브이면 전체 후보에서 최선을 선택한다."""
+    entries = [
+        _entry("Radiohead - Creep Live at MSG", 290.0),
+        _entry("Radiohead - Creep (Live in Japan)", 235.0),
+        _entry("Radiohead - Creep Concert 2008", 310.0),
+    ]
+    result = _select_best_entry(entries, mb_duration=232.0, strict=True)
+    # 전체 폴백 후 duration 기준 최선 선택
+    assert result["title"] == "Radiohead - Creep (Live in Japan)"
+
+
+def test_strict_mode_false_keeps_live_entries():
+    """strict=False: 라이브 entry를 필터링하지 않고 점수 기준으로만 선택한다."""
+    entries = [
+        _entry("Radiohead - Creep (Official Audio)", 300.0),  # duration 멀지만 스튜디오
+        _entry("Radiohead - Creep Live in Japan", 232.0),     # duration 가깝지만 라이브
+    ]
+    mb_duration = 232.0
+    # strict=False이면 라이브 패널티(+500)와 duration 차이(68)가 합산되어
+    # Official(duration diff 68, 패널티 없음) vs Live(duration diff 0, 패널티 +500)
+    # → Official이 점수 낮으므로 선택됨. 단, strict 사전필터는 적용 안 됨을 확인.
+    result = _select_best_entry(entries, mb_duration=mb_duration, strict=False)
+    assert result["title"] == "Radiohead - Creep (Official Audio)"
+
+
+def test_strict_mode_filters_cover_unless_requested():
+    """strict=True: track_name에 cover 없으면 커버 entry 제외, 있으면 유지한다."""
+    entries = [
+        _entry("Radiohead - Creep (Fan Cover)", 232.0),
+        _entry("Radiohead - Creep (Official Audio)", 238.0),
+    ]
+    # cover를 요청하지 않은 경우 — 커버 entry 필터링 → Official 선택
+    result_no_cover = _select_best_entry(
+        entries, mb_duration=232.0, track_name="Creep", strict=True
+    )
+    assert result_no_cover["title"] == "Radiohead - Creep (Official Audio)"
+
+    # cover를 요청한 경우 — 커버 entry 유지 → duration 기준 Fan Cover 선택
+    result_wants_cover = _select_best_entry(
+        entries, mb_duration=232.0, track_name="Creep cover", strict=True
+    )
+    assert result_wants_cover["title"] == "Radiohead - Creep (Fan Cover)"
+
+
 # ── _is_cover 단위 테스트 ──────────────────────────────────────────────────────
 
 

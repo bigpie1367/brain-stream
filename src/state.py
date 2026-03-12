@@ -50,6 +50,11 @@ def init_db(db_path: str):
             conn.execute("ALTER TABLE downloads ADD COLUMN album TEXT")
         except sqlite3.OperationalError:
             pass  # already exists
+        # Migrate: add mb_recording_id column if missing
+        try:
+            conn.execute("ALTER TABLE downloads ADD COLUMN mb_recording_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # already exists
     log.info("state.db initialised", path=db_path)
 
 
@@ -112,7 +117,7 @@ def get_all_downloads(db_path: str, limit: int = 100) -> List[dict]:
     with _conn(db_path) as conn:
         rows = conn.execute("""
             SELECT mbid, track_name, artist, album, status, source,
-                   attempts, downloaded_at, error_msg, file_path
+                   attempts, downloaded_at, error_msg, file_path, mb_recording_id
             FROM downloads
             ORDER BY rowid DESC
             LIMIT ?
@@ -124,7 +129,7 @@ def get_download_by_mbid(db_path: str, mbid: str) -> Optional[dict]:
     with _conn(db_path) as conn:
         row = conn.execute("""
             SELECT mbid, track_name, artist, album, status, source,
-                   attempts, downloaded_at, error_msg, file_path
+                   attempts, downloaded_at, error_msg, file_path, mb_recording_id
             FROM downloads
             WHERE mbid = ?
         """, (mbid,)).fetchone()
@@ -147,8 +152,9 @@ def update_track_info(
     track_name: str | None = None,
     file_path: str | None = None,
     album: str | None = None,
+    mb_recording_id: str | None = None,
 ):
-    """아티스트·트랙명·파일경로·앨범명을 선택적으로 업데이트한다."""
+    """아티스트·트랙명·파일경로·앨범명·MB recording ID를 선택적으로 업데이트한다."""
     fields = []
     values = []
     if artist is not None:
@@ -163,6 +169,9 @@ def update_track_info(
     if album is not None:
         fields.append("album = ?")
         values.append(album)
+    if mb_recording_id is not None:
+        fields.append("mb_recording_id = ?")
+        values.append(mb_recording_id)
     if not fields:
         return
     values.append(mbid)
