@@ -131,6 +131,7 @@ def _select_best_entry(
     mb_duration: Optional[float],
     artist: str = "",
     track_name: str = "",
+    strict: bool = True,
 ) -> dict:
     """Select the best YouTube entry using a scoring system.
 
@@ -140,12 +141,35 @@ def _select_best_entry(
     - Live performance title: +500 penalty
     - Official channel (artist/VEVO/Topic): -200 to -100 bonus
     - Duration proximity to MB: abs difference in seconds
+
+    strict=True (default): live entries and (unless user wants cover) cover
+    entries are pre-filtered out before scoring. Falls back to full list when
+    all candidates are filtered.
     """
     if not entries:
         raise ValueError("entries list is empty")
 
     # If user explicitly wants a cover/remix, don't penalize those
     user_wants_cover = _is_cover(track_name)
+
+    if strict:
+        clean = [
+            e for e in entries
+            if not _is_live(e.get("title", ""))
+            and (user_wants_cover or not _is_cover(e.get("title", "")))
+        ]
+        if clean:
+            log.info(
+                "strict mode: filtered entries",
+                total=len(entries),
+                clean=len(clean),
+            )
+            entries = clean
+        else:
+            log.warning(
+                "strict mode: no clean entries found, falling back to all candidates",
+                total=len(entries),
+            )
 
     def score(e: dict) -> float:
         s = 0.0
