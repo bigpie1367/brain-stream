@@ -16,7 +16,7 @@ import mutagen.flac
 import mutagen.oggopus
 import requests
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -232,6 +232,26 @@ async def list_downloads():
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
     return get_all_downloads(_cfg.state_db)
+
+
+@app.get("/api/stream/{mbid}")
+async def stream_track(mbid: str):
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+    record = get_download_by_mbid(_cfg.state_db, mbid)
+    if not record or not record.get("file_path"):
+        raise HTTPException(status_code=404, detail="File not found")
+    file_path = record["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".flac":
+        media_type = "audio/flac"
+    elif ext == ".opus":
+        media_type = "audio/ogg; codecs=opus"
+    else:
+        media_type = "audio/mpeg"
+    return FileResponse(file_path, media_type=media_type)
 
 
 @app.get("/api/downloads/{mbid}/detail")

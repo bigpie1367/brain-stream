@@ -1290,6 +1290,16 @@
   <audio id="audio-player" preload="none"></audio>
 </div>
 
+<!-- 다운로드 이력 미니 플레이어 -->
+<div id="mini-player" style="display:none; position:fixed; bottom:0; left:0; right:0; background:#12141f; border-top:1px solid #2d3147; z-index:101; align-items:center; gap:14px; padding:0 20px; height:64px;">
+  <div style="min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; overflow:hidden;">
+    <span id="mini-player-title" style="font-size:0.85rem; font-weight:600; color:#e2e8f0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></span>
+    <span id="mini-player-artist" style="font-size:0.75rem; color:#718096; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></span>
+  </div>
+  <audio id="mini-player-audio" controls style="flex:2; min-width:0; height:36px;"></audio>
+  <button id="mini-player-close" style="background:none; border:none; color:#718096; cursor:pointer; font-size:1rem; padding:4px 8px; border-radius:4px; min-width:0; align-self:auto; flex-shrink:0;" title="Close">&#10005;</button>
+</div>
+
 <!-- 삭제 확인 모달 -->
 <div class="modal-overlay hidden" id="delete-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title-text">
   <div class="modal-box">
@@ -1851,6 +1861,18 @@
       e.stopPropagation();
       openDeleteModal(r.mbid, r.artist, r.track_name, mainTr, expandTr);
     });
+
+    if (r.file_path && (r.status === 'done' || r.status === 'ignored')) {
+      const playBtn = document.createElement('button');
+      playBtn.className = 'btn-expand-rematch';
+      playBtn.textContent = '\u25B6';
+      playBtn.title = 'Preview track';
+      playBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        playTrack(r.mbid, r.track_name, r.artist);
+      });
+      actions.appendChild(playBtn);
+    }
 
     actions.appendChild(rematchBtn);
     actions.appendChild(deleteBtn);
@@ -2824,6 +2846,27 @@
   // 재매칭 모달 외부(오버레이) 클릭 시 닫기
   document.getElementById('rematch-modal').addEventListener('click', function(e) {
     if (e.target === this) closeRematchModal();
+  });
+
+  // ── 다운로드 이력 미니 플레이어 ───────────────────────────────────────────
+  function playTrack(mbid, trackName, artistName) {
+    const player = document.getElementById('mini-player');
+    const miniAudio = document.getElementById('mini-player-audio');
+    const titleEl = document.getElementById('mini-player-title');
+    const artistEl = document.getElementById('mini-player-artist');
+
+    miniAudio.src = '/api/stream/' + encodeURIComponent(mbid);
+    titleEl.textContent = trackName;
+    artistEl.textContent = artistName;
+    player.style.display = 'flex';
+    miniAudio.play().catch(err => console.error('mini-player play failed:', err));
+  }
+
+  document.getElementById('mini-player-close').addEventListener('click', () => {
+    const miniAudio = document.getElementById('mini-player-audio');
+    miniAudio.pause();
+    miniAudio.src = '';
+    document.getElementById('mini-player').style.display = 'none';
   });
 </script>
 </body>
