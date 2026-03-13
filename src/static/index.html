@@ -1195,8 +1195,8 @@
       <div id="yt-candidates-list" class="yt-candidates-list"></div>
     </div>
     <div id="status-bar">
-      <span class="status-dot dot-idle" id="status-dot"></span>
-      <span id="status-msg">Idle</span>
+      <span class="status-dot" id="status-dot" style="display:none;"></span>
+      <span id="status-msg"></span>
     </div>
   </section>
 
@@ -1357,8 +1357,15 @@
   const dlBtn  = document.getElementById('btn-download');
 
   function setStatus(type, msg) {
-    dotEl.className = 'status-dot dot-' + type;
-    msgEl.textContent = msg;
+    if (type === 'idle') {
+      dotEl.style.display = 'none';
+      dotEl.className = 'status-dot';
+      msgEl.textContent = '';
+    } else {
+      dotEl.style.display = '';
+      dotEl.className = 'status-dot dot-' + type;
+      msgEl.textContent = msg;
+    }
   }
 
   // ── Manual Download ────────────────────────────────────────────────────────
@@ -1575,6 +1582,13 @@
       const dotType = (status === 'done') ? 'done' : (status === 'failed') ? 'failed' : 'progress';
       setStatus(dotType, message);
 
+      // 테이블 행 status 배지 실시간 업데이트
+      const row = document.querySelector(`#history-body tr[data-mbid="${jobId}"]`);
+      if (row) {
+        const statusCell = row.cells[4];
+        if (statusCell) statusCell.innerHTML = statusBadge(status);
+      }
+
       if (status === 'done' || status === 'failed') {
         es.close();
         isDownloading = false;
@@ -1624,6 +1638,13 @@
       const { status, message } = JSON.parse(e.data);
       const dotType = (status === 'done') ? 'done' : (status === 'failed') ? 'failed' : 'progress';
       setStatus(dotType, message);
+
+      // 테이블 행 status 배지 실시간 업데이트
+      const row = document.querySelector(`#history-body tr[data-mbid="${jobId}"]`);
+      if (row) {
+        const statusCell = row.cells[4];
+        if (statusCell) statusCell.innerHTML = statusBadge(status);
+      }
 
       if (status === 'done' || status === 'failed') {
         es.close();
