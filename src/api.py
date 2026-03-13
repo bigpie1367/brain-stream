@@ -1,4 +1,5 @@
 import base64
+import glob as _glob
 import hashlib
 import json
 import os
@@ -85,6 +86,26 @@ def _run_download_job(cfg, job_spec: dict):
     mbid = job_id  # use job_id as the unique key in the DB
 
     try:
+        # Fix 3: copy2 완료 후 mark_done 직전 크래시 대응
+        # file_path가 이미 기록되어 있고 파일도 존재하면 다운로드/태깅 스킵
+        existing = get_download_by_mbid(cfg.state_db, mbid)
+        if existing and existing.get("file_path") and os.path.exists(existing["file_path"]):
+            log.info("file already exists, skipping download", mbid=mbid, path=existing["file_path"])
+            mark_done(cfg.state_db, mbid, existing["file_path"])
+            worker.emit(job_id, "scanning", "Navidrome 스캔 중...")
+            if trigger_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password):
+                wait_for_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password)
+            worker.emit(job_id, "done", "완료")
+            return
+
+        # Fix 1: 잡 시작 전 staging 잔류 파일 정리 (.part, .flac, .opus 등)
+        for leftover in _glob.glob(os.path.join(cfg.download.staging_dir, f"{mbid}*")):
+            try:
+                os.remove(leftover)
+                log.info("removed leftover staging file", path=leftover)
+            except OSError:
+                pass
+
         worker.emit(job_id, "downloading", "YouTube 검색 중...")
         mark_downloading(cfg.state_db, mbid)
 

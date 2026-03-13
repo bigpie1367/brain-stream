@@ -8,7 +8,7 @@ import src.api as api_module
 import src.worker as worker_module
 from src.config import load_config
 from src.pipeline.listenbrainz import _lookup_recording, fetch_recommendations
-from src.state import get_all_downloads, get_pending_jobs, get_retryable, init_db, is_downloaded, mark_failed, mark_pending
+from src.state import get_all_downloads, get_download_by_mbid, get_pending_jobs, get_retryable, init_db, is_downloaded, mark_failed, mark_pending
 from src.utils.logger import get_logger, setup_logger
 
 log = get_logger(__name__)
@@ -80,15 +80,26 @@ def _run_scheduler(cfg):
 def _reload_pending_jobs(cfg):
     """DB에서 status='pending'/'downloading' 잡을 큐에 재적재 (재시작 복구)."""
     rows = get_pending_jobs(cfg.state_db)
+    requeued = 0
+    skipped = 0
     for row in rows:
+        if row["status"] == "downloading":
+            # 크래시로 중단된 잡 — attempts 증가 후 max_attempts 초과 여부 확인
+            mark_failed(cfg.state_db, row["mbid"], "interrupted by restart")
+            updated = get_download_by_mbid(cfg.state_db, row["mbid"])
+            if updated and updated["attempts"] >= 3:
+                log.warning("job exceeded max attempts, skipping", job_id=row["mbid"])
+                skipped += 1
+                continue
         worker_module.enqueue_job(
             job_id=row["mbid"],
             artist=row["artist"],
             track=row["track_name"],
             source=row.get("source", "listenbrainz"),
         )
-    if rows:
-        log.info("pending jobs reloaded", count=len(rows))
+        requeued += 1
+    if requeued or skipped:
+        log.info("pending jobs reloaded", requeued=requeued, skipped=skipped)
 
 
 def main():

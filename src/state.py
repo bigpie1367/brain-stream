@@ -117,7 +117,7 @@ def get_pending_jobs(db_path: str) -> List[dict]:
     """재시작 복구용: pending/downloading 잡을 원래 적재 순서(rowid ASC)로 반환."""
     with _conn(db_path) as conn:
         rows = conn.execute("""
-            SELECT mbid, track_name, artist, source
+            SELECT mbid, track_name, artist, source, status, attempts
             FROM downloads
             WHERE status IN ('pending', 'downloading')
             ORDER BY rowid ASC
