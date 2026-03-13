@@ -137,30 +137,6 @@
     }
     .btn-secondary:hover { background: #363b55; color: #e2e8f0; }
 
-    #status-bar {
-      margin-top: 14px;
-      min-height: 28px;
-      font-size: 0.85rem;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .status-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-    .dot-idle     { background: #4a5568; }
-    .dot-progress { background: #f6ad55; animation: pulse 1s infinite; }
-    .dot-done     { background: #68d391; }
-    .dot-failed   { background: #fc8181; }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.4; }
-    }
-
     .lb-row { display: flex; align-items: center; gap: 12px; }
 
     /* Downloads table */
@@ -1194,10 +1170,6 @@
     <div id="yt-candidates-wrap">
       <div id="yt-candidates-list" class="yt-candidates-list"></div>
     </div>
-    <div id="status-bar">
-      <span class="status-dot" id="status-dot" style="display:none;"></span>
-      <span id="status-msg"></span>
-    </div>
   </section>
 
   <!-- LB Pipeline -->
@@ -1352,20 +1324,10 @@
   }
 
   // ── Status bar ─────────────────────────────────────────────────────────────
-  const dotEl  = document.getElementById('status-dot');
-  const msgEl  = document.getElementById('status-msg');
   const dlBtn  = document.getElementById('btn-download');
 
   function setStatus(type, msg) {
-    if (type === 'idle') {
-      dotEl.style.display = 'none';
-      dotEl.className = 'status-dot';
-      msgEl.textContent = '';
-    } else {
-      dotEl.style.display = '';
-      dotEl.className = 'status-dot dot-' + type;
-      msgEl.textContent = msg;
-    }
+    // status indicator removed; kept as no-op to avoid call-site errors
   }
 
   // ── Manual Download ────────────────────────────────────────────────────────
@@ -1575,6 +1537,9 @@
       return;
     }
 
+    // 테이블에 pending 행이 먼저 추가되도록 history를 미리 로드
+    await loadHistory();
+
     // SSE (기존과 동일)
     const es = new EventSource('/api/sse/' + jobId);
     es.onmessage = (ev) => {
@@ -1631,6 +1596,9 @@
       dlBtn.disabled = false;
       return;
     }
+
+    // 테이블에 pending 행이 먼저 추가되도록 history를 미리 로드
+    await loadHistory();
 
     // SSE
     const es = new EventSource('/api/sse/' + jobId);
