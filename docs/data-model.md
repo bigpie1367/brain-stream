@@ -1,6 +1,6 @@
 # 데이터 모델
 
-- **버전**: 1.3.0
+- **버전**: 1.4.0
 - **작성일**: 2026-03-13
 
 ---
@@ -56,33 +56,39 @@ CREATE TABLE IF NOT EXISTS downloads (
                        │ mark_pending()
                        ▼
                   ┌──────────┐
-                  │ pending  │◄── 재시작 복구: DB pending/downloading 잡 재적재
+                  │ pending  │
                   └────┬─────┘
                        │ enqueue_job() → _work_queue
                        ▼
                   ┌──────────┐
-                  │  queued  │  ← worker가 픽업 대기 중
+                  │  queued  │  ← SSE 이벤트만, DB는 pending 유지
                   └────┬─────┘
                        │ mark_downloading()
                        ▼
                   ┌──────────────┐
-                  │ downloading  │
-                  └──────┬───────┘
-           성공           │           실패
-    ┌──────────────────────┤
-    ▼                      ▼
-┌────────┐           ┌──────────┐
-│  done  │           │  failed  │◄──── attempts 증가
-└───┬────┘           └──────┬───┘
-    │                       │
-    │ DELETE /api/downloads  │ attempts < 3?
-    ▼                       ├─ Yes → 다음 파이프라인 실행 시 재시도
-┌─────────┐                 └─ No  → 영구 실패 (더 이상 재시도 안 함)
-│ ignored │  ← 파일 삭제, DB 레코드 유지
-└─────────┘  ← 파이프라인이 done과 동일하게 스킵
+         ┌────────│ downloading  │
+         │        └──────┬───────┘
+         │  크래시        │ 정상 완료/실패
+         │        ┌──────┴──────────┐
+         │        ▼                 ▼
+         │   ┌────────┐        ┌──────────┐
+         │   │  done  │        │  failed  │◄── attempts 증가
+         │   └───┬────┘        └──────┬───┘
+         │       │ DELETE              │ attempts < 3?
+         │       ▼                    ├─ Yes → 다음 파이프라인 재시도
+         │  ┌─────────┐               └─ No  → 영구 실패
+         │  │ ignored │
+         │  └─────────┘
+         │
+         └─► mark_failed("interrupted by restart")  ← 재시작 복구
+               attempts++
+               attempts < 3 → 재큐 (pending으로 재처리)
+               attempts ≥ 3 → failed 유지 (재큐 안 함)
 ```
 
-**참고**: `queued` 상태는 SSE 이벤트로만 표시되며, DB에는 `pending`으로 유지됨 (워커가 픽업하면 `downloading`으로 전이).
+**참고**:
+- `queued` 상태는 SSE 이벤트로만 표시. DB 컬럼 `status`에는 `pending`으로 유지됨
+- 재시작 시 `downloading` 잡은 크래시로 중단된 것으로 간주하여 `attempts`를 증가시킴
 
 ---
 

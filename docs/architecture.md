@@ -1,6 +1,6 @@
 # 시스템 아키텍처
 
-- **버전**: 1.6.0
+- **버전**: 1.7.0
 - **작성일**: 2026-03-13
 
 ---
@@ -220,8 +220,12 @@ LB 자동 트랙과 수동 요청 트랙이 동일한 워커 스레드에서 FIF
         │
         ├─ Navidrome startScan → getScanStatus 폴링 → 완료 대기
         │
-        └─ SSE emit: "done" / "failed"
-           (SSE 리스너 없는 LB 트랙은 worker.emit()이 조용히 무시)
+        ├─ SSE emit: "done" / "failed"
+        │  (SSE 리스너 없는 LB 트랙은 worker.emit()이 조용히 무시)
+        │
+        └─ [잡 시작 시 안전 장치]
+           ① staging/{mbid}.* 잔류 파일 삭제 (.part 포함)
+           ② state.db file_path 존재 + 파일 실재 시 → 재다운로드 스킵, scan만 실행
 ```
 
 ---
@@ -247,7 +251,15 @@ Daemon Thread 3 — scheduler
 **동시성 제어:**
 - 워커 스레드 1개 → 다운로드 잡이 항상 순차적으로 처리됨 (yt-dlp / MB API 동시 호출 없음)
 - SSE 큐 dict(`_job_queues`) 접근은 `threading.Lock`으로 보호
-- 재시작 복구: `main.py` 기동 시 state.db의 `pending`/`downloading`/`queued` 상태 잡을 `_work_queue`에 재적재
+
+**재시작 복구 (`_reload_pending_jobs`):**
+- `status = 'pending'` 잡: 그대로 재큐
+- `status = 'downloading'` 잡: 크래시로 중단된 것으로 간주 → `mark_failed("interrupted by restart")`로 `attempts` 증가 → `attempts < 3`이면 재큐, `>= 3`이면 영구 실패로 방치
+- 재큐 순서: `rowid ASC` (원래 적재 순서 보존)
+
+**중단 안전성:**
+- 잡 시작 전 `staging/{mbid}.*` 파일 전체 삭제 (이전 중단으로 남은 `.part` 등 제거)
+- 잡 시작 시 `state.db.file_path`가 설정되어 있고 파일이 실제 존재하면 `copy2`까지 완료된 것으로 판단 → 재다운로드 스킵, scan + `mark_done`만 실행
 
 ---
 
