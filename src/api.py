@@ -91,7 +91,7 @@ def _run_download_job(cfg, job_spec: dict):
         existing = get_download_by_mbid(cfg.state_db, mbid)
         if existing and existing.get("file_path") and os.path.exists(existing["file_path"]):
             log.info("file already exists, skipping download", mbid=mbid, path=existing["file_path"])
-            mark_done(cfg.state_db, mbid, existing["file_path"])
+            mark_done(cfg.state_db, mbid, existing["file_path"], album=existing.get("album"))
             worker.emit(job_id, "scanning", "Navidrome 스캔 중...")
             if trigger_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password):
                 wait_for_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password)
