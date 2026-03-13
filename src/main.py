@@ -8,7 +8,7 @@ import src.api as api_module
 import src.worker as worker_module
 from src.config import load_config
 from src.pipeline.listenbrainz import _lookup_recording, fetch_recommendations
-from src.state import get_all_downloads, get_retryable, init_db, is_downloaded, mark_failed, mark_pending
+from src.state import get_all_downloads, get_pending_jobs, get_retryable, init_db, is_downloaded, mark_failed, mark_pending
 from src.utils.logger import get_logger, setup_logger
 
 log = get_logger(__name__)
@@ -78,20 +78,17 @@ def _run_scheduler(cfg):
 
 
 def _reload_pending_jobs(cfg):
-    """DB에서 status='pending'/'downloading'/'queued' 잡을 큐에 재적재 (재시작 복구)."""
-    rows = get_all_downloads(cfg.state_db, limit=1000)
-    requeued = 0
+    """DB에서 status='pending'/'downloading' 잡을 큐에 재적재 (재시작 복구)."""
+    rows = get_pending_jobs(cfg.state_db)
     for row in rows:
-        if row["status"] in ("pending", "downloading", "queued"):
-            worker_module.enqueue_job(
-                job_id=row["mbid"],
-                artist=row["artist"],
-                track=row["track_name"],
-                source=row.get("source", "listenbrainz"),
-            )
-            requeued += 1
-    if requeued:
-        log.info("pending jobs reloaded", count=requeued)
+        worker_module.enqueue_job(
+            job_id=row["mbid"],
+            artist=row["artist"],
+            track=row["track_name"],
+            source=row.get("source", "listenbrainz"),
+        )
+    if rows:
+        log.info("pending jobs reloaded", count=len(rows))
 
 
 def main():

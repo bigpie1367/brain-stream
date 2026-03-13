@@ -113,6 +113,18 @@ def get_retryable(db_path: str, max_attempts: int = 3) -> List[sqlite3.Row]:
     return [dict(r) for r in rows]
 
 
+def get_pending_jobs(db_path: str) -> List[dict]:
+    """재시작 복구용: pending/downloading 잡을 원래 적재 순서(rowid ASC)로 반환."""
+    with _conn(db_path) as conn:
+        rows = conn.execute("""
+            SELECT mbid, track_name, artist, source
+            FROM downloads
+            WHERE status IN ('pending', 'downloading')
+            ORDER BY rowid ASC
+        """).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_all_downloads(db_path: str, limit: int = 100) -> List[dict]:
     with _conn(db_path) as conn:
         rows = conn.execute("""
