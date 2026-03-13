@@ -171,27 +171,21 @@
       margin-bottom: 12px;
     }
 
-    .table-wrapper { overflow-x: auto; width: 100%; }
+    .table-wrapper { overflow-x: auto; width: 100%; display: block; }
 
-    /* Download History 전폭 레이아웃 */
-    #section-history {
-      margin-left: -24px;
-      margin-right: -24px;
-      border-radius: 0;
-    }
 
     table {
       width: 100%;
       border-collapse: collapse;
       font-size: 0.83rem;
-      table-layout: fixed;
+      table-layout: auto;
     }
 
     thead th {
       text-align: left;
       color: #718096;
       font-weight: 500;
-      padding: 6px 10px;
+      padding: 6px 16px;
       border-bottom: 1px solid #2d3147;
       overflow: hidden;
     }
@@ -199,7 +193,7 @@
     tbody tr { border-bottom: 1px solid #1e2235; }
     tbody tr:last-child { border-bottom: none; }
     tbody td {
-      padding: 8px 10px;
+      padding: 8px 16px;
       color: #cbd5e0;
       vertical-align: top;
       overflow: hidden;
@@ -1221,27 +1215,16 @@
       <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem; min-width:0;" onclick="loadHistory()">Refresh</button>
     </div>
     <div class="table-wrapper">
-      <table>
-        <colgroup>
-          <col style="width:19%">
-          <col style="width:23%">
-          <col style="width:15%">
-          <col style="width:7%">
-          <col style="width:9%">
-          <col style="width:5%">
-          <col style="width:12%">
-          <col style="width:10%">
-        </colgroup>
+      <table style="width:100%;">
         <thead>
           <tr>
-            <th>Artist</th>
-            <th>Track</th>
-            <th>Album</th>
-            <th>Source</th>
-            <th>Status</th>
-            <th>Link</th>
-            <th>Time</th>
-            <th></th>
+            <th style="width:17%">Artist</th>
+            <th style="width:21%">Track</th>
+            <th style="width:15%">Album</th>
+            <th style="width:13%">Source</th>
+            <th style="width:10%">Status</th>
+            <th style="width:9%">Link</th>
+            <th style="width:15%">Time</th>
           </tr>
         </thead>
         <tbody id="history-body">
@@ -1750,6 +1733,7 @@
 
         // MB 매칭 뱃지 열
         const tdMb = document.createElement('td');
+        tdMb.style.textAlign = 'left';
         if (r.mb_recording_id) {
           const mbLink = document.createElement('a');
           mbLink.href = 'https://listenbrainz.org/track/' + encodeURIComponent(r.mb_recording_id);
@@ -1767,9 +1751,6 @@
           tdMb.appendChild(mbSpan);
         }
 
-        // 액션 열 (빈 셀 — 확장 영역에 버튼 이동)
-        const tdAction = document.createElement('td');
-
         tr.appendChild(tdArtist);
         tr.appendChild(tdTrack);
         tr.appendChild(tdAlbum);
@@ -1777,7 +1758,6 @@
         tr.appendChild(tdStatus);
         tr.appendChild(tdMb);
         tr.appendChild(tdTime);
-        tr.appendChild(tdAction);
         tbody.appendChild(tr);
 
         // 확장 행 (기본 숨김)
@@ -1786,7 +1766,7 @@
         expandTr.style.display = 'none';
 
         const expandTd = document.createElement('td');
-        expandTd.colSpan = 8;
+        expandTd.colSpan = 7;
         expandTr.appendChild(expandTd);
         tbody.appendChild(expandTr);
 
