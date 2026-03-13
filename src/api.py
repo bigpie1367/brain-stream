@@ -695,17 +695,18 @@ async def rematch_apply(req: RematchApplyRequest):
                 cover_url=req.cover_url,
             )
 
-    # 4-1. Update mb_recording_id in state.db if mbid is provided
-    if req.mbid is not None and req.mb_recording_id:
+    # 4-1. Update album (and optionally mb_recording_id) in state.db
+    if req.mbid is not None:
         try:
             update_track_info(
                 _cfg.state_db,
                 req.mbid,
-                mb_recording_id=req.mb_recording_id,
+                album=album_name,
+                mb_recording_id=req.mb_recording_id if req.mb_recording_id else None,
             )
         except Exception as exc:
             log.warning(
-                "rematch_apply: mb_recording_id state.db update failed",
+                "rematch_apply: state.db update failed",
                 mbid=req.mbid,
                 error=str(exc),
             )

@@ -2031,8 +2031,12 @@
   }
 
   // 모달 외부(오버레이) 클릭 시 닫기
+  let _deleteMousedownOnOverlay = false;
+  document.getElementById('delete-modal').addEventListener('mousedown', function(e) {
+    _deleteMousedownOnOverlay = e.target === this;
+  });
   document.getElementById('delete-modal').addEventListener('click', function(e) {
-    if (e.target === this) closeDeleteModal();
+    if (e.target === this && _deleteMousedownOnOverlay) closeDeleteModal();
   });
 
   // ESC 키로 모달 닫기
@@ -2599,6 +2603,10 @@
     applyBtn.disabled = false;
     applyBtn.textContent = 'Apply';
 
+    const searchBtn = document.getElementById('rematch-search-btn');
+    searchBtn.disabled = false;
+    searchBtn.textContent = 'Search';
+
     document.getElementById('rematch-modal').classList.remove('hidden');
     document.getElementById('rematch-artist').focus();
   }
@@ -2629,6 +2637,10 @@
     const applyBtn = document.getElementById('rematch-apply-btn');
     applyBtn.disabled = false;
     applyBtn.textContent = 'Apply';
+
+    const searchBtn = document.getElementById('rematch-search-btn');
+    searchBtn.disabled = false;
+    searchBtn.textContent = 'Search';
 
     document.getElementById('rematch-modal').classList.remove('hidden');
     document.getElementById('rematch-artist').focus();
@@ -2853,8 +2865,12 @@
   });
 
   // 재매칭 모달 외부(오버레이) 클릭 시 닫기
+  let _rematchMousedownOnOverlay = false;
+  document.getElementById('rematch-modal').addEventListener('mousedown', function(e) {
+    _rematchMousedownOnOverlay = e.target === this;
+  });
   document.getElementById('rematch-modal').addEventListener('click', function(e) {
-    if (e.target === this) closeRematchModal();
+    if (e.target === this && _rematchMousedownOnOverlay) closeRematchModal();
   });
 
   // ── 다운로드 이력 미니 플레이어 ───────────────────────────────────────────
