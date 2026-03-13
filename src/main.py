@@ -5,12 +5,10 @@ import schedule
 import uvicorn
 
 import src.api as api_module
+import src.worker as worker_module
 from src.config import load_config
-from src.pipeline.downloader import download_track
 from src.pipeline.listenbrainz import _lookup_recording, fetch_recommendations
-from src.pipeline.navidrome import trigger_scan, wait_for_scan
-from src.pipeline.tagger import tag_and_import
-from src.state import get_retryable, init_db, is_downloaded, mark_done, mark_failed, mark_pending, update_track_info
+from src.state import get_all_downloads, get_retryable, init_db, is_downloaded, mark_failed, mark_pending
 from src.utils.logger import get_logger, setup_logger
 
 log = get_logger(__name__)
@@ -44,7 +42,6 @@ def run_pipeline(cfg):
         log.info("nothing new to download")
         return
 
-    imported_any = False
     for track in new_tracks:
         mbid = track["mbid"]
         artist = track.get("artist", "")
@@ -63,47 +60,14 @@ def run_pipeline(cfg):
                 continue
 
         mark_pending(cfg.state_db, mbid, track_name, artist)
-
-        # 4. Download
-        file_path, yt_metadata = download_track(
-            mbid=mbid,
+        worker_module.enqueue_job(
+            job_id=mbid,
             artist=artist,
-            track_name=track_name,
-            staging_dir=cfg.download.staging_dir,
-            prefer_flac=cfg.download.prefer_flac,
+            track=track_name,
+            source="listenbrainz",
         )
-        if not file_path:
-            mark_failed(cfg.state_db, mbid, "download failed")
-            continue
 
-        # 5. Tag + import
-        success, dest_path, canonical_artist, canonical_title, canonical_album, tagger_mb_recording_id = tag_and_import(
-            file_path, cfg.beets.music_dir, artist=artist, track_name=track_name, yt_metadata=yt_metadata,
-            db_path=cfg.state_db, mbid=mbid,
-        )
-        if success:
-            mark_done(cfg.state_db, mbid, file_path=dest_path, album=canonical_album if canonical_album else None)
-            # LB 트랙은 mbid 자체가 MB recording UUID이므로 그것을 우선 사용
-            lb_mb_recording_id = mbid if not mbid.startswith("manual-") else tagger_mb_recording_id
-            if canonical_artist or canonical_title or canonical_album or lb_mb_recording_id:
-                update_track_info(
-                    cfg.state_db,
-                    mbid,
-                    artist=canonical_artist if canonical_artist else None,
-                    track_name=canonical_title if canonical_title else None,
-                    album=canonical_album if canonical_album else None,
-                    mb_recording_id=lb_mb_recording_id if lb_mb_recording_id else None,
-                )
-            imported_any = True
-        else:
-            mark_failed(cfg.state_db, mbid, "tagging failed")
-
-    # 6. Trigger Navidrome scan if anything was imported
-    if imported_any:
-        if trigger_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password):
-            wait_for_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password)
-
-    log.info("pipeline finished")
+    log.info("pipeline finished — jobs enqueued")
 
 
 def _run_scheduler(cfg):
@@ -111,6 +75,23 @@ def _run_scheduler(cfg):
     while True:
         schedule.run_pending()
         time.sleep(60)
+
+
+def _reload_pending_jobs(cfg):
+    """DB에서 status='pending'/'downloading'/'queued' 잡을 큐에 재적재 (재시작 복구)."""
+    rows = get_all_downloads(cfg.state_db, limit=1000)
+    requeued = 0
+    for row in rows:
+        if row["status"] in ("pending", "downloading", "queued"):
+            worker_module.enqueue_job(
+                job_id=row["mbid"],
+                artist=row["artist"],
+                track=row["track_name"],
+                source=row.get("source", "listenbrainz"),
+            )
+            requeued += 1
+    if requeued:
+        log.info("pending jobs reloaded", count=requeued)
 
 
 def main():
@@ -122,6 +103,18 @@ def main():
 
     # Inject config into API module
     api_module._cfg = cfg
+
+    # Worker thread (single, sequential)
+    from src.api import _run_download_job
+    threading.Thread(
+        target=worker_module.worker_loop,
+        args=(cfg, _run_download_job),
+        daemon=True,
+        name="worker",
+    ).start()
+
+    # Reload interrupted jobs from previous run
+    _reload_pending_jobs(cfg)
 
     # Initial pipeline run (background)
     threading.Thread(target=run_pipeline, args=(cfg,), daemon=True).start()

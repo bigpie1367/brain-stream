@@ -211,6 +211,7 @@
     .badge-done        { background: #1c4532; color: #68d391; }
     .badge-failed      { background: #3b1515; color: #fc8181; }
     .badge-pending     { background: #2d3147; color: #a0aec0; }
+    .badge-queued      { background: #2d3147; color: #a0aec0; }
     .badge-downloading { background: #2a3a54; color: #63b3ed; }
     .badge-tagging     { background: #2d2a54; color: #b794f4; }
     .badge-scanning    { background: #2a3a54; color: #76e4f7; }
@@ -1673,7 +1674,7 @@
   function statusBadge(status) {
     const map = {
       done: '● done', failed: '✕ failed', pending: '○ pending',
-      downloading: '↓ downloading', tagging: '⊙ tagging', scanning: '⟳ scanning',
+      queued: '○ queued', downloading: '↓ downloading', tagging: '⊙ tagging', scanning: '⟳ scanning',
     };
     const label = map[status] || status;
     return `<span class="badge badge-${esc(status)}">${esc(label)}</span>`;
@@ -1706,7 +1707,7 @@
       tbody.innerHTML = '';
 
       rows.forEach(r => {
-        const isExpandable = r.status !== 'pending' && r.status !== 'downloading';
+        const isExpandable = r.status !== 'pending' && r.status !== 'queued' && r.status !== 'downloading';
 
         const tr = document.createElement('tr');
         tr.dataset.mbid = r.mbid;

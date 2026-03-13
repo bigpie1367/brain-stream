@@ -1,7 +1,7 @@
 # 시스템 아키텍처
 
-- **버전**: 1.5.0
-- **작성일**: 2026-03-12
+- **버전**: 1.6.0
+- **작성일**: 2026-03-13
 
 ---
 
@@ -73,10 +73,11 @@ External APIs:
 
 | 파일 | 역할 |
 |------|------|
-| `src/main.py` | 진입점. 설정 로드 → DB 초기화 → API 설정 주입 → 파이프라인 스레드 시작 → uvicorn 실행 |
+| `src/main.py` | 진입점. 설정 로드 → DB 초기화 → API 설정 주입 → 워커 스레드 시작 → pending 잡 재적재 → 파이프라인 스레드 시작 → uvicorn 실행 |
 | `src/config.py` | 환경변수로 설정 로드 (config 파일 불필요) |
+| `src/worker.py` | 공유 작업 큐 모듈. `_work_queue` (FIFO `Queue`), `_job_queues` (SSE 큐 dict), `enqueue_job()`, `emit()`, `worker_loop()`. api.py와 LB 파이프라인 양쪽에서 import해 사용 |
 | `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD. `update_track_info`로 artist/file_path/mb_recording_id 선택적 업데이트. `get_all_downloads()` / `get_download_by_mbid()` 응답에 `mb_recording_id` 포함 |
-| `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API, SSE 스트림, 이력 조회, 앨범 재매칭 API (`/api/rematch/*`), 오디오 스트리밍 (`GET /api/stream/{mbid}`, state.db `file_path` 기반), `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계). `_resolve_dir`로 대소문자 무시 기준 기존 폴더 재사용 (Navidrome conflicts 방지) |
+| `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API (`enqueue_job()` 호출), SSE 스트림 (`worker._job_queues` 기반), 이력 조회, 앨범 재매칭 API (`/api/rematch/*`), 오디오 스트리밍 (`GET /api/stream/{mbid}`, state.db `file_path` 기반), `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계). `_resolve_dir`로 대소문자 무시 기준 기존 폴더 재사용 (Navidrome conflicts 방지) |
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출; `recording_mbid`만 반환하므로 `_lookup_recording(mbid)`로 MB API에서 artist/track 조회 |
 | `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `ytsearch5:` 5개 후보 검색 후 차단 영상 감지 시 다음 후보 retry; `(file_path, yt_metadata)` 튜플 반환. `search_candidates(artist, track)`: 다운로드 없이 후보 5개 메타데이터 반환. `download_track_by_id(video_id, ...)`: 지정 video_id로 직접 다운로드. `_select_best_entry(entries, artist, track_name, strict=True)`: strict 모드에서 라이브/커버 영상을 점수 패널티 대신 사전 필터링으로 제외하고 클린 후보가 없을 때만 전체 후보 대상 스코어링으로 폴백. `download_track()`은 기본값 strict=True 사용 |
 | `src/pipeline/tagger.py` | MB API recording 검색 (artist 유사도 검증, 4단계 폴백) → mutagen 전체 태그 쓰기 → shutil 파일 복사 → MB enrichment → CAA/iTunes/Deezer 커버아트 임베딩 → YouTube 썸네일/채널명 폴백. `_lookup_recording_by_mbid(mbid)`: MB recording UUID로 직접 recording 조회. `_mb_lookup_artist_ids(artist, limit=3)`: MB Artist API로 아티스트명 검색 → MBID 목록 반환 (Stage 2.5에서 사용). `write_mb_trackid_tag(file_path, recording_id)`: 파일 포맷별(FLAC/Opus/MP4/기타) mb_trackid 태그 기록. `_write_artist_tag`, `_write_album_tag`, `_itunes_search(country=)` 등 public alias로 `api.py` 재매칭에도 사용. LB 트랙은 `_lookup_recording_by_mbid(mbid)` 직접 조회 후 실패 시 `_mb_search_recording()`으로 폴백. `tag_and_import()` 반환: `(bool, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id)` 6-tuple |
@@ -102,7 +103,7 @@ ListenBrainz CF API
         │
         ▼
 state.db 중복 체크 (mbid 기준)
-  ├─ done → skip
+  ├─ done / ignored → skip
   └─ 미처리 / 재시도 대상 → 처리 대상
         │
         ▼
@@ -110,6 +111,39 @@ state.db 중복 체크 (mbid 기준)
         │
         ├─ mark_pending(state.db)
         │   retry 트랙 empty artist/track → _lookup_recording() 재조회, 여전히 비면 mark_failed
+        │
+        └─ worker.enqueue_job(job_id=mbid, artist, track, source="listenbrainz")
+             → _work_queue에 적재
+             → 워커 스레드가 순차 처리 (아래 [공통 워커 처리] 참조)
+```
+
+### 3.2 수동 다운로드 파이프라인 (Web UI)
+
+```
+[Web UI] POST /api/download {artist, track}
+        │
+        ▼
+job_id = "manual-{uuid8}"
+state.db mark_pending(source='manual')
+worker.create_sse_queue(job_id)   ← SSE 큐 생성
+worker.enqueue_job(job_id, ...)   ← _work_queue에 적재
+SSE emit: "queued" (대기 중...)
+        │
+        └─ [SSE Stream] GET /api/sse/{job_id}
+             worker._job_queues에서 이벤트 꺼내 클라이언트에 전달
+             done/failed 수신 시 SSE 큐 정리 및 스트림 종료
+```
+
+### 3.3 공통 워커 처리 (worker_loop)
+
+LB 자동 트랙과 수동 요청 트랙이 동일한 워커 스레드에서 FIFO 순서로 처리됨.
+
+```
+[worker_loop — 단일 워커 스레드, 순차 처리]
+        │
+        ├─ _work_queue.get()  → job_spec 획득
+        │
+        ├─ SSE emit: "downloading"
         │
         ├─ yt-dlp YouTube 검색
         │    "ytsearch5:{artist} {track} official audio" (5개 후보)
@@ -137,10 +171,9 @@ state.db 중복 체크 (mbid 기준)
         │    반환: (recording_ids, mb_artist_name, mb_recording_title)
         │    recording_id 없으면 → mark_failed
         │
-        ├─ mutagen: staging 파일에 artist / title / mb_trackid 초기 태그 쓰기
+        ├─ SSE emit: "tagging"
         │
-        ├─ yt_metadata 수집 (download_track 반환)
-        │    thumbnail_url, channel (YouTube 채널명)
+        ├─ mutagen: staging 파일에 artist / title / mb_trackid 초기 태그 쓰기
         │
         ├─ _enrich_track()  ← staging 파일에서 직접 실행
         │    이미 album+art 있음 → 조기 리턴
@@ -183,33 +216,12 @@ state.db 중복 체크 (mbid 기준)
         │    state.db: file_path 저장 → mark_done
         │    state.db: artist / track_name을 canonical 값으로 업데이트
         │
-        └─ (모든 트랙 완료 후)
-           Navidrome startScan → getScanStatus 폴링 → 완료 대기
-```
-
-### 3.2 수동 다운로드 파이프라인 (Web UI)
-
-```
-[Web UI] POST /api/download {artist, track}
+        ├─ SSE emit: "scanning"
         │
-        ▼
-job_id = "manual-{uuid8}"
-state.db mark_pending(source='manual')
-Queue 생성 (job_id → Queue)
+        ├─ Navidrome startScan → getScanStatus 폴링 → 완료 대기
         │
-        ├─ [Background Thread] _run_download_job()
-        │    SSE emit: "downloading"
-        │    yt-dlp 다운로드
-        │    SSE emit: "tagging"
-        │    tag_and_import() → (success, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id)
-        │      성공 시 state.db artist/track_name/album/mb_recording_id를 canonical 값으로 업데이트
-        │    SSE emit: "scanning"
-        │    Navidrome 스캔
-        │    SSE emit: "done" / "failed"
-        │
-        └─ [SSE Stream] GET /api/sse/{job_id}
-             Queue에서 이벤트 꺼내 클라이언트에 전달
-             done/failed 수신 시 Queue 정리 및 스트림 종료
+        └─ SSE emit: "done" / "failed"
+           (SSE 리스너 없는 LB 트랙은 worker.emit()이 조용히 무시)
 ```
 
 ---
@@ -220,19 +232,22 @@ Queue 생성 (job_id → Queue)
 Main Thread
   └─ uvicorn (HTTP 서버, 블로킹)
 
-Daemon Thread 1
-  └─ run_pipeline() (기동 시 즉시 1회 실행)
+Daemon Thread 1 — worker
+  └─ worker_loop() (단일 워커, FIFO 큐에서 잡을 꺼내 순차 처리)
+       └─ _run_download_job(cfg, job_spec) (한 번에 하나씩)
 
-Daemon Thread 2
+Daemon Thread 2 — pipeline
+  └─ run_pipeline() (기동 시 즉시 1회 실행 → 각 트랙 enqueue_job())
+
+Daemon Thread 3 — scheduler
   └─ _run_scheduler() (60초 틱, schedule 라이브러리)
        └─ run_pipeline() (N시간마다 호출)
-
-Daemon Thread 3~N (수동 다운로드 잡별)
-  └─ _run_download_job(job_id, artist, track)
 ```
 
 **동시성 제어:**
-- 별도 lock 불필요. 각 다운로드 잡은 고유한 mbid 기반 파일명을 사용하므로 파일 충돌 없음.
+- 워커 스레드 1개 → 다운로드 잡이 항상 순차적으로 처리됨 (yt-dlp / MB API 동시 호출 없음)
+- SSE 큐 dict(`_job_queues`) 접근은 `threading.Lock`으로 보호
+- 재시작 복구: `main.py` 기동 시 state.db의 `pending`/`downloading`/`queued` 상태 잡을 `_work_queue`에 재적재
 
 ---
 
