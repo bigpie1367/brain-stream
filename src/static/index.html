@@ -1333,6 +1333,7 @@
   // ── Manual Download ────────────────────────────────────────────────────────
   let isDownloading = false;
   let _downloadMode = 'auto'; // 'auto' | 'pick'
+  const _activeJobStatuses = new Map(); // jobId → current SSE status
 
   function setDownloadMode(mode) {
     _downloadMode = mode;
@@ -1547,6 +1548,9 @@
       const dotType = (status === 'done') ? 'done' : (status === 'failed') ? 'failed' : 'progress';
       setStatus(dotType, message);
 
+      // 활성 잡 상태 추적
+      _activeJobStatuses.set(jobId, status);
+
       // 테이블 행 status 배지 실시간 업데이트
       const row = document.querySelector(`#history-body tr[data-mbid="${jobId}"]`);
       if (row) {
@@ -1555,6 +1559,7 @@
       }
 
       if (status === 'done' || status === 'failed') {
+        _activeJobStatuses.delete(jobId);
         es.close();
         isDownloading = false;
         dlBtn.disabled = false;
@@ -1607,6 +1612,9 @@
       const dotType = (status === 'done') ? 'done' : (status === 'failed') ? 'failed' : 'progress';
       setStatus(dotType, message);
 
+      // 활성 잡 상태 추적
+      _activeJobStatuses.set(jobId, status);
+
       // 테이블 행 status 배지 실시간 업데이트
       const row = document.querySelector(`#history-body tr[data-mbid="${jobId}"]`);
       if (row) {
@@ -1615,6 +1623,7 @@
       }
 
       if (status === 'done' || status === 'failed') {
+        _activeJobStatuses.delete(jobId);
         es.close();
         isDownloading = false;
         dlBtn.disabled = false;
@@ -1787,6 +1796,12 @@
             _expandedMbid = null;
           }
         });
+      });
+
+      // 활성 SSE 잡의 뱃지를 DB 폴링 덮어쓰기로부터 보호
+      _activeJobStatuses.forEach((status, jid) => {
+        const row = document.querySelector(`#history-body tr[data-mbid="${jid}"]`);
+        if (row && row.cells[4]) row.cells[4].innerHTML = statusBadge(status);
       });
     } catch (e) {
       console.error('history load failed', e);
