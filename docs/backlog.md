@@ -170,6 +170,7 @@
 | ~~ENH-02~~ | ~~staging 디렉토리 기동 시 정리 로직 추가 (BUG-01 해결)~~ | **구현 완료 (2026-03-13, US-56)** |
 | ENH-03 | 실패한 트랙 수동 재시도 API 엔드포인트 (`POST /api/retry/{mbid}`) | 운영 편의성 |
 | ~~ENH-12~~ | ~~라이브러리 트랙 삭제 기능~~ (`DELETE /api/downloads/{mbid}`, Web UI 삭제 버튼) → **구현 완료 (2026-03-10)** | 잘못 다운로드된 트랙 운영 편의성 |
+| ENH-13 | 메타데이터 직접 편집 모달 — rematch 없이 artist/album/track_name을 직접 수정 | rematch는 MB 검색 필수라 오매칭 교정 외 단순 오탈자 수정에 과함 |
 
 ### 우선순위: 중간
 
@@ -188,6 +189,41 @@
 | ENH-09 | Prometheus 메트릭 엔드포인트 (`/metrics`) | 모니터링 인프라 연동 |
 | ENH-10 | 다중 사용자 ListenBrainz 계정 지원 | 현재 단일 계정만 지원 |
 | ENH-11 | 다운로드 파일 포맷 후처리 설정 (예: FLAC → AAC 변환) | 저장 공간 최적화 |
+
+---
+
+## 기능 상세 스펙 (Enhancement Detail)
+
+### ENH-13: 메타데이터 직접 편집 모달
+
+**개요**
+rematch(MB 검색 필수) 없이 artist / album / track_name을 직접 텍스트로 수정하는 모달 UI.
+오탈자 교정, 한글 표기 정리, 앨범명 일괄 통일 등 단순 편집 시 rematch보다 훨씬 빠름.
+
+**구현 가능성**: 높음 | **난이도**: 중간 (rematch/apply 패턴 재사용, 파일 이동 로직 추가)
+
+**필요한 변경**
+
+| 레이어 | 상세 |
+|--------|------|
+| API (backend) | `POST /api/edit/{song_id}` 신규 엔드포인트<br>Request body: `{artist?, album?, track_name?}` (변경된 필드만)<br>Response: `{ok, file_path}` |
+| Backend 로직 | 1. state.db에서 `file_path` 조회<br>2. mutagen으로 파일 태그 수정 (artist / album / title)<br>3. artist 또는 album 변경 시: 새 경로 계산 → `os.makedirs` → `shutil.move` → 빈 폴더 정리 (`os.rmdir` 재귀)<br>4. state.db `artist` / `track_name` / `album` / `file_path` 업데이트<br>5. Navidrome `startScan` 트리거 (이전 경로 삭제 + 새 경로 추가 자동 감지)<br>※ `mb_trackid` 태그는 건드리지 않음 |
+| Frontend | 이력 테이블 Actions 열에 ✏️ 편집 버튼 추가<br>클릭 시 현재 값 pre-fill된 편집 모달 오픈<br>저장 후 해당 행의 artist/album/track_name 셀 즉시 업데이트 |
+
+**엣지 케이스 처리**
+
+| 케이스 | 처리 방안 |
+|--------|----------|
+| 새 경로에 동일 파일명 충돌 | HTTP 409 Conflict 반환, 사용자에게 오류 표시 |
+| 파일 이동 후 원래 폴더가 비워짐 | `os.rmdir`로 빈 디렉토리 정리 (실패해도 무시) |
+| Navidrome 스캔 중 이전 경로 삭제 | 스캔 시 자동으로 사라진 파일 감지 → 별도 삭제 API 불필요 |
+| 파일 없음 (file_path가 NULL) | HTTP 404 반환 |
+| 변경 필드 없음 (모든 값 동일) | 즉시 HTTP 200 반환, 파일/DB 변경 없음 |
+
+**구현하지 않는 것**
+- 커버아트 직접 편집 (rematch에서 CAA/iTunes로 처리)
+- MB 태그(`mb_trackid`, `mb_albumid`) 수정 (rematch 전용)
+- 다중 트랙 일괄 편집 (별도 Epic으로 분리)
 
 ---
 

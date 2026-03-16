@@ -957,6 +957,67 @@
     }
     .btn-expand-delete:hover { background: #3b1515; border-color: #fc8181; color: #fc8181; }
 
+    .btn-expand-edit {
+      background: none;
+      border: 1px solid #2d3147;
+      border-radius: 4px;
+      color: #718096;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 4px 10px;
+      white-space: nowrap;
+      align-self: auto;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      line-height: 1.5;
+      min-width: 0;
+    }
+    .btn-expand-edit:hover { background: #2d3147; border-color: #63b3ed; color: #63b3ed; }
+
+    /* ── Edit Metadata 모달 ── */
+    .edit-modal-box {
+      background: #1a1d27;
+      border: 1px solid #2d3147;
+      border-radius: 10px;
+      padding: 24px 28px;
+      width: 92%;
+      max-width: 440px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .edit-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .edit-feedback {
+      font-size: 0.82rem;
+      min-height: 20px;
+      margin-bottom: 10px;
+    }
+    .edit-feedback.error { color: #fc8181; }
+    .edit-feedback.success { color: #68d391; }
+
+    .btn-modal-save {
+      background: #2b4fa8;
+      border: none;
+      border-radius: 6px;
+      color: #90cdf4;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 7px 16px;
+      transition: background 0.12s, color 0.12s;
+      align-self: auto;
+      min-width: 0;
+    }
+    .btn-modal-save:hover { background: #2b6cb0; color: #bee3f8; }
+    .btn-modal-save:disabled { background: #2d3148; color: #4a5568; cursor: not-allowed; }
+
     /* ── 수동 다운로드 모드 토글 ── */
     .mode-toggle {
       display: flex;
@@ -1303,6 +1364,35 @@
     <div class="modal-actions">
       <button class="btn-modal-cancel" onclick="closeRematchModal()">Cancel</button>
       <button class="btn-modal-apply" id="rematch-apply-btn" onclick="applyRematch()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- 메타데이터 편집 모달 -->
+<div class="modal-overlay hidden" id="edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+  <div class="edit-modal-box">
+    <div class="modal-title" id="edit-modal-title" style="margin-bottom:16px;">Edit Metadata</div>
+
+    <div class="edit-fields">
+      <div class="field">
+        <label for="edit-artist">Artist</label>
+        <input type="text" id="edit-artist" placeholder="Artist name">
+      </div>
+      <div class="field">
+        <label for="edit-album">Album</label>
+        <input type="text" id="edit-album" placeholder="Album name">
+      </div>
+      <div class="field">
+        <label for="edit-track">Track Name</label>
+        <input type="text" id="edit-track" placeholder="Track name">
+      </div>
+    </div>
+
+    <div class="edit-feedback" id="edit-feedback"></div>
+
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeEditModal()">Cancel</button>
+      <button class="btn-modal-save" id="edit-save-btn" onclick="saveEditMetadata()">Save</button>
     </div>
   </div>
 </div>
@@ -2032,7 +2122,7 @@
       openDeleteModal(r.mbid, r.artist, r.track_name, mainTr, expandTr);
     });
 
-    if (r.file_path && (r.status === 'done' || r.status === 'ignored')) {
+    if (r.file_path && r.status === 'done') {
       const playBtn = document.createElement('button');
       playBtn.className = 'btn-expand-rematch';
       playBtn.textContent = '\u25B6';
@@ -2042,6 +2132,16 @@
         playTrack(r.mbid, r.track_name, r.artist);
       });
       actions.appendChild(playBtn);
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn-expand-edit';
+      editBtn.textContent = '\u270F Edit';
+      editBtn.title = 'Edit metadata';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openEditModal(r.mbid, r.artist, r.album, r.track_name, mainTr);
+      });
+      actions.appendChild(editBtn);
     }
 
     actions.appendChild(rematchBtn);
@@ -2205,6 +2305,7 @@
     if (e.key === 'Escape') {
       closeDeleteModal();
       closeRematchModal();
+      closeEditModal();
     }
   });
 
@@ -2217,9 +2318,10 @@
   // 삭제/재매칭 모달이 열려 있는 동안은 자동 갱신을 건너뛰어 참조 보호
   loadHistory();
   setInterval(() => {
-    const deleteModalOpen = !document.getElementById('delete-modal').classList.contains('hidden');
+    const deleteModalOpen  = !document.getElementById('delete-modal').classList.contains('hidden');
     const rematchModalOpen = !document.getElementById('rematch-modal').classList.contains('hidden');
-    if (!deleteModalOpen && !rematchModalOpen) loadHistory();
+    const editModalOpen    = !document.getElementById('edit-modal').classList.contains('hidden');
+    if (!deleteModalOpen && !rematchModalOpen && !editModalOpen) loadHistory();
   }, 5000);
 
   // ── Library ────────────────────────────────────────────────────────────────
@@ -3032,6 +3134,102 @@
   });
   document.getElementById('rematch-modal').addEventListener('click', function(e) {
     if (e.target === this && _rematchMousedownOnOverlay) closeRematchModal();
+  });
+
+  // ── Edit Metadata 모달 ─────────────────────────────────────────────────────
+  let _editMbid = null;
+  let _editMainTr = null;
+
+  function openEditModal(mbid, artist, album, trackName, mainTr) {
+    _editMbid = mbid;
+    _editMainTr = mainTr;
+
+    document.getElementById('edit-artist').value = artist || '';
+    document.getElementById('edit-album').value = album || '';
+    document.getElementById('edit-track').value = trackName || '';
+
+    const feedbackEl = document.getElementById('edit-feedback');
+    feedbackEl.textContent = '';
+    feedbackEl.className = 'edit-feedback';
+
+    const saveBtn = document.getElementById('edit-save-btn');
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save';
+
+    document.getElementById('edit-modal').classList.remove('hidden');
+    document.getElementById('edit-artist').focus();
+  }
+
+  function closeEditModal() {
+    document.getElementById('edit-modal').classList.add('hidden');
+    _editMbid = null;
+    _editMainTr = null;
+  }
+
+  async function saveEditMetadata() {
+    if (!_editMbid) return;
+
+    const artist    = document.getElementById('edit-artist').value.trim();
+    const album     = document.getElementById('edit-album').value.trim();
+    const trackName = document.getElementById('edit-track').value.trim();
+
+    const saveBtn = document.getElementById('edit-save-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    const feedbackEl = document.getElementById('edit-feedback');
+    feedbackEl.textContent = '';
+    feedbackEl.className = 'edit-feedback';
+
+    const body = {};
+    if (artist)    body.artist     = artist;
+    if (album)     body.album      = album;
+    if (trackName) body.track_name = trackName;
+
+    try {
+      const res = await fetch('/api/edit/' + encodeURIComponent(_editMbid), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        let errMsg;
+        const status = res.status;
+        if (status === 404) {
+          errMsg = 'File not found';
+        } else if (status === 409) {
+          errMsg = 'File path conflict';
+        } else {
+          errMsg = 'Failed to update metadata';
+        }
+        throw new Error(errMsg);
+      }
+
+      // 성공: 해당 테이블 행의 셀 즉시 업데이트
+      if (_editMainTr) {
+        const cells = _editMainTr.cells;
+        if (artist    && cells[0]) cells[0].textContent = artist;
+        if (trackName && cells[1]) cells[1].textContent = trackName;
+        if (album     && cells[2]) cells[2].textContent = album;
+      }
+
+      closeEditModal();
+    } catch (e) {
+      feedbackEl.textContent = e.message;
+      feedbackEl.className = 'edit-feedback error';
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    }
+  }
+
+  // Edit 모달 외부(오버레이) 클릭 시 닫기
+  let _editMousedownOnOverlay = false;
+  document.getElementById('edit-modal').addEventListener('mousedown', function(e) {
+    _editMousedownOnOverlay = e.target === this;
+  });
+  document.getElementById('edit-modal').addEventListener('click', function(e) {
+    if (e.target === this && _editMousedownOnOverlay) closeEditModal();
   });
 
   // ── 다운로드 이력 미니 플레이어 ───────────────────────────────────────────
