@@ -2,7 +2,7 @@
 
 - **작성일**: 2026-03-04
 - **현재 버전**: 1.0.2
-- **최종 업데이트**: 2026-03-13
+- **최종 업데이트**: 2026-03-16
 
 ---
 
@@ -75,6 +75,9 @@
 | US-56 | 잡 시작 전 `staging/{mbid}.*` 잔류 파일(`.part` 포함)을 자동 삭제한다 | 2026-03-13 |
 | US-57 | `copy2` 완료 후 `mark_done` 직전 크래시 대응 — 잡 시작 시 `file_path`가 설정되어 있고 파일이 존재하면 재다운로드를 스킵하고 scan + `mark_done`만 실행한다 | 2026-03-13 |
 | US-58 | 수동 다운로드 섹션의 idle 상태 표시를 제거한다 (큐 시스템 도입 후 불필요) | 2026-03-13 |
+| US-59 | `loadHistory()` DOM diffing 방식 도입 — `tbody.innerHTML = ''` 전체 재렌더 대신 기존 행은 유지하고 바뀐 셀만 업데이트하여 테이블 깜빡임 제거 및 SSE 배지 보호 | 2026-03-16 |
+| US-60 | SSE 핸들러에서 status 셀 접근을 `cells[4]` 인덱스 → `data-field="status"` 속성 쿼리로 변경하여 컬럼 순서 변경에 강건화 | 2026-03-16 |
+| US-61 | `pending` 상태로 생성된 행이 `done`으로 전환 후에도 아코디언 클릭 불가한 버그 수정 — `loadHistory()` 기존 행 업데이트 시 `isNowExpandable` 재검사 후 클릭 핸들러 동적 등록 | 2026-03-16 |
 
 ### Epic 11: MB 매칭 정확도 및 태그 품질 개선 (2026-03-12)
 
@@ -144,6 +147,11 @@
 | ~~BUG-17~~ | ~~Low~~ | ~~Rematch 후 다운로드 이력 테이블에 앨범명이 이전 값으로 남는 버그 — `rematch/apply`에서 `state.db` album 필드 미업데이트~~ | **수정 완료 (2026-03-13)** |
 | ~~BUG-01~~ | ~~Low~~ | ~~staging 디렉토리에 이전 세션의 `.flac` 파일이 남아있을 수 있음 (컨테이너 재시작 시)~~ | **수정 완료 (2026-03-13, US-56)** |
 | BUG-02 | Low | Navidrome 자동 스캔 비활성화 설정(`ND_SCANSCHEDULE: "0"`)이 docker-compose.yml에 하드코딩됨 | 미해결 |
+| ~~BUG-18~~ | ~~Low~~ | ~~`setInterval` 5초 폴링(`loadHistory()`)이 SSE 활성 잡의 `tagging`/`scanning` 배지를 `downloading`(DB 값)으로 덮어씀~~ | **수정 완료 (2026-03-16) — `_activeJobStatuses` Map 보호 + `loadHistory()` 끝 재적용** |
+| ~~BUG-19~~ | ~~Low~~ | ~~`file_path` 존재 시 재다운로드 스킵 경로에서 `mark_done()` album 파라미터 누락 → 기존 앨범값 NULL로 덮어씀~~ | **수정 완료 (2026-03-16) — `album=existing.get("album")` 추가** |
+| ~~BUG-20~~ | ~~Low~~ | ~~`loadHistory()` 호출마다 `tbody.innerHTML = ''` 전체 재렌더 → 테이블 깜빡임 및 SSE 배지 리셋~~ | **수정 완료 (2026-03-16) — DOM diffing 방식으로 교체 (기존 행 유지, 바뀐 셀만 업데이트)** |
+| ~~BUG-21~~ | ~~Low~~ | ~~SSE 핸들러에서 status 셀을 `row.cells[4]` 인덱스로 접근 → 컬럼 순서 변경 시 오동작 가능~~ | **수정 완료 (2026-03-16) — `data-field="status"` 속성 추가 후 `querySelector`로 접근** |
+| ~~BUG-22~~ | ~~Low~~ | ~~`pending` 상태로 생성된 행에 클릭 핸들러 미등록 → status가 `done`으로 바뀌어도 아코디언 클릭 불가~~ | **수정 완료 (2026-03-16) — `loadHistory()` 기존 행 업데이트 시 `isNowExpandable` 재검사 후 핸들러 동적 등록** |
 | ~~BUG-03~~ | ~~Low~~ | ~~수동 다운로드 잡의 SSE Queue가 메모리에만 존재하여 컨테이너 재시작 시 in-progress 잡 상태 유실~~ | **수정 완료 (2026-03-13, US-54/55)** |
 | ~~BUG-04~~ | ~~Low~~ | ~~beet list로 파일 경로 조회 시 artist/title 특수문자 포함 쿼리 일부 실패 가능~~ | **해소됨 (beets 제거, state.db file_path 직접 조회로 대체)** |
 | ~~BUG-05~~ | ~~Medium~~ | ~~MB recording-only fallback 재검색 시 동명이곡의 다른 아티스트 recording이 반환됨~~ | **수정 완료 (2026-03-09)** |
