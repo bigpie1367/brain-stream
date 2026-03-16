@@ -491,6 +491,32 @@ def _write_artist_tag(file_path: str, artist: str):
         log.warning("could not write artist tag", file=file_path, error=str(exc))
 
 
+def _write_title_tag(file_path: str, title: str):
+    """Write title tag to audio file using mutagen."""
+    try:
+        suffix = Path(file_path).suffix.lower()
+        if suffix == ".flac":
+            f = mutagen.flac.FLAC(file_path)
+            f["title"] = [title]
+            f.save()
+        elif suffix in (".opus", ".ogg"):
+            f = mutagen.oggopus.OggOpus(file_path)
+            f["title"] = [title]
+            f.save()
+        elif suffix in (".m4a", ".mp4"):
+            f = mutagen.mp4.MP4(file_path)
+            f["\xa9nam"] = [title]
+            f.save()
+        else:
+            f = mutagen.File(file_path)
+            if f is not None:
+                f["title"] = title
+                f.save()
+        log.debug("wrote title tag", file=file_path, title=title)
+    except Exception as exc:
+        log.warning("could not write title tag", file=file_path, error=str(exc))
+
+
 def _read_tags(file_path: str) -> dict:
     """Read artist, title, album, mb_trackid from audio file tags.
 
@@ -1236,5 +1262,6 @@ embed_cover_art = _embed_cover_art
 embed_art_from_url = _embed_art_from_url
 write_album_tag = _write_album_tag
 write_artist_tag = _write_artist_tag
+write_title_tag = _write_title_tag
 write_mb_trackid_tag = _write_mb_trackid_tag
 itunes_search = _itunes_search
