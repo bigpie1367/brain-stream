@@ -1,8 +1,8 @@
 # API 명세서
 
-- **버전**: 1.7.0
+- **버전**: 1.8.0
 - **Base URL**: `http://localhost:8080`
-- **작성일**: 2026-03-13
+- **작성일**: 2026-03-16
 
 ---
 
@@ -20,6 +20,7 @@
 | GET | `/api/downloads/{mbid}/detail` | 트랙 상세 정보 조회 (앨범명, 연도, 커버아트) |
 | GET | `/api/rematch/search` | 앨범 재매칭 후보 검색 |
 | POST | `/api/rematch/apply` | 선택한 앨범으로 재태깅 |
+| POST | `/api/edit/{song_id}` | 메타데이터 직접 편집 (artist/album/track_name) |
 | GET | `/api/stream/{mbid}` | 다운로드된 트랙 오디오 스트리밍 |
 
 ---
@@ -475,6 +476,63 @@ ListenBrainz 파이프라인을 즉시 수동으로 실행한다.
 | 404 | mbid/song_id가 없거나 파일이 존재하지 않음 |
 | 422 | `mb_album_id`가 비어있는데 `album_name`도 미전달 |
 | 500 | MB 조회 실패 / 태그 쓰기 실패 / 파일 이동 실패 |
+| 503 | 서버 설정 미로드 |
+
+---
+
+## POST `/api/edit/{song_id}`
+
+다운로드된 트랙의 artist / album / track_name 메타데이터를 직접 편집한다. mutagen으로 파일 태그를 수정하고, 경로가 변경되면 파일을 이동하며, state.db를 업데이트한 후 Navidrome 재스캔을 트리거한다.
+
+> **rematch와의 차이**: rematch는 MB 검색 기반으로 앨범을 재매칭하는 반면, edit는 MB 검색 없이 사용자가 입력한 값을 그대로 적용한다. 오탈자 교정, 한글 표기 정리, 앨범명 통일 등 단순 편집에 적합.
+
+**Path Parameters**
+
+| 파라미터 | 설명 |
+|---------|------|
+| song_id | state.db의 mbid (LB 트랙: MB UUID, 수동 트랙: `manual-{uuid8}`) |
+
+**Request Body** (`application/json`)
+
+```json
+{
+  "artist": "IU",
+  "album": "밤편지",
+  "track_name": "밤편지"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| artist | string | N | 변경할 아티스트명. 미전달 시 기존 값 유지 |
+| album | string | N | 변경할 앨범명. 미전달 시 기존 값 유지 |
+| track_name | string | N | 변경할 트랙명. 미전달 시 기존 값 유지 |
+
+**동작 순서**
+
+1. state.db에서 `song_id`로 레코드 및 `file_path` 조회
+2. 변경된 필드가 없으면 즉시 200 반환 (no-op)
+3. mutagen으로 파일 태그 수정 (artist / album / title). `mb_trackid` 태그는 건드리지 않음
+4. artist 또는 album 또는 track_name 변경 시 새 경로 계산 → `shutil.move`로 파일 이동 → 빈 폴더 정리
+5. state.db `artist` / `track_name` / `album` / `file_path` 업데이트
+6. Navidrome `startScan` 트리거 (fire-and-forget)
+
+**Response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "file_path": "/app/data/music/IU/밤편지/밤편지.flac"
+}
+```
+
+**Error Responses**
+
+| Status | 설명 |
+|--------|------|
+| 404 | song_id가 state.db에 없거나, file_path가 기록되지 않았거나, 파일이 존재하지 않음 |
+| 409 | 새 경로에 동일 파일명이 이미 존재 |
+| 500 | 태그 쓰기 실패 / 파일 이동 실패 |
 | 503 | 서버 설정 미로드 |
 
 ---

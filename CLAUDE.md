@@ -116,10 +116,10 @@ worker_loop (single thread, FIFO):
 |------|------|
 | `src/main.py` | Entrypoint; wires config → DB → API → worker/pipeline threads → reload pending jobs → uvicorn |
 | `src/worker.py` | Shared work queue module; `_work_queue` (FIFO), `_job_queues` (SSE), `enqueue_job()`, `emit()`, `worker_loop()` |
-| `src/api.py` | FastAPI app; `_cfg` injected by main.py; POST /api/download calls `worker.enqueue_job()` |
+| `src/api.py` | FastAPI app; `_cfg` injected by main.py; POST /api/download calls `worker.enqueue_job()`; POST /api/edit/{song_id} 메타데이터 직접 편집 (mutagen 태그 수정 → 파일 이동 → state.db 업데이트 → Navidrome rescan) |
 | `src/state.py` | SQLite wrapper; `mbid` is PK; `get_pending_jobs()` returns pending/downloading jobs in rowid ASC order |
 | `src/config.py` | Env-var only config (no file needed); `LB_USERNAME`, `LB_TOKEN`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`, `NAVIDROME_URL` |
-| `src/pipeline/tagger.py` | Most complex module; MB 4단계 검색(Stage 2.5 artist-id 추가) → shutil 복사 → mutagen 태깅 → iTunes/Deezer/MB 앨범 enrichment → CAA/iTunes/Deezer/YouTube 커버아트 임베딩 |
+| `src/pipeline/tagger.py` | Most complex module; MB 4단계 검색(Stage 2.5 artist-id 추가) → shutil 복사 → mutagen 태깅 → iTunes/Deezer/MB 앨범 enrichment → CAA/iTunes/Deezer/YouTube 커버아트 임베딩. `write_title_tag` public alias 추가 (edit API에서 사용) |
 
 ## Tagger Constraints
 

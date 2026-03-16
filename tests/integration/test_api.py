@@ -983,6 +983,196 @@ def test_rematch_apply_song_id_absolute_path_used_directly(client):
     assert "/app/data/music/app/data/music" not in called_path
 
 
+# ── POST /api/edit/{song_id} ──────────────────────────────────────────────────
+
+def _setup_done_record(db_path, mbid, artist, track_name, album, file_path):
+    """state.db에 done 레코드를 삽입하는 헬퍼."""
+    from src.state import mark_pending, mark_done, update_track_info
+    mark_pending(db_path, mbid, track_name, artist)
+    mark_done(db_path, mbid, file_path=file_path, album=album)
+    update_track_info(db_path, mbid, artist=artist, track_name=track_name, album=album)
+
+
+def test_edit_song_not_found_returns_404(client):
+    """존재하지 않는 song_id → 404."""
+    resp = client.post("/api/edit/nonexistent-id", json={"artist": "New Artist"})
+    assert resp.status_code == 404
+
+
+def test_edit_file_path_null_returns_404(client, tmp_state_db):
+    """file_path가 None인 레코드 → 404."""
+    from src.state import mark_pending
+    mark_pending(tmp_state_db, "manual-nofp2", "Track", "Artist")
+    resp = client.post("/api/edit/manual-nofp2", json={"artist": "New Artist"})
+    assert resp.status_code == 404
+
+
+def test_edit_file_missing_returns_404(client, tmp_state_db):
+    """file_path가 기록되어 있지만 파일이 실제로 없으면 → 404."""
+    _setup_done_record(
+        tmp_state_db,
+        "manual-gone2",
+        "Artist",
+        "Track",
+        "Album",
+        "/nonexistent/path/track.flac",
+    )
+    resp = client.post("/api/edit/manual-gone2", json={"artist": "New Artist"})
+    assert resp.status_code == 404
+
+
+def test_edit_no_change_returns_200_immediately(client, tmp_state_db, tmp_path):
+    """artist / album / track_name이 모두 기존값과 같으면 즉시 200 반환."""
+    dummy = tmp_path / "track.flac"
+    dummy.write_bytes(b"fake")
+    _setup_done_record(
+        tmp_state_db, "manual-noop", "Artist", "Track", "Album", str(dummy)
+    )
+    with patch("src.api.write_artist_tag") as mock_artist:
+        with patch("src.api.write_album_tag") as mock_album:
+            with patch("src.api.write_title_tag") as mock_title:
+                resp = client.post(
+                    "/api/edit/manual-noop",
+                    json={"artist": "Artist", "album": "Album", "track_name": "Track"},
+                )
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    mock_artist.assert_not_called()
+    mock_album.assert_not_called()
+    mock_title.assert_not_called()
+
+
+def test_edit_artist_only_updates_tags_and_moves_file(client, tmp_state_db, tmp_path):
+    """artist만 바꾸면 태그 쓰기 + 파일 이동 + state.db 업데이트 발생."""
+    music_dir = tmp_path / "music"
+    old_artist_dir = music_dir / "OldArtist"
+    album_dir = old_artist_dir / "Album"
+    album_dir.mkdir(parents=True)
+    dummy = album_dir / "Track.flac"
+    dummy.write_bytes(b"fake")
+
+    _setup_done_record(
+        tmp_state_db, "manual-edt1", "OldArtist", "Track", "Album", str(dummy)
+    )
+
+    import src.api as api_module
+    api_module._cfg.beets.music_dir = str(music_dir)
+
+    with patch("src.api.write_artist_tag") as mock_artist:
+        with patch("src.api.write_album_tag") as mock_album:
+            with patch("src.api.write_title_tag") as mock_title:
+                with patch("src.api.threading.Thread") as mock_thread_cls:
+                    mock_thread_cls.return_value = MagicMock()
+                    resp = client.post(
+                        "/api/edit/manual-edt1",
+                        json={"artist": "NewArtist"},
+                    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert "NewArtist" in data["file_path"]
+    mock_artist.assert_called_once()
+    mock_album.assert_called_once()
+    mock_title.assert_called_once()
+
+    from src.state import get_download_by_mbid
+    row = get_download_by_mbid(tmp_state_db, "manual-edt1")
+    assert row["artist"] == "NewArtist"
+    assert "NewArtist" in row["file_path"]
+
+
+def test_edit_track_name_only(client, tmp_state_db, tmp_path):
+    """track_name만 바꾸면 새 파일명으로 이동한다."""
+    music_dir = tmp_path / "music"
+    artist_dir = music_dir / "Artist"
+    album_dir = artist_dir / "Album"
+    album_dir.mkdir(parents=True)
+    dummy = album_dir / "OldTitle.opus"
+    dummy.write_bytes(b"fake")
+
+    _setup_done_record(
+        tmp_state_db, "manual-edt2", "Artist", "OldTitle", "Album", str(dummy)
+    )
+
+    import src.api as api_module
+    api_module._cfg.beets.music_dir = str(music_dir)
+
+    with patch("src.api.write_artist_tag"):
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.write_title_tag"):
+                with patch("src.api.threading.Thread") as mock_thread_cls:
+                    mock_thread_cls.return_value = MagicMock()
+                    resp = client.post(
+                        "/api/edit/manual-edt2",
+                        json={"track_name": "NewTitle"},
+                    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "NewTitle" in data["file_path"]
+    assert data["file_path"].endswith(".opus")
+
+
+def test_edit_conflict_returns_409(client, tmp_state_db, tmp_path):
+    """새 경로에 파일이 이미 존재하면 409 반환."""
+    music_dir = tmp_path / "music"
+    artist_dir = music_dir / "Artist"
+    old_album_dir = artist_dir / "OldAlbum"
+    new_album_dir = artist_dir / "NewAlbum"
+    old_album_dir.mkdir(parents=True)
+    new_album_dir.mkdir(parents=True)
+
+    dummy = old_album_dir / "Track.flac"
+    dummy.write_bytes(b"fake")
+    conflict = new_album_dir / "Track.flac"
+    conflict.write_bytes(b"existing")
+
+    _setup_done_record(
+        tmp_state_db, "manual-conflict", "Artist", "Track", "OldAlbum", str(dummy)
+    )
+
+    import src.api as api_module
+    api_module._cfg.beets.music_dir = str(music_dir)
+
+    with patch("src.api.write_artist_tag"):
+        with patch("src.api.write_album_tag"):
+            with patch("src.api.write_title_tag"):
+                resp = client.post(
+                    "/api/edit/manual-conflict",
+                    json={"album": "NewAlbum"},
+                )
+
+    assert resp.status_code == 409
+
+
+def test_edit_tag_write_failure_returns_500(client, tmp_state_db, tmp_path):
+    """mutagen 태그 쓰기 실패 시 500 반환."""
+    music_dir = tmp_path / "music"
+    artist_dir = music_dir / "Artist"
+    album_dir = artist_dir / "Album"
+    album_dir.mkdir(parents=True)
+    dummy = album_dir / "Track.flac"
+    dummy.write_bytes(b"fake")
+
+    _setup_done_record(
+        tmp_state_db, "manual-tagfail", "Artist", "Track", "Album", str(dummy)
+    )
+
+    import src.api as api_module
+    api_module._cfg.beets.music_dir = str(music_dir)
+
+    with patch("src.api.write_artist_tag", side_effect=Exception("mutagen error")):
+        resp = client.post(
+            "/api/edit/manual-tagfail",
+            json={"artist": "NewArtist"},
+        )
+
+    assert resp.status_code == 500
+    assert "tag write failed" in resp.json()["detail"]
+
+
 def test_rematch_apply_song_id_relative_path_gets_prefix(client):
     """getSong이 상대경로를 반환할 때 /app/data/music/ prefix를 붙인다."""
     relative_path = "Artist/Album/track.flac"

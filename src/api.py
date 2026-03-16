@@ -32,6 +32,7 @@ from src.pipeline.tagger import (
     write_album_tag,
     write_artist_tag,
     write_mb_trackid_tag,
+    write_title_tag,
 )
 from src.state import (
     delete_download,
@@ -73,6 +74,12 @@ class RematchApplyRequest(BaseModel):
     album_name: str = ""
     artist_name: str = ""
     cover_url: str = ""
+
+
+class EditRequest(BaseModel):
+    artist: Optional[str] = None
+    album: Optional[str] = None
+    track_name: Optional[str] = None
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -747,6 +754,114 @@ async def rematch_apply(req: RematchApplyRequest):
         file=file_path,
     )
     return {"status": "ok", "album_name": album_name}
+
+
+@app.post("/api/edit/{song_id}")
+async def edit_metadata(song_id: str, req: EditRequest):
+    """Directly edit artist / album / track_name metadata for a downloaded track.
+
+    Updates mutagen tags, moves the file to the new path if necessary,
+    updates state.db, and triggers a Navidrome rescan.
+    """
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+
+    # 1. Look up current record
+    record = get_download_by_mbid(_cfg.state_db, song_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="song not found")
+
+    old_file_path = record.get("file_path")
+    if not old_file_path:
+        raise HTTPException(status_code=404, detail="file_path is not recorded")
+    if not os.path.exists(old_file_path):
+        raise HTTPException(status_code=404, detail=f"audio file not found: {old_file_path}")
+
+    # 2. Resolve final values (None → keep existing; DB NULL treated as "")
+    new_artist = req.artist if req.artist is not None else (record.get("artist") or "")
+    new_album = req.album if req.album is not None else (record.get("album") or "")
+    new_track_name = req.track_name if req.track_name is not None else (record.get("track_name") or "")
+
+    # 3. No-op if nothing changed
+    if (
+        new_artist == (record.get("artist") or "")
+        and new_album == (record.get("album") or "")
+        and new_track_name == (record.get("track_name") or "")
+    ):
+        return {"ok": True, "file_path": old_file_path}
+
+    # 4. Write mutagen tags (artist / album / title; mb_trackid untouched)
+    try:
+        write_artist_tag(old_file_path, new_artist)
+        write_album_tag(old_file_path, new_album)
+        write_title_tag(old_file_path, new_track_name)
+    except Exception as exc:
+        log.error("edit_metadata: tag write failed", song_id=song_id, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"tag write failed: {exc}")
+
+    # 5. Move file if artist / album / track_name changed
+    ext = os.path.splitext(old_file_path)[1]
+    music_root = _cfg.beets.music_dir
+    new_artist_dir = os.path.join(music_root, _sanitize_path_component(new_artist))
+    new_album_dir = os.path.join(new_artist_dir, _sanitize_path_component(new_album))
+    new_filename = _sanitize_path_component(new_track_name) + ext
+    new_file_path = os.path.join(new_album_dir, new_filename)
+
+    if new_file_path != old_file_path:
+        if os.path.exists(new_file_path):
+            raise HTTPException(
+                status_code=409,
+                detail=f"file already exists at new path: {new_file_path}",
+            )
+        try:
+            os.makedirs(new_album_dir, exist_ok=True)
+            shutil.move(old_file_path, new_file_path)
+        except Exception as exc:
+            log.error("edit_metadata: file move failed", song_id=song_id, error=str(exc))
+            raise HTTPException(status_code=500, detail=f"file move failed: {exc}")
+
+        # 빈 폴더 정리 (앨범 → 아티스트 순)
+        old_album_dir = os.path.dirname(old_file_path)
+        old_artist_dir = os.path.dirname(old_album_dir)
+        try:
+            if os.path.isdir(old_album_dir) and not os.listdir(old_album_dir):
+                os.rmdir(old_album_dir)
+                if os.path.isdir(old_artist_dir) and not os.listdir(old_artist_dir):
+                    os.rmdir(old_artist_dir)
+        except Exception as exc:
+            log.warning("edit_metadata: failed to remove empty dirs", error=str(exc))
+
+    final_file_path = new_file_path if new_file_path != old_file_path else old_file_path
+
+    # 6. Update state.db
+    try:
+        update_track_info(
+            _cfg.state_db,
+            song_id,
+            artist=new_artist,
+            track_name=new_track_name,
+            album=new_album,
+            file_path=final_file_path,
+        )
+    except Exception as exc:
+        log.warning("edit_metadata: state.db update failed", song_id=song_id, error=str(exc))
+
+    # 7. Trigger Navidrome rescan (fire-and-forget)
+    threading.Thread(
+        target=trigger_scan,
+        args=(_cfg.navidrome.url, _cfg.navidrome.username, _cfg.navidrome.password),
+        daemon=True,
+    ).start()
+
+    log.info(
+        "metadata edited",
+        song_id=song_id,
+        artist=new_artist,
+        album=new_album,
+        track_name=new_track_name,
+        file_path=final_file_path,
+    )
+    return {"ok": True, "file_path": final_file_path}
 
 
 @app.post("/api/pipeline/run")
