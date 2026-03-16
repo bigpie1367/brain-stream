@@ -71,6 +71,7 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     - pipeline 실행 스레드는 mock으로 막는다
     """
     import src.api as api_module
+    import src.worker as worker_module
     from src.config import (
         AppConfig, ListenBrainzConfig, DownloadConfig,
         BeetsConfig, NavidromeConfig, SchedulerConfig,
@@ -97,10 +98,10 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     api_module._cfg = dummy_cfg
 
     # 기존 job queue 오염 방지
-    api_module._job_queues.clear()
+    worker_module._job_queues.clear()
 
     yield TestClient(api_module.app, raise_server_exceptions=True)
 
     # 픽스처 해제: 원래 _cfg 복원
     api_module._cfg = original_cfg
-    api_module._job_queues.clear()
+    worker_module._job_queues.clear()
