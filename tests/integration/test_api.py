@@ -157,21 +157,21 @@ def test_get_sse_existing_job_returns_200(client):
     text/event-stream 미디어 타입을 사용한다.
     SSE 스트림은 무한 루프이므로 stream=True로 첫 응답만 확인한다.
     """
-    import src.api as api_module
+    import src.worker as worker_module
     from queue import Queue
 
     job_id = "manual-testjob"
     q = Queue()
     # done 이벤트를 미리 큐에 넣어 스트림이 즉시 종료되도록 한다
     q.put({"status": "done", "message": "완료"})
-    api_module._job_queues[job_id] = q
+    worker_module._job_queues[job_id] = q
 
     try:
         resp = client.get(f"/api/sse/{job_id}")
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
     finally:
-        api_module._job_queues.pop(job_id, None)
+        worker_module._job_queues.pop(job_id, None)
 
 
 # ── DELETE /api/downloads/{mbid} ─────────────────────────────────────────────

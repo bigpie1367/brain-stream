@@ -1,7 +1,8 @@
 # 프로젝트 백로그
 
 - **작성일**: 2026-03-04
-- **현재 버전**: 1.0.1
+- **현재 버전**: 1.0.2
+- **최종 업데이트**: 2026-03-16
 
 ---
 
@@ -62,6 +63,21 @@
 | US-41 | beet list 제거 — state.db에 `file_path TEXT` 컬럼 추가, mbid로 파일 경로 직접 조회 | 2026-03-10 |
 | US-42 | import log / `_beet_lock` 직렬화 로직 제거 | 2026-03-10 |
 | US-43 | beets 관련 의존성 제거 (requirements.txt, Dockerfile, beets/config.yaml) | 2026-03-10 |
+
+### Epic 12: 순차 처리 워커 큐 도입 및 중단 복구 안전성 강화 (2026-03-13)
+
+| ID | User Story | 완료일 |
+|----|-----------|--------|
+| US-52 | 수동 다운로드와 LB 파이프라인이 단일 FIFO 워커 큐(`src/worker.py`)에서 순차 처리된다 — 동시 yt-dlp/MB API 호출 없음 | 2026-03-13 |
+| US-53 | SSE `queued` 이벤트로 다운로드 대기 상태를 실시간 표시한다. 테이블 행 status 배지도 SSE 이벤트마다 실시간 업데이트 (tagging, scanning 포함) | 2026-03-13 |
+| US-54 | 재시작 시 `pending` 잡을 원래 적재 순서(`rowid ASC`)대로 자동 재큐한다 | 2026-03-13 |
+| US-55 | 재시작 시 `downloading` 잡은 크래시로 중단된 것으로 간주하여 `attempts`를 증가시키고, 3회 이상이면 재큐 없이 `failed`로 방치한다 | 2026-03-13 |
+| US-56 | 잡 시작 전 `staging/{mbid}.*` 잔류 파일(`.part` 포함)을 자동 삭제한다 | 2026-03-13 |
+| US-57 | `copy2` 완료 후 `mark_done` 직전 크래시 대응 — 잡 시작 시 `file_path`가 설정되어 있고 파일이 존재하면 재다운로드를 스킵하고 scan + `mark_done`만 실행한다 | 2026-03-13 |
+| US-58 | 수동 다운로드 섹션의 idle 상태 표시를 제거한다 (큐 시스템 도입 후 불필요) | 2026-03-13 |
+| US-59 | `loadHistory()` DOM diffing 방식 도입 — `tbody.innerHTML = ''` 전체 재렌더 대신 기존 행은 유지하고 바뀐 셀만 업데이트하여 테이블 깜빡임 제거 및 SSE 배지 보호 | 2026-03-16 |
+| US-60 | SSE 핸들러에서 status 셀 접근을 `cells[4]` 인덱스 → `data-field="status"` 속성 쿼리로 변경하여 컬럼 순서 변경에 강건화 | 2026-03-16 |
+| US-61 | `pending` 상태로 생성된 행이 `done`으로 전환 후에도 아코디언 클릭 불가한 버그 수정 — `loadHistory()` 기존 행 업데이트 시 `isNowExpandable` 재검사 후 클릭 핸들러 동적 등록 | 2026-03-16 |
 
 ### Epic 11: MB 매칭 정확도 및 태그 품질 개선 (2026-03-12)
 
@@ -129,9 +145,14 @@
 | ~~BUG-15~~ | ~~Low~~ | ~~Rematch 모달을 연속으로 열 때 Search 버튼이 비활성 상태로 남는 버그 — `openRematchModal*()` 호출 시 searchBtn reset 누락~~ | **수정 완료 (2026-03-13)** |
 | ~~BUG-16~~ | ~~Low~~ | ~~모달 내부에서 텍스트를 드래그하다 외부에서 놓으면 모달이 닫히는 버그 — mousedown 시작 위치를 추적하여 overlay에서 시작한 경우에만 닫도록 수정~~ | **수정 완료 (2026-03-13)** |
 | ~~BUG-17~~ | ~~Low~~ | ~~Rematch 후 다운로드 이력 테이블에 앨범명이 이전 값으로 남는 버그 — `rematch/apply`에서 `state.db` album 필드 미업데이트~~ | **수정 완료 (2026-03-13)** |
-| BUG-01 | Low | staging 디렉토리에 이전 세션의 `.flac` 파일이 남아있을 수 있음 (컨테이너 재시작 시) | 미해결 |
+| ~~BUG-01~~ | ~~Low~~ | ~~staging 디렉토리에 이전 세션의 `.flac` 파일이 남아있을 수 있음 (컨테이너 재시작 시)~~ | **수정 완료 (2026-03-13, US-56)** |
 | BUG-02 | Low | Navidrome 자동 스캔 비활성화 설정(`ND_SCANSCHEDULE: "0"`)이 docker-compose.yml에 하드코딩됨 | 미해결 |
-| BUG-03 | Low | 수동 다운로드 잡의 SSE Queue가 메모리에만 존재하여 컨테이너 재시작 시 in-progress 잡 상태 유실 | 미해결 |
+| ~~BUG-18~~ | ~~Low~~ | ~~`setInterval` 5초 폴링(`loadHistory()`)이 SSE 활성 잡의 `tagging`/`scanning` 배지를 `downloading`(DB 값)으로 덮어씀~~ | **수정 완료 (2026-03-16) — `_activeJobStatuses` Map 보호 + `loadHistory()` 끝 재적용** |
+| ~~BUG-19~~ | ~~Low~~ | ~~`file_path` 존재 시 재다운로드 스킵 경로에서 `mark_done()` album 파라미터 누락 → 기존 앨범값 NULL로 덮어씀~~ | **수정 완료 (2026-03-16) — `album=existing.get("album")` 추가** |
+| ~~BUG-20~~ | ~~Low~~ | ~~`loadHistory()` 호출마다 `tbody.innerHTML = ''` 전체 재렌더 → 테이블 깜빡임 및 SSE 배지 리셋~~ | **수정 완료 (2026-03-16) — DOM diffing 방식으로 교체 (기존 행 유지, 바뀐 셀만 업데이트)** |
+| ~~BUG-21~~ | ~~Low~~ | ~~SSE 핸들러에서 status 셀을 `row.cells[4]` 인덱스로 접근 → 컬럼 순서 변경 시 오동작 가능~~ | **수정 완료 (2026-03-16) — `data-field="status"` 속성 추가 후 `querySelector`로 접근** |
+| ~~BUG-22~~ | ~~Low~~ | ~~`pending` 상태로 생성된 행에 클릭 핸들러 미등록 → status가 `done`으로 바뀌어도 아코디언 클릭 불가~~ | **수정 완료 (2026-03-16) — `loadHistory()` 기존 행 업데이트 시 `isNowExpandable` 재검사 후 핸들러 동적 등록** |
+| ~~BUG-03~~ | ~~Low~~ | ~~수동 다운로드 잡의 SSE Queue가 메모리에만 존재하여 컨테이너 재시작 시 in-progress 잡 상태 유실~~ | **수정 완료 (2026-03-13, US-54/55)** |
 | ~~BUG-04~~ | ~~Low~~ | ~~beet list로 파일 경로 조회 시 artist/title 특수문자 포함 쿼리 일부 실패 가능~~ | **해소됨 (beets 제거, state.db file_path 직접 조회로 대체)** |
 | ~~BUG-05~~ | ~~Medium~~ | ~~MB recording-only fallback 재검색 시 동명이곡의 다른 아티스트 recording이 반환됨~~ | **수정 완료 (2026-03-09)** |
 | ~~BUG-06~~ | ~~Medium~~ | ~~MB release 선택 시 리마스터판/다른 나라 에디션이 원본보다 앞에 선택될 수 있음~~ | **수정 완료 (2026-03-09)** |
@@ -146,7 +167,7 @@
 | ID | 설명 | 근거 |
 |----|------|------|
 | ENH-01 | 설정 파일 유효성 검증 추가 (기동 시 필수 필드 누락 조기 감지) | 현재 런타임 오류로만 발견됨 |
-| ENH-02 | staging 디렉토리 기동 시 정리 로직 추가 (BUG-01 해결) | 디스크 낭비 방지 |
+| ~~ENH-02~~ | ~~staging 디렉토리 기동 시 정리 로직 추가 (BUG-01 해결)~~ | **구현 완료 (2026-03-13, US-56)** |
 | ENH-03 | 실패한 트랙 수동 재시도 API 엔드포인트 (`POST /api/retry/{mbid}`) | 운영 편의성 |
 | ~~ENH-12~~ | ~~라이브러리 트랙 삭제 기능~~ (`DELETE /api/downloads/{mbid}`, Web UI 삭제 버튼) → **구현 완료 (2026-03-10)** | 잘못 다운로드된 트랙 운영 편의성 |
 

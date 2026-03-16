@@ -65,18 +65,23 @@ curl http://localhost:8080/api/downloads | python3 -m json.tool
 
 ## Architecture
 
-**Pipeline flow (automated, runs on startup and every N hours):**
+**Pipeline flow (both LB and manual share the same worker queue):**
 ```
-ListenBrainz /cf/recommendation
-  → state.db dedup (skip already done; retry failed < 3 attempts)
-  → _mb_search_recording(artist, track): MB API 3단계 검색
-      1. strict:  artistname:{a} AND recording:{t} + primarytype:Album + NOT Live/Compilation/...
-      2. plain:   artistname:{a} AND recording:{t}  (release-type 필터 없음)
-      3. fallback: recording:{t} 만으로 검색, artist-credit/alias 유사도 0.3 이상인 것 선택
+[LB pipeline] fetch recommendations → mark_pending() → worker.enqueue_job()
+[Manual]      POST /api/download    → mark_pending() → worker.enqueue_job() → SSE emit "queued"
+
+worker_loop (single thread, FIFO):
+  → 잡 시작 전: staging/{mbid}.* 잔류 파일 삭제 (.part 포함)
+  → file_path 설정 + 파일 존재 시: 재다운로드 스킵, scan + mark_done만 실행
   → yt-dlp YouTube 검색 ("ytsearch5:{artist} {track}")
       차단 영상(payment/private/members-only) 감지 → 다음 후보 retry
       5개 소진 시 "ytsearch1:" 폴백 / FLAC 우선 → Opus fallback
-  → download_track() returns (file_path, yt_metadata) — yt_metadata: {thumbnail_url, channel}
+  → LB 트랙: _lookup_recording_by_mbid(mbid) 직접 조회 → 실패 시 _mb_search_recording() 폴백
+  → _mb_search_recording(artist, track): MB API 4단계 검색
+      1. strict:    artistname:{a} AND recording:{t} + primarytype:Album + NOT Live/Compilation/...
+      2. plain:     artistname:{a} AND recording:{t}  (release-type 필터 없음)
+      3. artist-id: _mb_lookup_artist_ids(artist) → arid:{mbid} AND recording:{t} 재검색
+      4. fallback:  recording:{t} 만으로 검색, artist-credit/alias 유사도 0.3 이상인 것 선택
   → mutagen: staging 파일에 artist / title / mb_trackid 초기 태그 쓰기
   → _enrich_track() — staging 파일에서 직접 실행:
       앨범명 결정 순서:
@@ -90,41 +95,37 @@ ListenBrainz /cf/recommendation
         2. iTunes artwork URL
         3. Deezer artwork URL
         4. YouTube thumbnail (최후 수단)
-  → shutil.copy2: staging → data/music/{Artist}/{Album}/{Track}.ext (앨범명 기준 최종 경로 결정)
+  → shutil.copy2: staging → data/music/{Artist}/{Album}/{Track}.ext
   → Navidrome Subsonic API startScan + poll
+  → SSE emit "done" / "failed" (LB 트랙은 SSE 리스너 없으므로 무시됨)
 ```
 
-**Manual download flow (Web UI):**
-```
-POST /api/download {artist, track}
-  → job_id = "manual-{uuid8}" (also serves as mbid in state.db)
-  → SSE stream GET /api/sse/{job_id}  (per-job Queue)
-  → same pipeline steps as above (download → tag → scan)
-  → SSE events: downloading → tagging → scanning → done/failed
-```
+**Restart recovery:**
+- `pending` 잡 → 원래 순서(rowid ASC)대로 재큐
+- `downloading` 잡 → mark_failed("interrupted by restart", attempts++) → attempts < 3이면 재큐
 
 **Threading model:**
 - `main()` runs uvicorn on the **main thread** (blocking)
-- LB pipeline runs in a **daemon thread** on startup
-- Scheduler loop runs in a **daemon thread** (`schedule` library, 60s tick)
-- Each manual download job runs in its own **daemon thread**
-- 각 잡은 고유한 mbid 기반 파일명을 사용하므로 별도 lock 불필요
+- **Worker thread** (daemon): `worker_loop()` — FIFO 큐에서 잡을 꺼내 하나씩 순차 처리
+- **Pipeline thread** (daemon): `run_pipeline()` — LB 추천 fetch 후 enqueue_job() 호출
+- **Scheduler thread** (daemon): 60s tick, N시간마다 run_pipeline() 호출
 
 ## Key Files and their Roles
 
 | File | Role |
 |------|------|
-| `src/main.py` | Entrypoint; wires config → DB → API → threads → uvicorn |
-| `src/api.py` | FastAPI app; `_cfg` injected by main.py at startup |
-| `src/state.py` | SQLite wrapper; `mbid` is PK (real MB UUID for LB tracks, `manual-{uuid8}` for manual) |
+| `src/main.py` | Entrypoint; wires config → DB → API → worker/pipeline threads → reload pending jobs → uvicorn |
+| `src/worker.py` | Shared work queue module; `_work_queue` (FIFO), `_job_queues` (SSE), `enqueue_job()`, `emit()`, `worker_loop()` |
+| `src/api.py` | FastAPI app; `_cfg` injected by main.py; POST /api/download calls `worker.enqueue_job()` |
+| `src/state.py` | SQLite wrapper; `mbid` is PK; `get_pending_jobs()` returns pending/downloading jobs in rowid ASC order |
 | `src/config.py` | Env-var only config (no file needed); `LB_USERNAME`, `LB_TOKEN`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`, `NAVIDROME_URL` |
-| `src/pipeline/tagger.py` | Most complex module; beets 없이 직접 구현: MB 3단계 검색 → shutil 파일 복사 → mutagen 태깅 → iTunes/Deezer/MB 앨범 enrichment → CAA/iTunes/Deezer/YouTube 커버아트 임베딩 |
+| `src/pipeline/tagger.py` | Most complex module; MB 4단계 검색(Stage 2.5 artist-id 추가) → shutil 복사 → mutagen 태깅 → iTunes/Deezer/MB 앨범 enrichment → CAA/iTunes/Deezer/YouTube 커버아트 임베딩 |
 
 ## Tagger Constraints
 
 - **mb_albumid는 파일 태그에 쓰지 않는다**: Navidrome은 album name으로 그룹핑하므로, mb_albumid가 다르면 같은 앨범이 2개로 분리됨
 - **iTunes/Deezer artist 유사도 임계값 0.4**: 너무 낮으면 동명 아티스트의 앨범이 매칭될 위험
-- **MB 검색 3단계 폴백**: strict → plain → recording-only 순서로 점점 완화. recording-only 단계에서는 artist 유사도 0.3 미만 시 실패 처리
+- **MB 검색 4단계 폴백**: strict → plain → artist-id → recording-only 순서로 점점 완화. recording-only 단계에서는 artist 유사도 0.3 미만 시 실패 처리
 - **CAA 커버아트는 mb_albumid_candidates가 있을 때만 시도**: iTunes/Deezer로만 앨범이 결정된 경우 CAA를 건너뜀
 
 ## Volume Mounts (docker-compose.prod.yml)

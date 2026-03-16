@@ -137,30 +137,6 @@
     }
     .btn-secondary:hover { background: #363b55; color: #e2e8f0; }
 
-    #status-bar {
-      margin-top: 14px;
-      min-height: 28px;
-      font-size: 0.85rem;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .status-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-    .dot-idle     { background: #4a5568; }
-    .dot-progress { background: #f6ad55; animation: pulse 1s infinite; }
-    .dot-done     { background: #68d391; }
-    .dot-failed   { background: #fc8181; }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.4; }
-    }
-
     .lb-row { display: flex; align-items: center; gap: 12px; }
 
     /* Downloads table */
@@ -211,6 +187,7 @@
     .badge-done        { background: #1c4532; color: #68d391; }
     .badge-failed      { background: #3b1515; color: #fc8181; }
     .badge-pending     { background: #2d3147; color: #a0aec0; }
+    .badge-queued      { background: #2d3147; color: #a0aec0; }
     .badge-downloading { background: #2a3a54; color: #63b3ed; }
     .badge-tagging     { background: #2d2a54; color: #b794f4; }
     .badge-scanning    { background: #2a3a54; color: #76e4f7; }
@@ -1193,10 +1170,6 @@
     <div id="yt-candidates-wrap">
       <div id="yt-candidates-list" class="yt-candidates-list"></div>
     </div>
-    <div id="status-bar">
-      <span class="status-dot dot-idle" id="status-dot"></span>
-      <span id="status-msg">Idle</span>
-    </div>
   </section>
 
   <!-- LB Pipeline -->
@@ -1351,18 +1324,16 @@
   }
 
   // ── Status bar ─────────────────────────────────────────────────────────────
-  const dotEl  = document.getElementById('status-dot');
-  const msgEl  = document.getElementById('status-msg');
   const dlBtn  = document.getElementById('btn-download');
 
   function setStatus(type, msg) {
-    dotEl.className = 'status-dot dot-' + type;
-    msgEl.textContent = msg;
+    // status indicator removed; kept as no-op to avoid call-site errors
   }
 
   // ── Manual Download ────────────────────────────────────────────────────────
   let isDownloading = false;
   let _downloadMode = 'auto'; // 'auto' | 'pick'
+  const _activeJobStatuses = new Map(); // jobId → current SSE status
 
   function setDownloadMode(mode) {
     _downloadMode = mode;
@@ -1567,6 +1538,9 @@
       return;
     }
 
+    // 테이블에 pending 행이 먼저 추가되도록 history를 미리 로드
+    await loadHistory();
+
     // SSE (기존과 동일)
     const es = new EventSource('/api/sse/' + jobId);
     es.onmessage = (ev) => {
@@ -1574,7 +1548,18 @@
       const dotType = (status === 'done') ? 'done' : (status === 'failed') ? 'failed' : 'progress';
       setStatus(dotType, message);
 
+      // 활성 잡 상태 추적
+      _activeJobStatuses.set(jobId, status);
+
+      // 테이블 행 status 배지 실시간 업데이트
+      const row = document.querySelector(`#history-body tr[data-mbid="${jobId}"]`);
+      if (row) {
+        const statusCell = row.querySelector('[data-field="status"]');
+        if (statusCell) statusCell.innerHTML = statusBadge(status);
+      }
+
       if (status === 'done' || status === 'failed') {
+        _activeJobStatuses.delete(jobId);
         es.close();
         isDownloading = false;
         dlBtn.disabled = false;
@@ -1617,6 +1602,9 @@
       return;
     }
 
+    // 테이블에 pending 행이 먼저 추가되도록 history를 미리 로드
+    await loadHistory();
+
     // SSE
     const es = new EventSource('/api/sse/' + jobId);
     es.onmessage = (e) => {
@@ -1624,7 +1612,18 @@
       const dotType = (status === 'done') ? 'done' : (status === 'failed') ? 'failed' : 'progress';
       setStatus(dotType, message);
 
+      // 활성 잡 상태 추적
+      _activeJobStatuses.set(jobId, status);
+
+      // 테이블 행 status 배지 실시간 업데이트
+      const row = document.querySelector(`#history-body tr[data-mbid="${jobId}"]`);
+      if (row) {
+        const statusCell = row.querySelector('[data-field="status"]');
+        if (statusCell) statusCell.innerHTML = statusBadge(status);
+      }
+
       if (status === 'done' || status === 'failed') {
+        _activeJobStatuses.delete(jobId);
         es.close();
         isDownloading = false;
         dlBtn.disabled = false;
@@ -1673,7 +1672,7 @@
   function statusBadge(status) {
     const map = {
       done: '● done', failed: '✕ failed', pending: '○ pending',
-      downloading: '↓ downloading', tagging: '⊙ tagging', scanning: '⟳ scanning',
+      queued: '○ queued', downloading: '↓ downloading', tagging: '⊙ tagging', scanning: '⟳ scanning',
     };
     const label = map[status] || status;
     return `<span class="badge badge-${esc(status)}">${esc(label)}</span>`;
@@ -1689,6 +1688,102 @@
   // 현재 펼쳐진 행의 mbid (없으면 null)
   let _expandedMbid = null;
 
+  function _createRow(r) {
+    const isExpandable = r.status !== 'pending' && r.status !== 'queued' && r.status !== 'downloading';
+
+    const tr = document.createElement('tr');
+    tr.dataset.mbid = r.mbid;
+    tr.className = 'history-row';
+
+    const tdArtist = document.createElement('td');
+    tdArtist.textContent = r.artist;
+
+    const tdTrack = document.createElement('td');
+    tdTrack.textContent = r.track_name;
+
+    const tdAlbum = document.createElement('td');
+    tdAlbum.textContent = r.album || '—';
+
+    const tdSource = document.createElement('td');
+    tdSource.innerHTML = sourceBadge(r.source);
+
+    const tdStatus = document.createElement('td');
+    tdStatus.dataset.field = 'status';
+    tdStatus.innerHTML = statusBadge(r.status);
+
+    const tdTime = document.createElement('td');
+    tdTime.style.color = '#718096';
+    tdTime.textContent = relativeTime(r.downloaded_at);
+
+    // MB 매칭 뱃지 열
+    const tdMb = document.createElement('td');
+    tdMb.style.textAlign = 'left';
+    if (r.mb_recording_id) {
+      const mbLink = document.createElement('a');
+      mbLink.href = 'https://listenbrainz.org/track/' + encodeURIComponent(r.mb_recording_id);
+      mbLink.target = '_blank';
+      mbLink.textContent = 'LB ↗';
+      mbLink.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#353070; color:#eb743b; font-size:11px; text-decoration:none; white-space:nowrap; cursor:pointer; border:1px solid #eb743b55;';
+      mbLink.addEventListener('mouseover', () => mbLink.style.background = '#4a3f8a');
+      mbLink.addEventListener('mouseout', () => mbLink.style.background = '#353070');
+      mbLink.addEventListener('click', e => e.stopPropagation());
+      tdMb.appendChild(mbLink);
+    } else {
+      const mbSpan = document.createElement('span');
+      mbSpan.textContent = '—';
+      mbSpan.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#2a2a2a; color:#6b7280; font-size:11px; white-space:nowrap;';
+      tdMb.appendChild(mbSpan);
+    }
+
+    tr.appendChild(tdArtist);
+    tr.appendChild(tdTrack);
+    tr.appendChild(tdAlbum);
+    tr.appendChild(tdSource);
+    tr.appendChild(tdStatus);
+    tr.appendChild(tdMb);
+    tr.appendChild(tdTime);
+
+    // 확장 행 (기본 숨김)
+    const expandTr = document.createElement('tr');
+    expandTr.className = 'expand-row';
+    expandTr.style.display = 'none';
+
+    const expandTd = document.createElement('td');
+    expandTd.colSpan = 7;
+    expandTr.appendChild(expandTd);
+
+    // 이전에 펼쳐져 있던 행이면 즉시 복원
+    if (_expandedMbid === r.mbid && isExpandable) {
+      tr.classList.add('expanded');
+      expandTr.style.display = '';
+      renderExpandInner(expandTd, r, expandTr, tr, true /* cached */);
+    }
+
+    if (isExpandable) {
+      tr.dataset.expandable = 'true';
+      // 행 클릭 → 아코디언 토글
+      tr.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = tr.classList.contains('expanded');
+
+        // 먼저 모든 확장 행 닫기
+        collapseAllExpandRows();
+
+        if (!isOpen) {
+          // 이 행 열기
+          tr.classList.add('expanded');
+          expandTr.style.display = '';
+          _expandedMbid = r.mbid;
+          renderExpandInner(expandTd, r, expandTr, tr, false /* fresh load */);
+        } else {
+          _expandedMbid = null;
+        }
+      });
+    }
+
+    return { tr, expandTr };
+  }
+
   async function loadHistory() {
     try {
       const res = await fetch('/api/downloads');
@@ -1703,100 +1798,166 @@
         return;
       }
       noData.style.display = 'none';
-      tbody.innerHTML = '';
 
-      rows.forEach(r => {
-        const isExpandable = r.status !== 'pending' && r.status !== 'downloading';
-
-        const tr = document.createElement('tr');
-        tr.dataset.mbid = r.mbid;
-        tr.className = 'history-row';
-
-        const tdArtist = document.createElement('td');
-        tdArtist.textContent = r.artist;
-
-        const tdTrack = document.createElement('td');
-        tdTrack.textContent = r.track_name;
-
-        const tdAlbum = document.createElement('td');
-        tdAlbum.textContent = r.album || '—';
-
-        const tdSource = document.createElement('td');
-        tdSource.innerHTML = sourceBadge(r.source);
-
-        const tdStatus = document.createElement('td');
-        tdStatus.innerHTML = statusBadge(r.status);
-
-        const tdTime = document.createElement('td');
-        tdTime.style.color = '#718096';
-        tdTime.textContent = relativeTime(r.downloaded_at);
-
-        // MB 매칭 뱃지 열
-        const tdMb = document.createElement('td');
-        tdMb.style.textAlign = 'left';
-        if (r.mb_recording_id) {
-          const mbLink = document.createElement('a');
-          mbLink.href = 'https://listenbrainz.org/track/' + encodeURIComponent(r.mb_recording_id);
-          mbLink.target = '_blank';
-          mbLink.textContent = 'LB ↗';
-          mbLink.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#353070; color:#eb743b; font-size:11px; text-decoration:none; white-space:nowrap; cursor:pointer; border:1px solid #eb743b55;';
-          mbLink.addEventListener('mouseover', () => mbLink.style.background = '#4a3f8a');
-          mbLink.addEventListener('mouseout', () => mbLink.style.background = '#353070');
-          mbLink.addEventListener('click', e => e.stopPropagation());
-          tdMb.appendChild(mbLink);
-        } else {
-          const mbSpan = document.createElement('span');
-          mbSpan.textContent = '—';
-          mbSpan.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#2a2a2a; color:#6b7280; font-size:11px; white-space:nowrap;';
-          tdMb.appendChild(mbSpan);
-        }
-
-        tr.appendChild(tdArtist);
-        tr.appendChild(tdTrack);
-        tr.appendChild(tdAlbum);
-        tr.appendChild(tdSource);
-        tr.appendChild(tdStatus);
-        tr.appendChild(tdMb);
-        tr.appendChild(tdTime);
-        tbody.appendChild(tr);
-
-        // 확장 행 (기본 숨김)
-        const expandTr = document.createElement('tr');
-        expandTr.className = 'expand-row';
-        expandTr.style.display = 'none';
-
-        const expandTd = document.createElement('td');
-        expandTd.colSpan = 7;
-        expandTr.appendChild(expandTd);
-        tbody.appendChild(expandTr);
-
-        // 이전에 펼쳐져 있던 행이면 즉시 복원
-        if (_expandedMbid === r.mbid && isExpandable) {
-          tr.classList.add('expanded');
-          expandTr.style.display = '';
-          renderExpandInner(expandTd, r, expandTr, tr, true /* cached */);
-        }
-
-        if (!isExpandable) return;
-
-        // 행 클릭 → 아코디언 토글
-        tr.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const isOpen = tr.classList.contains('expanded');
-
-          // 먼저 모든 확장 행 닫기
-          collapseAllExpandRows();
-
-          if (!isOpen) {
-            // 이 행 열기
-            tr.classList.add('expanded');
-            expandTr.style.display = '';
-            _expandedMbid = r.mbid;
-            renderExpandInner(expandTd, r, expandTr, tr, false /* fresh load */);
-          } else {
-            _expandedMbid = null;
-          }
+      // 기존 행 map 구성 (mbid → {mainTr, expandTr})
+      const existingRows = new Map();
+      tbody.querySelectorAll('tr[data-mbid]').forEach(tr => {
+        const next = tr.nextElementSibling;
+        existingRows.set(tr.dataset.mbid, {
+          mainTr: tr,
+          expandTr: (next && next.classList.contains('expand-row')) ? next : null,
         });
+      });
+
+      // 새 데이터의 mbid 집합
+      const newMbids = new Set(rows.map(r => r.mbid));
+
+      // 사라진 행 제거
+      existingRows.forEach(({ mainTr, expandTr }, mbid) => {
+        if (!newMbids.has(mbid)) {
+          if (expandTr) expandTr.remove();
+          mainTr.remove();
+          if (_expandedMbid === mbid) _expandedMbid = null;
+        }
+      });
+
+      // 순서에 맞게 행 추가/업데이트
+      // API 응답은 rowid DESC(최신순)이므로 rows 순서대로 DOM에 배치
+      let refNode = null; // tbody의 첫 번째 자식 앞에 삽입하기 위한 기준 노드
+
+      rows.forEach((r) => {
+        if (existingRows.has(r.mbid)) {
+          // 기존 행 업데이트: 바뀐 셀만 교체
+          const { mainTr, expandTr } = existingRows.get(r.mbid);
+          const cells = mainTr.cells;
+
+          // cells[0]: Artist
+          const newArtist = r.artist;
+          if (cells[0] && cells[0].textContent !== newArtist) cells[0].textContent = newArtist;
+
+          // cells[1]: Track
+          const newTrack = r.track_name;
+          if (cells[1] && cells[1].textContent !== newTrack) cells[1].textContent = newTrack;
+
+          // cells[2]: Album
+          const newAlbum = r.album || '—';
+          if (cells[2] && cells[2].textContent !== newAlbum) cells[2].textContent = newAlbum;
+
+          // cells[3]: Source
+          const newSource = sourceBadge(r.source);
+          if (cells[3] && cells[3].innerHTML !== newSource) cells[3].innerHTML = newSource;
+
+          // Status — active job이 아닐 때만 업데이트
+          if (!_activeJobStatuses.has(r.mbid)) {
+            const statusCell = mainTr.querySelector('[data-field="status"]');
+            const newStatus = statusBadge(r.status);
+            if (statusCell && statusCell.innerHTML !== newStatus) statusCell.innerHTML = newStatus;
+          }
+
+          // cells[5]: MB link — mb_recording_id 변경 감지
+          // data-mbrecid 속성으로 변경 여부 판단
+          const prevMbRecId = mainTr.dataset.mbrecid || '';
+          const curMbRecId = r.mb_recording_id || '';
+          if (prevMbRecId !== curMbRecId) {
+            mainTr.dataset.mbrecid = curMbRecId;
+            if (cells[5]) {
+              cells[5].innerHTML = '';
+              if (r.mb_recording_id) {
+                const mbLink = document.createElement('a');
+                mbLink.href = 'https://listenbrainz.org/track/' + encodeURIComponent(r.mb_recording_id);
+                mbLink.target = '_blank';
+                mbLink.textContent = 'LB ↗';
+                mbLink.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#353070; color:#eb743b; font-size:11px; text-decoration:none; white-space:nowrap; cursor:pointer; border:1px solid #eb743b55;';
+                mbLink.addEventListener('mouseover', () => mbLink.style.background = '#4a3f8a');
+                mbLink.addEventListener('mouseout', () => mbLink.style.background = '#353070');
+                mbLink.addEventListener('click', e => e.stopPropagation());
+                cells[5].appendChild(mbLink);
+              } else {
+                const mbSpan = document.createElement('span');
+                mbSpan.textContent = '—';
+                mbSpan.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#2a2a2a; color:#6b7280; font-size:11px; white-space:nowrap;';
+                cells[5].appendChild(mbSpan);
+              }
+            }
+          }
+
+          // cells[6]: Time
+          const newTime = relativeTime(r.downloaded_at);
+          if (cells[6] && cells[6].textContent !== newTime) cells[6].textContent = newTime;
+
+          // 클릭 핸들러 등록 (pending→done 전환 시)
+          const isNowExpandable = r.status !== 'pending' && r.status !== 'queued' && r.status !== 'downloading';
+          if (isNowExpandable && !mainTr.dataset.expandable) {
+            mainTr.dataset.expandable = 'true';
+            const expandTd = expandTr.cells[0];
+            mainTr.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const isOpen = mainTr.classList.contains('expanded');
+              collapseAllExpandRows();
+              if (!isOpen) {
+                mainTr.classList.add('expanded');
+                expandTr.style.display = '';
+                _expandedMbid = r.mbid;
+                renderExpandInner(expandTd, r, expandTr, mainTr, false);
+              } else {
+                _expandedMbid = null;
+              }
+            });
+          }
+
+          // 행 순서를 API 응답 순서에 맞게 유지
+          // refNode가 null이면 tbody 첫 번째 자식 앞에, 아니면 refNode 다음에 삽입
+          if (refNode === null) {
+            // mainTr을 맨 앞으로
+            if (tbody.firstChild !== mainTr) {
+              tbody.insertBefore(mainTr, tbody.firstChild);
+            }
+            // expandTr을 mainTr 바로 다음으로
+            if (expandTr && mainTr.nextSibling !== expandTr) {
+              tbody.insertBefore(expandTr, mainTr.nextSibling);
+            }
+          } else {
+            const expectedNext = refNode.nextSibling;
+            if (expandTr) {
+              // mainTr, expandTr 쌍으로 이동
+              if (expectedNext !== mainTr) {
+                tbody.insertBefore(mainTr, expectedNext);
+              }
+              if (mainTr.nextSibling !== expandTr) {
+                tbody.insertBefore(expandTr, mainTr.nextSibling);
+              }
+            } else {
+              if (expectedNext !== mainTr) {
+                tbody.insertBefore(mainTr, expectedNext);
+              }
+            }
+          }
+          refNode = expandTr || mainTr;
+
+        } else {
+          // 새 행 생성
+          const { tr, expandTr } = _createRow(r);
+
+          if (refNode === null) {
+            tbody.insertBefore(expandTr, tbody.firstChild);
+            tbody.insertBefore(tr, expandTr);
+          } else {
+            const insertAt = refNode.nextSibling;
+            tbody.insertBefore(tr, insertAt);
+            tbody.insertBefore(expandTr, tr.nextSibling);
+          }
+          refNode = expandTr;
+          existingRows.set(r.mbid, { mainTr: tr, expandTr });
+        }
+      });
+
+      // 활성 SSE 잡의 뱃지를 DB 폴링 덮어쓰기로부터 보호
+      _activeJobStatuses.forEach((status, jid) => {
+        const row = document.querySelector(`#history-body tr[data-mbid="${jid}"]`);
+        if (row) {
+          const statusCell = row.querySelector('[data-field="status"]');
+          if (statusCell) statusCell.innerHTML = statusBadge(status);
+        }
       });
     } catch (e) {
       console.error('history load failed', e);

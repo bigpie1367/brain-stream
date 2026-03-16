@@ -368,7 +368,7 @@ def search_candidates(artist: str, track_name: str) -> list[dict]:
                 title = entry.get("title") or ""
                 channel = entry.get("channel") or entry.get("uploader") or ""
                 duration = entry.get("duration") or 0
-                thumbnail_url = entry.get("thumbnail") or ""
+                thumbnail_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg" if video_id else ""
                 url = f"https://www.youtube.com/watch?v={video_id}" if video_id else ""
                 results.append(
                     {
