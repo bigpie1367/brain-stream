@@ -166,7 +166,9 @@ def test_get_sse_existing_job_returns_200(client):
     q = Queue()
     # done 이벤트를 미리 큐에 넣어 스트림이 즉시 종료되도록 한다
     q.put({"status": "done", "message": "완료"})
-    worker_module._job_queues[job_id] = q
+    import time
+
+    worker_module._job_queues[job_id] = (q, time.time())
 
     try:
         resp = client.get(f"/api/sse/{job_id}")
