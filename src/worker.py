@@ -2,6 +2,7 @@
 Shared work queue and single worker thread.
 Both manual downloads (api.py) and LB pipeline use this module.
 """
+
 import threading
 from queue import Empty, Queue
 from typing import Optional
@@ -16,6 +17,9 @@ _job_queues_lock = threading.Lock()
 
 # Global FIFO work queue
 _work_queue: Queue = Queue()
+
+# Shutdown signal for graceful stop
+_shutdown_event = threading.Event()
 
 
 def create_sse_queue(job_id: str) -> Queue:
@@ -74,9 +78,9 @@ def worker_loop(cfg, run_job_fn):
     run_job_fn(cfg, job_spec) — the actual download+tag+scan logic.
     """
     log.info("worker loop started")
-    while True:
+    while not _shutdown_event.is_set():
         try:
-            job = _work_queue.get(timeout=5)
+            job = _work_queue.get(timeout=2)
         except Empty:
             continue
         try:
@@ -85,3 +89,4 @@ def worker_loop(cfg, run_job_fn):
             log.error("worker: unhandled exception", job_id=job.get("job_id"), error=str(e))
         finally:
             _work_queue.task_done()
+    log.info("worker loop stopped (shutdown event received)")
