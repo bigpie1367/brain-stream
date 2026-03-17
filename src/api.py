@@ -8,7 +8,6 @@ import secrets
 import shutil
 import threading
 import time
-import time as _time
 import uuid
 from queue import Empty
 from typing import Optional
@@ -79,8 +78,8 @@ async def rate_limit_middleware(request: Request, call_next):
 
     if limit is not None:
         client_ip = request.client.host if request.client else "unknown"
-        key = f"{client_ip}:{method} {path}"
-        now = _time.time()
+        key = f"{client_ip}:{pattern}"
+        now = time.time()
 
         timestamps = _rate_store.get(key, [])
         timestamps = [t for t in timestamps if now - t < _rate_window]
