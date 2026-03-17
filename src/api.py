@@ -8,6 +8,7 @@ import secrets
 import shutil
 import threading
 import time
+import time as _time
 import uuid
 from queue import Empty
 from typing import Optional
@@ -16,10 +17,10 @@ import httpx
 import mutagen.flac
 import mutagen.oggopus
 import requests
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import src.worker as worker
 from src.pipeline.downloader import download_track, download_track_by_id, search_candidates
@@ -35,7 +36,6 @@ from src.pipeline.tagger import (
     write_title_tag,
 )
 from src.state import (
-    delete_download,
     get_all_downloads,
     get_download_by_mbid,
     mark_done,
@@ -43,7 +43,6 @@ from src.state import (
     mark_failed,
     mark_ignored,
     mark_pending,
-    update_file_path,
     update_track_info,
 )
 from src.utils.logger import get_logger
@@ -53,6 +52,55 @@ log = get_logger(__name__)
 app = FastAPI(title="Music Bot")
 app.mount("/static", StaticFiles(directory="src/static"), name="static")
 
+# ── Rate Limiting ──────────────────────────────────────────────────────────
+
+_RATE_LIMITS: dict[str, int] = {
+    "POST /api/download": 10,
+    "POST /api/pipeline/run": 2,
+    "POST /api/rematch/apply": 10,
+    "POST /api/edit/": 10,
+    "DELETE /api/downloads/": 10,
+}
+_rate_window = 60  # seconds
+_rate_store: dict[str, list[float]] = {}
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    method = request.method
+    path = request.url.path
+
+    limit = None
+    for pattern, max_req in _RATE_LIMITS.items():
+        rule_method, rule_path = pattern.split(" ", 1)
+        if method == rule_method and path.startswith(rule_path):
+            limit = max_req
+            break
+
+    if limit is not None:
+        client_ip = request.client.host if request.client else "unknown"
+        key = f"{client_ip}:{method} {path}"
+        now = _time.time()
+
+        timestamps = _rate_store.get(key, [])
+        timestamps = [t for t in timestamps if now - t < _rate_window]
+        _rate_store[key] = timestamps
+
+        if len(timestamps) >= limit:
+            from starlette.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests"},
+                headers={"Retry-After": str(_rate_window)},
+            )
+
+        timestamps.append(now)
+        _rate_store[key] = timestamps
+
+    return await call_next(request)
+
+
 # Injected by main.py after config is loaded
 _cfg = None
 
@@ -61,25 +109,25 @@ _cfg = None
 
 
 class DownloadRequest(BaseModel):
-    artist: str
-    track: str
-    video_id: Optional[str] = None  # 선택 모드에서 특정 영상 지정 시
+    artist: str = Field(max_length=500)
+    track: str = Field(max_length=500)
+    video_id: Optional[str] = None
 
 
 class RematchApplyRequest(BaseModel):
-    song_id: str | None = None
-    mbid: str | None = None
-    mb_recording_id: str
-    mb_album_id: str
-    album_name: str = ""
-    artist_name: str = ""
-    cover_url: str = ""
+    song_id: str | None = Field(default=None, max_length=100)
+    mbid: str | None = Field(default=None, max_length=100)
+    mb_recording_id: str = Field(max_length=100)
+    mb_album_id: str = Field(max_length=100)
+    album_name: str = Field(default="", max_length=500)
+    artist_name: str = Field(default="", max_length=500)
+    cover_url: str = Field(default="", max_length=2000)
 
 
 class EditRequest(BaseModel):
-    artist: Optional[str] = None
-    album: Optional[str] = None
-    track_name: Optional[str] = None
+    artist: Optional[str] = Field(default=None, max_length=500)
+    album: Optional[str] = Field(default=None, max_length=500)
+    track_name: Optional[str] = Field(default=None, max_length=500)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -97,7 +145,9 @@ def _run_download_job(cfg, job_spec: dict):
         # file_path가 이미 기록되어 있고 파일도 존재하면 다운로드/태깅 스킵
         existing = get_download_by_mbid(cfg.state_db, mbid)
         if existing and existing.get("file_path") and os.path.exists(existing["file_path"]):
-            log.info("file already exists, skipping download", mbid=mbid, path=existing["file_path"])
+            log.info(
+                "file already exists, skipping download", mbid=mbid, path=existing["file_path"]
+            )
             mark_done(cfg.state_db, mbid, existing["file_path"], album=existing.get("album"))
             worker.emit(job_id, "scanning", "Navidrome 스캔 중...")
             if trigger_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password):
@@ -136,21 +186,28 @@ def _run_download_job(cfg, job_spec: dict):
             return
 
         worker.emit(job_id, "tagging", "태깅 중...")
-        success, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id = tag_and_import(
-            file_path,
-            cfg.beets.music_dir,
-            artist=artist,
-            track_name=track,
-            yt_metadata=yt_metadata,
-            db_path=cfg.state_db,
-            mbid=mbid,
+        success, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id = (
+            tag_and_import(
+                file_path,
+                cfg.beets.music_dir,
+                artist=artist,
+                track_name=track,
+                yt_metadata=yt_metadata,
+                db_path=cfg.state_db,
+                mbid=mbid,
+            )
         )
         if not success:
             mark_failed(cfg.state_db, mbid, "tagging failed")
             worker.emit(job_id, "failed", "태깅 실패")
             return
 
-        mark_done(cfg.state_db, mbid, file_path=dest_path, album=canonical_album if canonical_album else None)
+        mark_done(
+            cfg.state_db,
+            mbid,
+            file_path=dest_path,
+            album=canonical_album if canonical_album else None,
+        )
 
         # LB 트랙은 mbid 자체가 MB recording UUID이므로 tagger 반환값 대신 mbid 우선 사용
         final_mb_recording_id = mbid if not mbid.startswith("manual-") else mb_recording_id
@@ -190,7 +247,10 @@ async def index():
 
 
 @app.get("/api/download/candidates")
-async def get_download_candidates(artist: str, track: str):
+async def get_download_candidates(
+    artist: str = Query(max_length=500),
+    track: str = Query(max_length=500),
+):
     """YouTube 후보 목록 반환 (다운로드 없음)"""
     candidates = search_candidates(artist, track)
     return {"candidates": candidates}
@@ -386,7 +446,10 @@ _MB_SEARCH_HEADERS = {"User-Agent": "brainstream/1.0"}
 
 
 @app.get("/api/rematch/search")
-async def rematch_search(artist: str, track: str):
+async def rematch_search(
+    artist: str = Query(max_length=500),
+    track: str = Query(max_length=500),
+):
     """Search for album candidates to rematch a track.
 
     Queries MusicBrainz (up to 10 results) then appends an iTunes candidate if found.
@@ -446,11 +509,14 @@ async def rematch_search(artist: str, track: str):
         recording_id = rec.get("id")
         releases = rec.get("releases", [])
         credits = rec.get("artist-credit", [])
-        artist_name = "".join(
-            c.get("artist", {}).get("name", "") + c.get("joinphrase", "")
-            for c in credits
-            if isinstance(c, dict)
-        ).strip() or artist
+        artist_name = (
+            "".join(
+                c.get("artist", {}).get("name", "") + c.get("joinphrase", "")
+                for c in credits
+                if isinstance(c, dict)
+            ).strip()
+            or artist
+        )
 
         for release in releases[:3]:
             mb_album_id = release.get("id")
@@ -780,7 +846,9 @@ async def edit_metadata(song_id: str, req: EditRequest):
     # 2. Resolve final values (None → keep existing; DB NULL treated as "")
     new_artist = req.artist if req.artist is not None else (record.get("artist") or "")
     new_album = req.album if req.album is not None else (record.get("album") or "")
-    new_track_name = req.track_name if req.track_name is not None else (record.get("track_name") or "")
+    new_track_name = (
+        req.track_name if req.track_name is not None else (record.get("track_name") or "")
+    )
 
     # 3. No-op if nothing changed
     if (

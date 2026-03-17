@@ -37,10 +37,10 @@ if "uvicorn" not in sys.modules:
     _uvicorn_stub.run = MagicMock()
     sys.modules["uvicorn"] = _uvicorn_stub
 
-from src.state import init_db, get_all_downloads
-
+from src.state import init_db
 
 # ── 환경변수 픽스처 ─────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def dummy_env_vars(monkeypatch):
@@ -53,6 +53,7 @@ def dummy_env_vars(monkeypatch):
 
 # ── DB 픽스처 ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def tmp_state_db(tmp_path):
     """tmpdir에 SQLite DB를 초기화하고 경로 문자열을 반환한다."""
@@ -62,6 +63,7 @@ def tmp_state_db(tmp_path):
 
 
 # ── FastAPI TestClient 픽스처 ──────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def client(tmp_state_db, tmp_path, monkeypatch):
@@ -73,8 +75,12 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     import src.api as api_module
     import src.worker as worker_module
     from src.config import (
-        AppConfig, ListenBrainzConfig, DownloadConfig,
-        BeetsConfig, NavidromeConfig, SchedulerConfig,
+        AppConfig,
+        BeetsConfig,
+        DownloadConfig,
+        ListenBrainzConfig,
+        NavidromeConfig,
+        SchedulerConfig,
     )
 
     staging_dir = str(tmp_path / "staging")
@@ -99,6 +105,9 @@ def client(tmp_state_db, tmp_path, monkeypatch):
 
     # 기존 job queue 오염 방지
     worker_module._job_queues.clear()
+
+    # Rate limit store 초기화 (테스트 간 429 오염 방지)
+    api_module._rate_store.clear()
 
     yield TestClient(api_module.app, raise_server_exceptions=True)
 

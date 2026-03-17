@@ -3,15 +3,13 @@ tests/integration/test_api.py
 FastAPI TestClient로 API 엔드포인트 통합 테스트
 - pipeline 실행, download_track, tag_and_import, trigger_scan 등은 mock 처리
 """
-import threading
+
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from src.state import mark_pending, mark_done, get_all_downloads
-
+from src.state import get_all_downloads, mark_done, mark_pending
 
 # ── POST /api/download ────────────────────────────────────────────────────────
+
 
 def test_post_download_returns_200_and_job_id(client):
     """
@@ -68,6 +66,7 @@ def test_post_download_missing_track_returns_422(client):
 
 # ── GET /api/downloads ────────────────────────────────────────────────────────
 
+
 def test_get_downloads_returns_200_empty_list(client):
     """DB가 비어있을 때 GET /api/downloads는 200과 빈 리스트를 반환한다."""
     resp = client.get("/api/downloads")
@@ -114,6 +113,7 @@ def test_get_downloads_response_schema(client, tmp_state_db):
 
 # ── POST /api/pipeline/run ────────────────────────────────────────────────────
 
+
 def test_post_pipeline_run_returns_200(client):
     """POST /api/pipeline/run이 200을 반환하고 started 상태를 알려야 한다."""
     import src.main as main_module
@@ -145,6 +145,7 @@ def test_post_pipeline_run_spawns_daemon_thread(client):
 
 # ── GET /api/sse/{job_id} ────────────────────────────────────────────────────
 
+
 def test_get_sse_unknown_job_returns_404(client):
     """존재하지 않는 job_id로 SSE 요청 시 404를 반환해야 한다."""
     resp = client.get("/api/sse/nonexistent-job-id")
@@ -157,8 +158,9 @@ def test_get_sse_existing_job_returns_200(client):
     text/event-stream 미디어 타입을 사용한다.
     SSE 스트림은 무한 루프이므로 stream=True로 첫 응답만 확인한다.
     """
-    import src.worker as worker_module
     from queue import Queue
+
+    import src.worker as worker_module
 
     job_id = "manual-testjob"
     q = Queue()
@@ -176,6 +178,7 @@ def test_get_sse_existing_job_returns_200(client):
 
 # ── DELETE /api/downloads/{mbid} ─────────────────────────────────────────────
 
+
 def test_delete_download_returns_404_when_not_found(client):
     """존재하지 않는 mbid 삭제 시 404를 반환해야 한다."""
     resp = client.delete("/api/downloads/nonexistent-mbid")
@@ -184,7 +187,7 @@ def test_delete_download_returns_404_when_not_found(client):
 
 def test_delete_download_marks_record_as_ignored(client, tmp_state_db):
     """삭제 후 state DB 레코드가 ignored 상태로 전환된다 (재다운로드 방지)."""
-    from src.state import mark_done, get_download_by_mbid
+    from src.state import get_download_by_mbid, mark_done
 
     mark_pending(tmp_state_db, "mbid-del", "Track", "Artist")
     mark_done(tmp_state_db, "mbid-del")
@@ -239,20 +242,27 @@ def test_delete_download_no_file_path_marks_ignored(client, tmp_state_db):
 
 # ── GET / (index.html) ────────────────────────────────────────────────────────
 
+
 def test_get_index_returns_html(client):
     """GET / 가 HTML을 반환해야 한다."""
-    with patch("builtins.open", MagicMock(
-        return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value="<html></html>"))),
-            __exit__=MagicMock(return_value=False),
-        )
-    )):
+    with patch(
+        "builtins.open",
+        MagicMock(
+            return_value=MagicMock(
+                __enter__=MagicMock(
+                    return_value=MagicMock(read=MagicMock(return_value="<html></html>"))
+                ),
+                __exit__=MagicMock(return_value=False),
+            )
+        ),
+    ):
         resp = client.get("/")
     assert resp.status_code == 200
     assert "html" in resp.headers.get("content-type", "").lower()
 
 
 # ── GET /api/downloads/{mbid}/detail ─────────────────────────────────────────
+
 
 def test_get_download_detail_not_found_returns_404(client):
     """DB에 없는 mbid 조회 시 404를 반환한다."""
@@ -263,6 +273,7 @@ def test_get_download_detail_not_found_returns_404(client):
 def test_get_download_detail_no_file_path_returns_nulls(client, tmp_state_db):
     """file_path가 None이면 album_name, year, cover_art 모두 null을 반환한다."""
     from src.state import mark_pending
+
     mark_pending(tmp_state_db, "mbid-nofile", "Track", "Artist")
 
     resp = client.get("/api/downloads/mbid-nofile/detail")
@@ -275,7 +286,8 @@ def test_get_download_detail_no_file_path_returns_nulls(client, tmp_state_db):
 
 def test_get_download_detail_file_missing_returns_nulls(client, tmp_state_db):
     """file_path가 DB에 있지만 실제 파일이 없으면 nulls를 반환한다."""
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "mbid-gone", "Track", "Artist")
     mark_done(tmp_state_db, "mbid-gone", file_path="/nonexistent/track.flac")
 
@@ -292,7 +304,8 @@ def test_get_download_detail_flac_reads_album_tag(client, tmp_state_db, tmp_path
     dummy_file = tmp_path / "track.flac"
     dummy_file.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "mbid-flac", "Lose Yourself", "Eminem")
     mark_done(tmp_state_db, "mbid-flac", file_path=str(dummy_file))
 
@@ -316,7 +329,8 @@ def test_get_download_detail_opus_reads_album_tag(client, tmp_state_db, tmp_path
     dummy_file = tmp_path / "track.opus"
     dummy_file.write_bytes(b"fake opus data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "mbid-opus", "Lose Yourself", "Eminem")
     mark_done(tmp_state_db, "mbid-opus", file_path=str(dummy_file))
 
@@ -338,15 +352,14 @@ def test_get_download_detail_flac_reads_year_tag(client, tmp_state_db, tmp_path)
     dummy_file = tmp_path / "track.flac"
     dummy_file.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "mbid-flac-yr", "Lose Yourself", "Eminem")
     mark_done(tmp_state_db, "mbid-flac-yr", file_path=str(dummy_file))
 
     mock_audio = MagicMock()
     mock_audio.get.side_effect = lambda key, default=None: (
-        ["The Marshall Mathers LP"] if key == "album"
-        else ["2000"] if key == "date"
-        else default
+        ["The Marshall Mathers LP"] if key == "album" else ["2000"] if key == "date" else default
     )
     mock_audio.pictures = []
 
@@ -365,7 +378,8 @@ def test_get_download_detail_flac_reads_cover_art(client, tmp_state_db, tmp_path
     dummy_file = tmp_path / "track.flac"
     dummy_file.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "mbid-flac-art", "Lose Yourself", "Eminem")
     mark_done(tmp_state_db, "mbid-flac-art", file_path=str(dummy_file))
 
@@ -390,12 +404,14 @@ def test_get_download_detail_flac_reads_cover_art(client, tmp_state_db, tmp_path
 def test_get_download_detail_opus_reads_cover_art(client, tmp_state_db, tmp_path):
     """OggOpus 파일의 METADATA_BLOCK_PICTURE 태그로 커버아트를 읽어 반환한다."""
     import base64 as b64mod
+
     from mutagen.flac import Picture
 
     dummy_file = tmp_path / "track.opus"
     dummy_file.write_bytes(b"fake opus data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "mbid-opus-art", "Lose Yourself", "Eminem")
     mark_done(tmp_state_db, "mbid-opus-art", file_path=str(dummy_file))
 
@@ -424,7 +440,8 @@ def test_get_download_detail_no_album_tag_returns_null(client, tmp_state_db, tmp
     dummy_file = tmp_path / "track.flac"
     dummy_file.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "mbid-notag", "Track", "Artist")
     mark_done(tmp_state_db, "mbid-notag", file_path=str(dummy_file))
 
@@ -447,7 +464,8 @@ def test_get_download_detail_mutagen_exception_returns_null_album(client, tmp_st
     dummy_file = tmp_path / "track.flac"
     dummy_file.write_bytes(b"corrupted data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "mbid-corrupt", "Track", "Artist")
     mark_done(tmp_state_db, "mbid-corrupt", file_path=str(dummy_file))
 
@@ -461,6 +479,7 @@ def test_get_download_detail_mutagen_exception_returns_null_album(client, tmp_st
 
 
 # ── GET /api/rematch/search ───────────────────────────────────────────────────
+
 
 def _mb_search_response(recordings):
     """requests.get mock 반환값 헬퍼."""
@@ -533,8 +552,8 @@ def test_rematch_search_stage2_fallback(client):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return _mb_search_response([])   # stage1: 빈 결과
-        return _mb_search_response([rec])    # stage2: 결과 있음
+            return _mb_search_response([])  # stage1: 빈 결과
+        return _mb_search_response([rec])  # stage2: 결과 있음
 
     with patch("src.api.requests.get", side_effect=side_effect):
         with patch("src.api.time.sleep"):
@@ -659,6 +678,7 @@ def test_rematch_search_returns_combined_sources(client):
 
 # ── POST /api/rematch/apply ───────────────────────────────────────────────────
 
+
 def test_rematch_apply_success(client, tmp_path):
     """정상 흐름: 파일 존재 + getSong 성공 + MB release 조회 성공 → 200 반환."""
     dummy_audio = tmp_path / "track.flac"
@@ -759,7 +779,8 @@ def test_rematch_apply_via_mbid_success(client, tmp_state_db, tmp_path):
     dummy_audio = tmp_path / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-abc12345", "Lose Yourself", "Eminem")
     mark_done(tmp_state_db, "manual-abc12345", file_path=str(dummy_audio))
 
@@ -799,7 +820,8 @@ def test_rematch_apply_moves_file_when_album_changes(client, tmp_state_db, tmp_p
     dummy_audio = old_album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done, get_download_by_mbid
+    from src.state import get_download_by_mbid, mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-moveme", "Track", "Artist")
     mark_done(tmp_state_db, "manual-moveme", file_path=str(dummy_audio))
 
@@ -841,7 +863,8 @@ def test_rematch_apply_no_move_when_album_unchanged(client, tmp_state_db, tmp_pa
     dummy_audio = same_album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-nomove", "Track", "Artist")
     mark_done(tmp_state_db, "manual-nomove", file_path=str(dummy_audio))
 
@@ -876,7 +899,8 @@ def test_rematch_apply_move_fails_returns_500(client, tmp_state_db, tmp_path):
     dummy_audio = old_album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-movefail", "Track", "Artist")
     mark_done(tmp_state_db, "manual-movefail", file_path=str(dummy_audio))
 
@@ -917,6 +941,7 @@ def test_rematch_apply_via_mbid_not_in_db_returns_404(client):
 def test_rematch_apply_via_mbid_file_path_none_returns_500(client, tmp_state_db):
     """mbid는 있지만 file_path가 None이면 500을 반환한다."""
     from src.state import mark_pending
+
     mark_pending(tmp_state_db, "manual-nofp", "Track", "Artist")
     # file_path를 기록하지 않아 None 상태
 
@@ -933,7 +958,8 @@ def test_rematch_apply_via_mbid_file_path_none_returns_500(client, tmp_state_db)
 
 def test_rematch_apply_via_mbid_file_missing_returns_404(client, tmp_state_db):
     """mbid의 file_path가 존재하지 않는 파일이면 404를 반환한다."""
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-gone", "Track", "Artist")
     mark_done(tmp_state_db, "manual-gone", file_path="/nonexistent/path/track.flac")
 
@@ -985,9 +1011,11 @@ def test_rematch_apply_song_id_absolute_path_used_directly(client):
 
 # ── POST /api/edit/{song_id} ──────────────────────────────────────────────────
 
+
 def _setup_done_record(db_path, mbid, artist, track_name, album, file_path):
     """state.db에 done 레코드를 삽입하는 헬퍼."""
-    from src.state import mark_pending, mark_done, update_track_info
+    from src.state import mark_done, mark_pending, update_track_info
+
     mark_pending(db_path, mbid, track_name, artist)
     mark_done(db_path, mbid, file_path=file_path, album=album)
     update_track_info(db_path, mbid, artist=artist, track_name=track_name, album=album)
@@ -1002,6 +1030,7 @@ def test_edit_song_not_found_returns_404(client):
 def test_edit_file_path_null_returns_404(client, tmp_state_db):
     """file_path가 None인 레코드 → 404."""
     from src.state import mark_pending
+
     mark_pending(tmp_state_db, "manual-nofp2", "Track", "Artist")
     resp = client.post("/api/edit/manual-nofp2", json={"artist": "New Artist"})
     assert resp.status_code == 404
@@ -1025,9 +1054,7 @@ def test_edit_no_change_returns_200_immediately(client, tmp_state_db, tmp_path):
     """artist / album / track_name이 모두 기존값과 같으면 즉시 200 반환."""
     dummy = tmp_path / "track.flac"
     dummy.write_bytes(b"fake")
-    _setup_done_record(
-        tmp_state_db, "manual-noop", "Artist", "Track", "Album", str(dummy)
-    )
+    _setup_done_record(tmp_state_db, "manual-noop", "Artist", "Track", "Album", str(dummy))
     with patch("src.api.write_artist_tag") as mock_artist:
         with patch("src.api.write_album_tag") as mock_album:
             with patch("src.api.write_title_tag") as mock_title:
@@ -1052,11 +1079,10 @@ def test_edit_artist_only_updates_tags_and_moves_file(client, tmp_state_db, tmp_
     dummy = album_dir / "Track.flac"
     dummy.write_bytes(b"fake")
 
-    _setup_done_record(
-        tmp_state_db, "manual-edt1", "OldArtist", "Track", "Album", str(dummy)
-    )
+    _setup_done_record(tmp_state_db, "manual-edt1", "OldArtist", "Track", "Album", str(dummy))
 
     import src.api as api_module
+
     api_module._cfg.beets.music_dir = str(music_dir)
 
     with patch("src.api.write_artist_tag") as mock_artist:
@@ -1078,6 +1104,7 @@ def test_edit_artist_only_updates_tags_and_moves_file(client, tmp_state_db, tmp_
     mock_title.assert_called_once()
 
     from src.state import get_download_by_mbid
+
     row = get_download_by_mbid(tmp_state_db, "manual-edt1")
     assert row["artist"] == "NewArtist"
     assert "NewArtist" in row["file_path"]
@@ -1092,11 +1119,10 @@ def test_edit_track_name_only(client, tmp_state_db, tmp_path):
     dummy = album_dir / "OldTitle.opus"
     dummy.write_bytes(b"fake")
 
-    _setup_done_record(
-        tmp_state_db, "manual-edt2", "Artist", "OldTitle", "Album", str(dummy)
-    )
+    _setup_done_record(tmp_state_db, "manual-edt2", "Artist", "OldTitle", "Album", str(dummy))
 
     import src.api as api_module
+
     api_module._cfg.beets.music_dir = str(music_dir)
 
     with patch("src.api.write_artist_tag"):
@@ -1129,11 +1155,10 @@ def test_edit_conflict_returns_409(client, tmp_state_db, tmp_path):
     conflict = new_album_dir / "Track.flac"
     conflict.write_bytes(b"existing")
 
-    _setup_done_record(
-        tmp_state_db, "manual-conflict", "Artist", "Track", "OldAlbum", str(dummy)
-    )
+    _setup_done_record(tmp_state_db, "manual-conflict", "Artist", "Track", "OldAlbum", str(dummy))
 
     import src.api as api_module
+
     api_module._cfg.beets.music_dir = str(music_dir)
 
     with patch("src.api.write_artist_tag"):
@@ -1156,11 +1181,10 @@ def test_edit_tag_write_failure_returns_500(client, tmp_state_db, tmp_path):
     dummy = album_dir / "Track.flac"
     dummy.write_bytes(b"fake")
 
-    _setup_done_record(
-        tmp_state_db, "manual-tagfail", "Artist", "Track", "Album", str(dummy)
-    )
+    _setup_done_record(tmp_state_db, "manual-tagfail", "Artist", "Track", "Album", str(dummy))
 
     import src.api as api_module
+
     api_module._cfg.beets.music_dir = str(music_dir)
 
     with patch("src.api.write_artist_tag", side_effect=Exception("mutagen error")):
@@ -1208,6 +1232,7 @@ def test_rematch_apply_song_id_relative_path_gets_prefix(client):
 
 # ── iTunes KR 스토어 + rematch apply (mb_album_id 없음) ──────────────────────
 
+
 def test_rematch_search_itunes_kr_added_when_different_album(client):
     """US와 KR iTunes 스토어가 다른 앨범을 반환하면 두 후보가 모두 추가된다."""
     release = _make_release("album-mb", "OK Computer")
@@ -1221,7 +1246,10 @@ def test_rematch_search_itunes_kr_added_when_different_album(client):
         if country is None:
             return {"album": "OK Computer", "artwork_url": "https://example.com/us.jpg"}
         # KR store returns different album title
-        return {"album": "OK Computer (Korean Edition)", "artwork_url": "https://example.com/kr.jpg"}
+        return {
+            "album": "OK Computer (Korean Edition)",
+            "artwork_url": "https://example.com/kr.jpg",
+        }
 
     with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
         with patch("src.api.time.sleep"):
@@ -1328,7 +1356,8 @@ def test_rematch_apply_artist_name_rewrites_artist_tag(client, tmp_state_db, tmp
     dummy_audio = album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-artist-tag", "Track", "OldArtist")
     mark_done(tmp_state_db, "manual-artist-tag", file_path=str(dummy_audio))
 
@@ -1366,7 +1395,8 @@ def test_rematch_apply_artist_name_moves_to_new_artist_dir(client, tmp_state_db,
     dummy_audio = album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done, get_download_by_mbid
+    from src.state import get_download_by_mbid, mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-artist-move", "Track", "OldArtist")
     mark_done(tmp_state_db, "manual-artist-move", file_path=str(dummy_audio))
 
@@ -1409,7 +1439,8 @@ def test_rematch_apply_artist_and_album_change_moves_correctly(client, tmp_state
     dummy_audio = album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done, get_download_by_mbid
+    from src.state import get_download_by_mbid, mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-both-change", "Track", "OldArtist")
     mark_done(tmp_state_db, "manual-both-change", file_path=str(dummy_audio))
 
@@ -1452,7 +1483,8 @@ def test_rematch_apply_no_artist_name_keeps_existing_artist_dir(client, tmp_stat
     dummy_audio = old_album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-no-artist", "Track", "ExistingArtist")
     mark_done(tmp_state_db, "manual-no-artist", file_path=str(dummy_audio))
 
@@ -1491,7 +1523,8 @@ def test_rematch_apply_removes_empty_album_dir_after_move(client, tmp_state_db, 
     dummy_audio = old_album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-rmdir", "Track", "Artist")
     mark_done(tmp_state_db, "manual-rmdir", file_path=str(dummy_audio))
 
@@ -1527,7 +1560,8 @@ def test_rematch_apply_updates_artist_in_db_after_move(client, tmp_state_db, tmp
     dummy_audio = album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done, get_download_by_mbid
+    from src.state import get_download_by_mbid, mark_done, mark_pending
+
     mark_pending(tmp_state_db, "manual-artist-db", "Track", "OldArtist")
     mark_done(tmp_state_db, "manual-artist-db", file_path=str(dummy_audio))
 
@@ -1558,6 +1592,7 @@ def test_rematch_apply_updates_artist_in_db_after_move(client, tmp_state_db, tmp
 
 
 # ── _resolve_dir 단위 테스트 ──────────────────────────────────────────────────
+
 
 def test_resolve_dir_reuses_existing_case_insensitive_folder(tmp_path):
     """parent 안에 대소문자만 다른 폴더가 있으면 그 실제 이름을 반환한다."""
@@ -1600,9 +1635,8 @@ def test_resolve_dir_does_not_match_file(tmp_path):
 
 # ── case-insensitive 폴더 충돌 방지 통합 테스트 ──────────────────────────────
 
-def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(
-    client, tmp_state_db, tmp_path
-):
+
+def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(client, tmp_state_db, tmp_path):
     """artist_name의 대소문자가 기존 폴더와 달라도 기존 폴더를 재사용한다."""
     music_root = tmp_path / "music"
     existing_artist_dir = music_root / "Eminem"
@@ -1611,7 +1645,7 @@ def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(
     dummy_audio = old_album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done, get_download_by_mbid
+    from src.state import mark_done, mark_pending
 
     mark_pending(tmp_state_db, "manual-case-artist", "Track", "Eminem")
     mark_done(tmp_state_db, "manual-case-artist", file_path=str(dummy_audio))
@@ -1644,13 +1678,12 @@ def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(
     # Linux(case-sensitive)에서는 별도 "eminem" 폴더가 생기지 않아야 한다.
     # macOS는 case-insensitive FS이므로 "eminem".exists() == "Eminem".exists() 가 되어 검사 제외.
     import platform
+
     if platform.system() == "Linux":
         assert not (music_root / "eminem").exists(), "Linux: 새 소문자 폴더가 생기면 안 된다"
 
 
-def test_rematch_apply_reuses_existing_album_dir_case_insensitive(
-    client, tmp_state_db, tmp_path
-):
+def test_rematch_apply_reuses_existing_album_dir_case_insensitive(client, tmp_state_db, tmp_path):
     """album_name의 대소문자가 기존 폴더와 달라도 기존 앨범 폴더를 재사용한다."""
     music_root = tmp_path / "music"
     artist_dir = music_root / "Artist"
@@ -1661,7 +1694,7 @@ def test_rematch_apply_reuses_existing_album_dir_case_insensitive(
     dummy_audio = old_album_dir / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
-    from src.state import mark_pending, mark_done
+    from src.state import mark_done, mark_pending
 
     mark_pending(tmp_state_db, "manual-case-album", "Track", "Artist")
     mark_done(tmp_state_db, "manual-case-album", file_path=str(dummy_audio))
@@ -1691,5 +1724,40 @@ def test_rematch_apply_reuses_existing_album_dir_case_insensitive(
     assert expected_path.exists(), "기존 대소문자 앨범 폴더를 재사용해야 한다"
     # Linux(case-sensitive)에서는 별도 소문자 폴더가 생기지 않아야 한다.
     import platform
+
     if platform.system() == "Linux":
-        assert not (artist_dir / "the marshall mathers lp").exists(), "Linux: 새 소문자 폴더가 생기면 안 된다"
+        assert not (artist_dir / "the marshall mathers lp").exists(), (
+            "Linux: 새 소문자 폴더가 생기면 안 된다"
+        )
+
+
+# ── Input Validation + Rate Limiting ─────────────────────────────────────────
+
+
+def test_post_download_rejects_long_artist(client):
+    resp = client.post("/api/download", json={"artist": "A" * 501, "track": "t"})
+    assert resp.status_code == 422
+
+
+def test_post_download_accepts_max_length_artist(client):
+    resp = client.post("/api/download", json={"artist": "A" * 500, "track": "t"})
+    assert resp.status_code == 200
+
+
+def test_rate_limit_returns_429(client):
+    """11th request within 60s should return 429."""
+    import src.api as api_mod
+
+    api_mod._rate_store.clear()
+    for i in range(10):
+        resp = client.post("/api/download", json={"artist": f"a{i}", "track": "t"})
+        assert resp.status_code == 200, f"Request {i + 1} failed: {resp.status_code}"
+    resp = client.post("/api/download", json={"artist": "overflow", "track": "t"})
+    assert resp.status_code == 429
+
+
+def test_rate_limit_not_applied_to_get(client):
+    """GET endpoints should not be rate limited."""
+    for _ in range(20):
+        resp = client.get("/api/downloads")
+        assert resp.status_code == 200
