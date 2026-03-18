@@ -1,8 +1,8 @@
 # 요구사항 정의서
 
 - **프로젝트명**: music-bot
-- **버전**: 1.0.0
-- **작성일**: 2026-03-04
+- **버전**: 1.1.0
+- **작성일**: 2026-03-18
 - **상태**: 구현 완료
 
 ---
@@ -152,6 +152,31 @@
 - MusicBrainz API: 각 호출 전 1초 대기
 - 에러 발생 시 즉시 재시도하지 않음
 
+### NFR-06. 안전한 중단 및 재시작 복구
+
+- Worker thread는 non-daemon으로 uvicorn 종료 시 `atexit` 핸들러를 통해 `_shutdown_event`를 set하여 graceful shutdown 수행 (join 30s timeout)
+- Docker `stop_grace_period: 40s`로 설정하여 강제 종료 방지
+- 재시작 시 `pending`/`downloading` 잡 자동 복구
+
+### NFR-07. yt-dlp 다운로드 안정성
+
+- Metadata extraction: 60초 타임아웃 + `socket_timeout: 30`
+- File download: 600초 타임아웃 + `socket_timeout: 30`
+- `extractor_retries: 3` (일시적 실패 자동 재시도)
+- 타임아웃 시 다음 후보 또는 ytsearch1 폴백 자동 수행
+
+### NFR-08. API Rate Limiting 및 입력값 검증
+
+- 인메모리 슬라이딩 윈도우 Rate Limiter 적용 (IP 기반)
+- POST endpoints: 10 req/min (`/api/pipeline/run`: 2 req/min)
+- 초과 시 HTTP 429 반환, 재시도는 클라이언트 책임
+- 모든 문자열 입력: `Field(max_length=500)`, `Query(max_length=500)`
+
+### NFR-09. 로그 로테이션
+
+- `RotatingFileHandler`: 50MB per file, 최대 5개 백업 (~300MB 총용량)
+- `data/logs/music-bot.log*`에 구조화 로그 저장
+
 ---
 
 ## 5. 제약사항
@@ -163,6 +188,8 @@
 | CON-03 | MB 검색 폴백 3단계: recording-only 단계에서 artist 유사도 0.3 미만 시 실패 처리 | 관련 없는 아티스트 recording 매칭 방지 |
 | CON-04 | MusicBrainz API: 각 호출 전 1초 대기 | Rate limit 1 req/sec 준수 |
 | CON-05 | Linux 파일시스템 대소문자 구분으로 인한 폴더 충돌 방지 | `_resolve_dir`로 대소문자 무시 기존 폴더 재사용 |
+| CON-06 | API Rate Limit는 인메모리 저장 → 재시작 시 카운터 리셋 | Stateless (향후 Redis 고려 가능) |
+| CON-07 | 입력값 최대 길이 500자 | 악의적 대용량 입력 차단 |
 
 ---
 
