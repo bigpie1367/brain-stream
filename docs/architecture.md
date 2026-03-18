@@ -256,18 +256,18 @@ Daemon Thread 2 — scheduler
 **Graceful Shutdown:**
 - `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event.set()` → 워커 스레드 `join(timeout=30)` → `_yt_executor.shutdown()`
 - Docker `stop_grace_period: 40s` (join 30s + 버퍼 10s)
-- SIGTERM → uvicorn 종료 → `finally` 블록 → 워커 현재 잡 완료 후 종료
-- 30s 내 미완료 시 Docker SIGKILL → 재시작 복구 경로로 처리
+- SIGTERM → uvicorn 종료 → `finally` 블록에서 워커 종료 신호 전파 및 최대 30초 대기
+- 진행 중 잡은 완료될 수 있으나, 대기 큐 전체 drain은 보장하지 않음 (재시작 복구 경로로 처리)
 
 **안정성 강화 (P0):**
 
 | 항목 | 설명 |
 |------|------|
-| Graceful Shutdown | 워커 non-daemon + `try/finally` + `_shutdown_event` + `join(30s)` + `_yt_executor.shutdown()` |
+| Graceful Shutdown | 워커 non-daemon + `try/finally` + `_shutdown_event` + `join(30s)` + `_yt_executor.shutdown(wait=False)`. Best-effort — 대기 큐 drain 미보장 |
 | yt-dlp 타임아웃 | `_run_with_timeout` 래퍼: 메타데이터 60s, 다운로드 600s. `socket_timeout: 30`, `extractor_retries: 3` |
 | API Rate Limiting | 인메모리 슬라이딩 윈도우. POST 10회/분 (pipeline/run은 2회/분). 초과 시 429 |
 | API 입력 검증 | Pydantic `Field(max_length=500)`, `Query(max_length=500)` |
-| SSE 큐 TTL | `_job_queues`에 last-activity 타임스탬프, 30분 비활성 시 자동 정리. `touch_sse_queue()`로 keep-alive 시 갱신 |
+| SSE 큐 TTL | `_job_queues`에 last-activity 타임스탬프, 30분 비활성 시 워커 루프(잡 완료 후) 정리. `touch_sse_queue()`로 keep-alive 시 갱신 |
 | 로그 로테이션 | `RotatingFileHandler` 50MB × 5 파일 (최대 ~300MB) |
 
 **재시작 복구 (`_reload_pending_jobs`):**

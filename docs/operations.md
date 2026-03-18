@@ -269,14 +269,14 @@ yt-dlp 호출에 타임아웃이 적용되어 있다:
 ### API 요청이 429 (Too Many Requests) 반환
 
 POST/DELETE 엔드포인트에 Rate Limiting이 적용되어 있다:
-- `/api/download`, `/api/rematch/*`, `/api/edit/*`: 10 req/min
-- `/api/pipeline/run`: 2 req/min
+- `POST /api/download`, `POST /api/rematch/apply`, `POST /api/edit/`, `DELETE /api/downloads/`: 10 req/min
+- `POST /api/pipeline/run`: 2 req/min
 - 인메모리 슬라이딩 윈도우 (서버 재시작 시 리셋)
 - 해결: 요청 간격을 넓혀서 재시도. `Retry-After` 헤더 확인
 
 ### Graceful Shutdown 관련
 
-- `docker stop`은 SIGTERM → graceful shutdown (워커가 현재 잡 완료 후 종료, 최대 30s 대기)
+- `docker stop`은 SIGTERM → graceful shutdown (워커 종료 신호 전파 및 최대 30s 대기, best-effort)
 - Docker `stop_grace_period: 40s` 설정 (30s join + 10s 버퍼)
 - 30s 내 미완료 시 Docker가 SIGKILL 전송 → `downloading` 상태 잡은 재시작 시 `mark_failed` 후 재시도
 - `docker kill`은 즉시 SIGKILL → 반드시 재시작 복구 경로로 처리됨
