@@ -81,9 +81,11 @@ async def rate_limit_middleware(request: Request, call_next):
         key = f"{client_ip}:{pattern}"
         now = time.time()
 
-        timestamps = _rate_store.get(key, [])
-        timestamps = [t for t in timestamps if now - t < _rate_window]
-        _rate_store[key] = timestamps
+        timestamps = [t for t in _rate_store.get(key, []) if now - t < _rate_window]
+        if timestamps:
+            _rate_store[key] = timestamps
+        else:
+            _rate_store.pop(key, None)
 
         if len(timestamps) >= limit:
             from starlette.responses import JSONResponse
@@ -293,7 +295,7 @@ async def sse_stream(job_id: str):
             try:
                 event = q.get(timeout=30)
             except Empty:
-                # Send a keep-alive comment
+                worker.touch_sse_queue(job_id)
                 yield ": keep-alive\n\n"
                 continue
 

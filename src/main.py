@@ -131,9 +131,7 @@ def main():
     )
     worker_thread.start()
 
-    import atexit
-
-    def _on_exit():
+    def _shutdown_worker():
         log.info("shutdown: signaling worker to stop")
         worker_module._shutdown_event.set()
         worker_thread.join(timeout=30)
@@ -141,8 +139,10 @@ def main():
             log.warning("shutdown: worker did not stop within 30s, proceeding")
         else:
             log.info("shutdown: worker stopped cleanly")
+        # Clean up yt-dlp thread pool
+        from src.pipeline.downloader import _yt_executor
 
-    atexit.register(_on_exit)
+        _yt_executor.shutdown(wait=False)
 
     # Reload interrupted jobs from previous run
     _reload_pending_jobs(cfg)
@@ -154,7 +154,10 @@ def main():
     threading.Thread(target=_run_scheduler, args=(cfg,), daemon=True).start()
 
     # uvicorn on main thread (blocking)
-    uvicorn.run(api_module.app, host="0.0.0.0", port=8000, log_level="warning")
+    try:
+        uvicorn.run(api_module.app, host="0.0.0.0", port=8000, log_level="warning")
+    finally:
+        _shutdown_worker()
 
 
 if __name__ == "__main__":

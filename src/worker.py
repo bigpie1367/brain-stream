@@ -52,6 +52,15 @@ def emit(job_id: str, status: str, message: str):
             q.put({"status": status, "message": message})
 
 
+def touch_sse_queue(job_id: str):
+    """Update last_active timestamp for an SSE queue (called on keep-alive)."""
+    with _job_queues_lock:
+        entry = _job_queues.get(job_id)
+        if entry is not None:
+            q, _ = entry
+            _job_queues[job_id] = (q, time.time())
+
+
 def _cleanup_expired_queues():
     """Remove SSE queues that have been inactive for > _QUEUE_TTL seconds."""
     now = time.time()

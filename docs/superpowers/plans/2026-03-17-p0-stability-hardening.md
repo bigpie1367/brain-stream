@@ -12,7 +12,7 @@
 
 ---
 
-### Task 1: Graceful Shutdown + Worker Auto-Recovery
+## Task 1: Graceful Shutdown + Worker Auto-Recovery
 
 **Files:**
 - Modify: `src/worker.py:1-88` (add shutdown event, modify worker_loop)
@@ -211,7 +211,7 @@ git commit -m "Feat: graceful shutdown + worker auto-recovery (P0-1)"
 
 ---
 
-### Task 2: yt-dlp Call Timeout
+## Task 2: yt-dlp Call Timeout
 
 **Files:**
 - Modify: `src/pipeline/downloader.py:1-433` (add timeout wrapper, apply to all extract_info calls)
@@ -390,7 +390,7 @@ git commit -m "Feat: yt-dlp 호출 타임아웃 추가 (P0-2)"
 
 ---
 
-### Task 3: API Input Validation + Rate Limiting
+## Task 3: API Input Validation + Rate Limiting
 
 **Files:**
 - Modify: `src/api.py:63-82` (Pydantic max_length)
@@ -598,7 +598,7 @@ git commit -m "Feat: API 입력 길이 제한 + Rate Limiting (P0-3)"
 
 ---
 
-### Task 4: SSE Queue TTL Cleanup
+## Task 4: SSE Queue TTL Cleanup
 
 **Files:**
 - Modify: `src/worker.py:13-41` (change _job_queues type, add TTL logic)
@@ -746,7 +746,7 @@ git commit -m "Feat: SSE 큐 TTL 기반 자동 정리 (P0-4)"
 
 ---
 
-### Task 5: Log Rotation
+## Task 5: Log Rotation
 
 **Files:**
 - Modify: `src/utils/logger.py:34-38` (FileHandler → RotatingFileHandler)
@@ -832,7 +832,7 @@ git commit -m "Feat: 로그 로테이션 적용 (P0-5)"
 
 ---
 
-### Task 6: Final Verification
+## Task 6: Final Verification
 
 **Files:** None (read-only verification)
 
