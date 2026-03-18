@@ -75,7 +75,7 @@ External APIs:
 |------|------|
 | `src/main.py` | 진입점. 설정 로드 → DB 초기화 → API 설정 주입 → 워커 스레드 시작 → pending 잡 재적재 → 파이프라인 스레드 시작 → uvicorn 실행 |
 | `src/config.py` | 환경변수로 설정 로드 (config 파일 불필요) |
-| `src/worker.py` | 공유 작업 큐 모듈. `_work_queue` (FIFO `Queue`), `_job_queues` (SSE 큐, last-activity TTL), `_shutdown_event` (graceful shutdown), `enqueue_job()`, `emit()`, `worker_loop()`, `_cleanup_expired_queues()`. api.py와 LB 파이프라인 양쪽에서 import해 사용 |
+| `src/worker.py` | 공유 작업 큐 모듈. `_work_queue` (FIFO `Queue`), `_job_queues` (SSE 큐, last-activity TTL), `_shutdown_event` (graceful shutdown), `enqueue_job()`, `emit()`, `touch_sse_queue()`, `worker_loop()`, `_cleanup_expired_queues()`. api.py와 LB 파이프라인 양쪽에서 import해 사용 |
 | `src/state.py` | SQLite `state.db` 래퍼. 다운로드 상태 CRUD. `update_track_info`로 artist/file_path/mb_recording_id 선택적 업데이트. `get_all_downloads()` / `get_download_by_mbid()` 응답에 `mb_recording_id` 포함 |
 | `src/api.py` | FastAPI 앱. Web UI 서빙, 수동 다운로드 API (`enqueue_job()` 호출), SSE 스트림 (`worker._job_queues` 기반), 이력 조회, 앨범 재매칭 API (`/api/rematch/*`), 메타데이터 직접 편집 API (`POST /api/edit/{song_id}`), 오디오 스트리밍 (`GET /api/stream/{mbid}`, state.db `file_path` 기반), `/rest/*` Subsonic API 프록시 (외부 클라이언트 → navidrome 중계). `_resolve_dir`로 대소문자 무시 기준 기존 폴더 재사용 (Navidrome conflicts 방지) |
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출; `recording_mbid`만 반환하므로 `_lookup_recording(mbid)`로 MB API에서 artist/track 조회 |
@@ -254,20 +254,20 @@ Daemon Thread 2 — scheduler
 - SSE 큐 dict(`_job_queues`) 접근은 `threading.Lock`으로 보호
 
 **Graceful Shutdown:**
-- `atexit` 핸들러가 `_shutdown_event.set()` → 워커 스레드 `join(timeout=30)`
+- `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event.set()` → 워커 스레드 `join(timeout=30)` → `_yt_executor.shutdown()`
 - Docker `stop_grace_period: 40s` (join 30s + 버퍼 10s)
-- SIGTERM → uvicorn 종료 → atexit 핸들러 → 워커 현재 잡 완료 후 종료
+- SIGTERM → uvicorn 종료 → `finally` 블록 → 워커 현재 잡 완료 후 종료
 - 30s 내 미완료 시 Docker SIGKILL → 재시작 복구 경로로 처리
 
 **안정성 강화 (P0):**
 
 | 항목 | 설명 |
 |------|------|
-| Graceful Shutdown | 워커 non-daemon + `atexit` 핸들러 + `_shutdown_event` + `join(30s)` |
+| Graceful Shutdown | 워커 non-daemon + `try/finally` + `_shutdown_event` + `join(30s)` + `_yt_executor.shutdown()` |
 | yt-dlp 타임아웃 | `_run_with_timeout` 래퍼: 메타데이터 60s, 다운로드 600s. `socket_timeout: 30`, `extractor_retries: 3` |
 | API Rate Limiting | 인메모리 슬라이딩 윈도우. POST 10회/분 (pipeline/run은 2회/분). 초과 시 429 |
 | API 입력 검증 | Pydantic `Field(max_length=500)`, `Query(max_length=500)` |
-| SSE 큐 TTL | `_job_queues`에 last-activity 타임스탬프, 30분 비활성 시 자동 정리 |
+| SSE 큐 TTL | `_job_queues`에 last-activity 타임스탬프, 30분 비활성 시 자동 정리. `touch_sse_queue()`로 keep-alive 시 갱신 |
 | 로그 로테이션 | `RotatingFileHandler` 50MB × 5 파일 (최대 ~300MB) |
 
 **재시작 복구 (`_reload_pending_jobs`):**

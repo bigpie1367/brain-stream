@@ -133,7 +133,7 @@
 
 | ID | User Story | 완료일 |
 |----|-----------|--------|
-| US-62 | Worker thread를 non-daemon으로 변경, `_shutdown_event` + `atexit` 핸들러로 graceful shutdown 구현. Docker `stop_grace_period: 40s` | 2026-03-18 |
+| US-62 | Worker thread를 non-daemon으로 변경, `_shutdown_event` + `try/finally`로 graceful shutdown 구현. Docker `stop_grace_period: 40s` | 2026-03-18 |
 | US-63 | yt-dlp `_run_with_timeout` 래퍼: EXTRACT_TIMEOUT=60s, DOWNLOAD_TIMEOUT=600s, `socket_timeout: 30`, `extractor_retries: 3` | 2026-03-18 |
 | US-64 | 인메모리 슬라이딩 윈도우 Rate Limiter: POST 10 req/min (`/api/pipeline/run` 2 req/min), 429 응답 | 2026-03-18 |
 | US-65 | API 입력값 검증: Pydantic `Field(max_length=500)`, `Query(max_length=500)` 전 문자열 필드 적용 | 2026-03-18 |

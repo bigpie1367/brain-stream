@@ -154,7 +154,7 @@
 
 ### NFR-06. 안전한 중단 및 재시작 복구
 
-- Worker thread는 non-daemon으로 uvicorn 종료 시 `atexit` 핸들러를 통해 `_shutdown_event`를 set하여 graceful shutdown 수행 (join 30s timeout)
+- Worker thread는 non-daemon으로 `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event`를 set하여 graceful shutdown 수행 (join 30s timeout)
 - Docker `stop_grace_period: 40s`로 설정하여 강제 종료 방지
 - 재시작 시 `pending`/`downloading` 잡 자동 복구
 

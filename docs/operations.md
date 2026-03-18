@@ -239,7 +239,7 @@ docker compose -f docker-compose.prod.yml exec brainstream \
 - **백업 파일**: 최대 5개 (총 ~300MB)
 - 현재 로그: `music-bot.log`, 로테이션: `.1` (최근) ~ `.5` (오래된 순)
 
-### 6.2 로그 확인
+### 6.3 로그 확인
 
 ```bash
 # 실시간 앱 로그
