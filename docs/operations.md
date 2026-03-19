@@ -1,7 +1,7 @@
 # 운영 가이드
 
-- **버전**: 1.3.0
-- **작성일**: 2026-03-13
+- **버전**: 1.4.0
+- **작성일**: 2026-03-18
 
 ---
 
@@ -229,9 +229,17 @@ docker compose -f docker-compose.prod.yml exec brainstream \
 | 로그 | 경로 | 설명 |
 |------|------|------|
 | music-bot 앱 로그 | `data/logs/music-bot.log` | 구조화 로그 (JSON) |
+| 로테이션된 로그 | `data/logs/music-bot.log.1` ~ `.5` | 자동 로테이션된 이전 로그 |
 | Docker 로그 | `docker compose logs` | 컨테이너 stdout/stderr |
 
-### 6.2 로그 확인
+### 6.2 로그 로테이션
+
+앱 로그는 `RotatingFileHandler`로 자동 로테이션된다:
+- **파일 크기**: 50MB per file
+- **백업 파일**: 최대 5개 (총 ~300MB)
+- 현재 로그: `music-bot.log`, 로테이션: `.1` (최근) ~ `.5` (오래된 순)
+
+### 6.3 로그 확인
 
 ```bash
 # 실시간 앱 로그
@@ -244,6 +252,34 @@ docker compose logs brainstream | grep '"level":"error"'
 ---
 
 ## 7. 트러블슈팅
+
+### yt-dlp 타임아웃 오류
+
+yt-dlp 호출에 타임아웃이 적용되어 있다:
+
+| 작업 | 타임아웃 | 설명 |
+|------|---------|------|
+| 메타데이터 추출 | 60초 | ytsearch5 검색 등 |
+| 파일 다운로드 | 600초 (10분) | 실제 음원 다운로드 |
+| 소켓 타임아웃 | 30초 | 각 네트워크 호출 |
+| 추출기 재시도 | 3회 | 일시적 실패 자동 재시도 |
+
+타임아웃 발생 시 다음 후보 영상으로 자동 retry된다.
+
+### API 요청이 429 (Too Many Requests) 반환
+
+POST/DELETE 엔드포인트에 Rate Limiting이 적용되어 있다:
+- `POST /api/download`, `POST /api/rematch/apply`, `POST /api/edit/`, `DELETE /api/downloads/`: 10 req/min
+- `POST /api/pipeline/run`: 2 req/min
+- 인메모리 슬라이딩 윈도우 (서버 재시작 시 리셋)
+- 해결: 요청 간격을 넓혀서 재시도. `Retry-After` 헤더 확인
+
+### Graceful Shutdown 관련
+
+- `docker stop`은 SIGTERM → graceful shutdown (워커 종료 신호 전파 및 최대 30s 대기, best-effort)
+- Docker `stop_grace_period: 40s` 설정 (30s join + 10s 버퍼)
+- 30s 내 미완료 시 Docker가 SIGKILL 전송 → `downloading` 상태 잡은 재시작 시 `mark_failed` 후 재시도
+- `docker kill`은 즉시 SIGKILL → 반드시 재시작 복구 경로로 처리됨
 
 ### 트랙이 다운로드되지 않음
 

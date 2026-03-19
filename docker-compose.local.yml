@@ -14,6 +14,7 @@ services:
   brainstream:
     build: .
     restart: unless-stopped
+    stop_grace_period: 40s
     ports:
       - "8080:8000"
     volumes:

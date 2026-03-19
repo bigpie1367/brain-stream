@@ -8,7 +8,15 @@ import src.api as api_module
 import src.worker as worker_module
 from src.config import load_config
 from src.pipeline.listenbrainz import _lookup_recording, fetch_recommendations
-from src.state import get_all_downloads, get_download_by_mbid, get_pending_jobs, get_retryable, init_db, is_downloaded, mark_failed, mark_pending
+from src.state import (
+    get_download_by_mbid,
+    get_pending_jobs,
+    get_retryable,
+    init_db,
+    is_downloaded,
+    mark_failed,
+    mark_pending,
+)
 from src.utils.logger import get_logger, setup_logger
 
 log = get_logger(__name__)
@@ -112,14 +120,29 @@ def main():
     # Inject config into API module
     api_module._cfg = cfg
 
-    # Worker thread (single, sequential)
+    # Worker thread (single, sequential — non-daemon for graceful shutdown)
     from src.api import _run_download_job
-    threading.Thread(
+
+    worker_thread = threading.Thread(
         target=worker_module.worker_loop,
         args=(cfg, _run_download_job),
-        daemon=True,
+        daemon=False,
         name="worker",
-    ).start()
+    )
+    worker_thread.start()
+
+    def _shutdown_worker():
+        log.info("shutdown: signaling worker to stop")
+        worker_module._shutdown_event.set()
+        worker_thread.join(timeout=30)
+        if worker_thread.is_alive():
+            log.warning("shutdown: worker did not stop within 30s, proceeding")
+        else:
+            log.info("shutdown: worker stopped cleanly")
+        # Clean up yt-dlp thread pool
+        from src.pipeline.downloader import _yt_executor
+
+        _yt_executor.shutdown(wait=False)
 
     # Reload interrupted jobs from previous run
     _reload_pending_jobs(cfg)
@@ -131,7 +154,10 @@ def main():
     threading.Thread(target=_run_scheduler, args=(cfg,), daemon=True).start()
 
     # uvicorn on main thread (blocking)
-    uvicorn.run(api_module.app, host="0.0.0.0", port=8000, log_level="warning")
+    try:
+        uvicorn.run(api_module.app, host="0.0.0.0", port=8000, log_level="warning")
+    finally:
+        _shutdown_worker()
 
 
 if __name__ == "__main__":

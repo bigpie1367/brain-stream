@@ -106,16 +106,24 @@ worker_loop (single thread, FIFO):
 
 **Threading model:**
 - `main()` runs uvicorn on the **main thread** (blocking)
-- **Worker thread** (daemon): `worker_loop()` — FIFO 큐에서 잡을 꺼내 하나씩 순차 처리
+- **Worker thread** (non-daemon): `worker_loop()` — FIFO 큐에서 잡을 꺼내 하나씩 순차 처리. `_shutdown_event` 기반 graceful shutdown (`try/finally`로 uvicorn 종료 후 join timeout=30s)
 - **Pipeline thread** (daemon): `run_pipeline()` — LB 추천 fetch 후 enqueue_job() 호출
 - **Scheduler thread** (daemon): 60s tick, N시간마다 run_pipeline() 호출
+
+**Stability hardening (P0):**
+- **Graceful shutdown**: `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event.set()` → 워커 스레드 join(30s) → `_yt_executor.shutdown()`. Docker `stop_grace_period: 40s`
+- **yt-dlp 타임아웃**: 메타데이터 추출 60s, 다운로드 600s (`_run_with_timeout` + `socket_timeout: 30`)
+- **API Rate Limiting**: POST 엔드포인트별 인메모리 슬라이딩 윈도우 (예: `/api/download` 10회/분). 429 반환
+- **API 입력 검증**: Pydantic `Field(max_length=500)`, Query params `Query(max_length=500)`
+- **SSE 큐 TTL**: `_job_queues`에 last-activity 타임스탬프 저장, 30분 비활성 시 자동 정리. `touch_sse_queue()`로 keep-alive 시 갱신
+- **로그 로테이션**: `RotatingFileHandler` 50MB × 5 파일 (최대 ~300MB)
 
 ## Key Files and their Roles
 
 | File | Role |
 |------|------|
 | `src/main.py` | Entrypoint; wires config → DB → API → worker/pipeline threads → reload pending jobs → uvicorn |
-| `src/worker.py` | Shared work queue module; `_work_queue` (FIFO), `_job_queues` (SSE), `enqueue_job()`, `emit()`, `worker_loop()` |
+| `src/worker.py` | Shared work queue module; `_work_queue` (FIFO), `_job_queues` (SSE, last-activity TTL), `_shutdown_event`, `enqueue_job()`, `emit()`, `touch_sse_queue()`, `worker_loop()`, `_cleanup_expired_queues()` |
 | `src/api.py` | FastAPI app; `_cfg` injected by main.py; POST /api/download calls `worker.enqueue_job()`; POST /api/edit/{song_id} 메타데이터 직접 편집 (mutagen 태그 수정 → 파일 이동 → state.db 업데이트 → Navidrome rescan) |
 | `src/state.py` | SQLite wrapper; `mbid` is PK; `get_pending_jobs()` returns pending/downloading jobs in rowid ASC order |
 | `src/config.py` | Env-var only config (no file needed); `LB_USERNAME`, `LB_TOKEN`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`, `NAVIDROME_URL` |

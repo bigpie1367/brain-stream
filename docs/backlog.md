@@ -1,8 +1,8 @@
 # 프로젝트 백로그
 
 - **작성일**: 2026-03-04
-- **현재 버전**: 1.0.2
-- **최종 업데이트**: 2026-03-16
+- **현재 버전**: 1.1.0
+- **최종 업데이트**: 2026-03-18
 
 ---
 
@@ -128,6 +128,17 @@
 | US-23 | Subsonic API 프록시가 인증을 자동 주입하여 프론트엔드에 Navidrome 계정 정보 불필요 | 2026-03-05 |
 | US-24 | Navidrome이 외부 포트 미노출 — brainstream 도메인 하나만으로 외부 앱 연동 가능 | 2026-03-05 |
 | ~~US-25~~ | ~~beets MusicBrainz 연결 시 IPv6 비활성화(sysctls)로 컨테이너 내 연결 실패 방지~~ (beets 제거로 불필요) | 2026-03-05 |
+
+### Epic 13: P0 안정성 강화 — Stability Hardening (2026-03-18)
+
+| ID | User Story | 완료일 |
+|----|-----------|--------|
+| US-62 | Worker thread를 non-daemon으로 변경, `_shutdown_event` + `try/finally`로 graceful shutdown 구현. Docker `stop_grace_period: 40s` | 2026-03-18 |
+| US-63 | yt-dlp `_run_with_timeout` 래퍼: EXTRACT_TIMEOUT=60s, DOWNLOAD_TIMEOUT=600s, `socket_timeout: 30`, `extractor_retries: 3` | 2026-03-18 |
+| US-64 | 인메모리 슬라이딩 윈도우 Rate Limiter: POST 10 req/min (`/api/pipeline/run` 2 req/min), 429 응답 | 2026-03-18 |
+| US-65 | API 입력값 검증: Pydantic `Field(max_length=500)`, `Query(max_length=500)` 전 문자열 필드 적용 | 2026-03-18 |
+| US-66 | SSE 큐 TTL: `_job_queues`에 last-activity 타임스탬프, 30분 비활성 시 `_cleanup_expired_queues()` 자동 정리 | 2026-03-18 |
+| US-67 | 로그 로테이션: `RotatingFileHandler` 50MB × 5 백업 (~300MB 총용량) | 2026-03-18 |
 
 ---
 
