@@ -25,8 +25,8 @@ def _run_with_timeout(fn, timeout_sec: float):
     future = _yt_executor.submit(fn)
     try:
         return future.result(timeout=timeout_sec)
-    except TimeoutError:
-        raise yt_dlp.utils.DownloadError(f"operation timed out after {timeout_sec}s") from None
+    except TimeoutError as e:
+        raise yt_dlp.utils.DownloadError(f"operation timed out after {timeout_sec}s") from e
 
 
 _MB_API = "https://musicbrainz.org/ws/2"
