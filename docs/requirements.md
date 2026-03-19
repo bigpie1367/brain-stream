@@ -66,8 +66,8 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-03 |
-| 설명 | MB API 3단계 검색으로 recording 매칭 후 mutagen으로 직접 태깅, shutil로 최종 경로에 복사 |
-| MB 검색 단계 | stage 1 (strict): artistname+recording+Album+Official / stage 2 (plain): artistname+recording / stage 3 (fallback): recording만, artist 유사도 0.3 이상 |
+| 설명 | MB API 4단계 검색으로 recording 매칭 후 mutagen으로 직접 태깅, shutil로 최종 경로에 복사 |
+| MB 검색 단계 | stage 1 (strict): artistname+recording+Album+Official / stage 2 (plain): artistname+recording / stage 2.5 (artist-id): MB artist MBID 조회 → arid+recording 재검색 / stage 3 (fallback): recording만, artist 유사도 0.3 이상 |
 | 태그 쓰기 | mutagen: artist, title, mb_trackid 초기 태그 → _enrich_track()으로 album 태그 + 커버아트 임베딩 |
 | 파일 복사 | `shutil.copy2`: staging → `data/music/{Artist}/{Album}/{Track}.ext` |
 | 우선순위 | 필수 |

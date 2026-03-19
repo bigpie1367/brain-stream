@@ -238,6 +238,12 @@ rematch(MB 검색 필수) 없이 artist / album / track_name을 직접 텍스트
 
 ---
 
+## Known Bugs
+
+| ID | 설명 | 심각도 |
+|----|------|--------|
+| BUG-23 | 수동 다운로드 시 artist+track 중복 체크 없음. `manual-{uuid}` mbid를 새로 생성하므로 PK 기반 dedup(`is_downloaded`)이 작동하지 않아 동일 곡 재다운로드 가능. 파일은 같은 경로에 덮어쓰지만 DB에 orphan 레코드 생성됨 (`src/api.py` POST /api/download) | Low |
+
 ## 기술 부채 (Technical Debt)
 
 | ID | 설명 |

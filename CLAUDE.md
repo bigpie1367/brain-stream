@@ -41,20 +41,20 @@ Before diving into code, read the relevant docs first to save context:
 ## Commands
 
 ```bash
-# Build and run all services
-docker compose up --build -d
+# Build and run all services (로컬)
+docker compose -f docker-compose.local.yml up --build -d
 
-# View logs (music-bot only)
-docker compose logs -f music-bot
+# View logs
+docker compose -f docker-compose.local.yml logs -f brainstream
 
-# Restart music-bot after code changes (no rebuild needed for config changes)
-docker restart music-bot-temp-music-bot-1
+# Restart after code changes (no rebuild needed for config changes)
+docker compose -f docker-compose.local.yml restart brainstream
 
 # Rebuild and restart after Python source changes
-docker compose up --build -d
+docker compose -f docker-compose.local.yml up --build -d
 
 # Inspect SQLite state DB
-docker compose exec brainstream sqlite3 /app/db/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
+docker compose -f docker-compose.local.yml exec brainstream sqlite3 /app/data/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
 
 # Manually trigger the LB pipeline via API
 curl -X POST http://localhost:8080/api/pipeline/run
