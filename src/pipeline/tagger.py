@@ -466,7 +466,7 @@ def _write_album_tag(file_path: str, album: str):
         suffix = Path(file_path).suffix.lower()
         if suffix == ".flac":
             f = mutagen.flac.FLAC(file_path)
-            f["album"] = album
+            f["album"] = [album]
             f.save()
         elif suffix in (".opus", ".ogg"):
             f = mutagen.oggopus.OggOpus(file_path)
@@ -479,7 +479,7 @@ def _write_album_tag(file_path: str, album: str):
         else:
             f = mutagen.File(file_path)
             if f is not None:
-                f["album"] = album
+                f["album"] = [album]
                 f.save()
         log.debug("wrote album tag", file=file_path, album=album)
     except Exception as exc:
@@ -505,7 +505,7 @@ def _write_artist_tag(file_path: str, artist: str):
         else:
             f = mutagen.File(file_path)
             if f is not None:
-                f["artist"] = artist
+                f["artist"] = [artist]
                 f.save()
         log.debug("wrote artist tag", file=file_path, artist=artist)
     except Exception as exc:
@@ -531,7 +531,7 @@ def _write_title_tag(file_path: str, title: str):
         else:
             f = mutagen.File(file_path)
             if f is not None:
-                f["title"] = title
+                f["title"] = [title]
                 f.save()
         log.debug("wrote title tag", file=file_path, title=title)
     except Exception as exc:
