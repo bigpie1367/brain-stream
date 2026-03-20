@@ -1,5 +1,4 @@
 import difflib
-import os
 import re
 import shutil
 import time
@@ -203,7 +202,12 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
         )
         r = requests.get(
             f"{_MB_API}/recording",
-            params={"query": strict_query, "fmt": "json", "limit": 5, "inc": "artist-credits"},
+            params={
+                "query": strict_query,
+                "fmt": "json",
+                "limit": 5,
+                "inc": "artist-credits",
+            },
             headers=_MB_HEADERS,
             timeout=10,
         )
@@ -213,7 +217,9 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
             candidates = _collect_recording_candidates(recordings, track_name)
             if candidates:
                 mb_artist_name = _extract_mb_artist_name(recordings)
-                mb_recording_title = _extract_mb_recording_title(recordings, candidates[0])
+                mb_recording_title = _extract_mb_recording_title(
+                    recordings, candidates[0]
+                )
                 log.info(
                     "MB strict search found recordings",
                     artist=artist,
@@ -244,7 +250,9 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
             candidates = _collect_recording_candidates(recordings, track_name)
             if candidates:
                 mb_artist_name = _extract_mb_artist_name(recordings)
-                mb_recording_title = _extract_mb_recording_title(recordings, candidates[0])
+                mb_recording_title = _extract_mb_recording_title(
+                    recordings, candidates[0]
+                )
                 log.info(
                     "MB plain search found recordings",
                     artist=artist,
@@ -274,7 +282,12 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
                 recordings = r.json().get("recordings", [])
                 for rec in recordings:
                     rec_title = rec.get("title", "")
-                    if difflib.SequenceMatcher(None, rec_title.lower(), track_name.lower()).ratio() < 0.4:
+                    if (
+                        difflib.SequenceMatcher(
+                            None, rec_title.lower(), track_name.lower()
+                        ).ratio()
+                        < 0.4
+                    ):
                         continue
                     rec_id = rec.get("id")
                     if not rec_id:
@@ -282,7 +295,8 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
                     credits = rec.get("artist-credit", [])
                     mb_artist = "".join(
                         c.get("artist", {}).get("name", "") + c.get("joinphrase", "")
-                        for c in credits if isinstance(c, dict)
+                        for c in credits
+                        if isinstance(c, dict)
                     ).strip()
                     log.info(
                         "MB stage 2.5 match",
@@ -323,7 +337,9 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
             for rec in recordings2:
                 credits = rec.get("artist-credit", [])
                 for credit in credits:
-                    credit_artist = credit.get("artist", {}) if isinstance(credit, dict) else {}
+                    credit_artist = (
+                        credit.get("artist", {}) if isinstance(credit, dict) else {}
+                    )
                     candidate_names = []
                     if credit_artist.get("name"):
                         candidate_names.append(credit_artist["name"])
@@ -367,7 +383,12 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
             )
         return [], "", ""
     except Exception as exc:
-        log.warning("MB recording search failed", artist=artist, track=track_name, error=str(exc))
+        log.warning(
+            "MB recording search failed",
+            artist=artist,
+            track=track_name,
+            error=str(exc),
+        )
         return [], "", ""
 
 
@@ -377,10 +398,10 @@ def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = 
         suffix = Path(file_path).suffix.lower()
         if suffix == ".flac":
             f = mutagen.flac.FLAC(file_path)
-            f["artist"] = artist
-            f["title"] = track_name
+            f["artist"] = [artist]
+            f["title"] = [track_name]
             if mb_trackid:
-                f["musicbrainz_trackid"] = mb_trackid
+                f["musicbrainz_trackid"] = [mb_trackid]
             f.save()
         elif suffix in (".opus", ".ogg"):
             f = mutagen.oggopus.OggOpus(file_path)
@@ -401,10 +422,10 @@ def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = 
         else:
             f = mutagen.File(file_path)
             if f is not None:
-                f["artist"] = artist
-                f["title"] = track_name
+                f["artist"] = [artist]
+                f["title"] = [track_name]
                 if mb_trackid:
-                    f["musicbrainz_trackid"] = mb_trackid
+                    f["musicbrainz_trackid"] = [mb_trackid]
                 f.save()
         log.debug("wrote tags to file", file=file_path, artist=artist, title=track_name)
     except Exception as exc:
@@ -417,7 +438,7 @@ def _write_mb_trackid_tag(file_path: str, recording_id: str):
         suffix = Path(file_path).suffix.lower()
         if suffix == ".flac":
             f = mutagen.flac.FLAC(file_path)
-            f["musicbrainz_trackid"] = recording_id
+            f["musicbrainz_trackid"] = [recording_id]
             f.save()
         elif suffix in (".opus", ".ogg"):
             f = mutagen.oggopus.OggOpus(file_path)
@@ -432,7 +453,7 @@ def _write_mb_trackid_tag(file_path: str, recording_id: str):
         else:
             f = mutagen.File(file_path)
             if f is not None:
-                f["musicbrainz_trackid"] = recording_id
+                f["musicbrainz_trackid"] = [recording_id]
                 f.save()
         log.debug("wrote mb_trackid tag", file=file_path, recording_id=recording_id)
     except Exception as exc:
@@ -522,7 +543,13 @@ def _read_tags(file_path: str) -> dict:
 
     Returns dict with keys: artist, title, album, mb_trackid, has_art.
     """
-    result = {"artist": "", "title": "", "album": "", "mb_trackid": "", "has_art": False}
+    result = {
+        "artist": "",
+        "title": "",
+        "album": "",
+        "mb_trackid": "",
+        "has_art": False,
+    }
     try:
         suffix = Path(file_path).suffix.lower()
         if suffix == ".flac":
@@ -546,7 +573,9 @@ def _read_tags(file_path: str) -> dict:
             result["album"] = (f.get("\xa9alb") or [""])[0]
             raw_mb = f.get("----:com.apple.iTunes:MusicBrainz Track Id")
             if raw_mb:
-                result["mb_trackid"] = bytes(raw_mb[0]).decode("utf-8", errors="replace")
+                result["mb_trackid"] = bytes(raw_mb[0]).decode(
+                    "utf-8", errors="replace"
+                )
             result["has_art"] = bool(f.get("covr"))
         else:
             f = mutagen.File(file_path)
@@ -686,7 +715,9 @@ def _mb_album_from_recording_id(recording_id: str) -> tuple[str, list[str]]:
         return album, candidates
 
     except Exception as exc:
-        log.warning("MB recording lookup failed", recording_id=recording_id, error=str(exc))
+        log.warning(
+            "MB recording lookup failed", recording_id=recording_id, error=str(exc)
+        )
         return "", []
 
 
@@ -723,7 +754,9 @@ def _itunes_search(artist: str, track_name: str, country: str | None = None) -> 
             ).ratio()
             if ratio >= 0.4:
                 album = candidate.get("collectionName", "")
-                artwork_url = candidate.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
+                artwork_url = candidate.get("artworkUrl100", "").replace(
+                    "100x100bb", "600x600bb"
+                )
                 artist_name = candidate.get("artistName", "")
                 track_title = candidate.get("trackName", "")
                 log.info(
@@ -812,7 +845,9 @@ def _deezer_search(artist: str, track_name: str) -> dict:
             "trackName": track_title,
         }
     except Exception as exc:
-        log.warning("Deezer search failed", artist=artist, track=track_name, error=str(exc))
+        log.warning(
+            "Deezer search failed", artist=artist, track=track_name, error=str(exc)
+        )
         return {}
 
 
@@ -825,7 +860,9 @@ def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
     try:
         r = requests.get(art_url, timeout=15, allow_redirects=True)
         if r.status_code != 200:
-            log.warning("cover art not found", mb_albumid=mb_albumid, status=r.status_code)
+            log.warning(
+                "cover art not found", mb_albumid=mb_albumid, status=r.status_code
+            )
             return False
         image_data = r.content
         content_type = r.headers.get("Content-Type", "image/jpeg")
@@ -849,7 +886,9 @@ def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
             pic.type = 3
             pic.mime = content_type
             pic.data = image_data
-            f["metadata_block_picture"] = [base64.b64encode(pic.write()).decode("ascii")]
+            f["metadata_block_picture"] = [
+                base64.b64encode(pic.write()).decode("ascii")
+            ]
             f.save()
         elif suffix in (".m4a", ".mp4"):
             f = mutagen.mp4.MP4(file_path)
@@ -904,7 +943,9 @@ def _embed_art_from_url(file_path: str, url: str) -> bool:
             return False
         image_data = r.content
         content_type = r.headers.get("Content-Type", "image/jpeg")
-        log.info("embedding thumbnail as cover art", file=file_path, size=len(image_data))
+        log.info(
+            "embedding thumbnail as cover art", file=file_path, size=len(image_data)
+        )
 
         suffix = Path(file_path).suffix.lower()
         if suffix == ".flac":
@@ -924,7 +965,9 @@ def _embed_art_from_url(file_path: str, url: str) -> bool:
             pic.type = 3
             pic.mime = content_type
             pic.data = image_data
-            f["metadata_block_picture"] = [base64.b64encode(pic.write()).decode("ascii")]
+            f["metadata_block_picture"] = [
+                base64.b64encode(pic.write()).decode("ascii")
+            ]
             f.save()
         elif suffix in (".m4a", ".mp4"):
             f = mutagen.mp4.MP4(file_path)
@@ -984,7 +1027,12 @@ def _enrich_track(
         if album:
             canonical_artist = itunes_result.get("artistName", "")
             canonical_title = itunes_result.get("trackName", "")
-            log.info("album resolved via iTunes", artist=artist, track=track_name, album=album)
+            log.info(
+                "album resolved via iTunes",
+                artist=artist,
+                track=track_name,
+                album=album,
+            )
 
         # MB recording title — 2순위 canonical_title (iTunes 결과가 없을 때)
         if not canonical_title and mb_recording_title:
@@ -1004,7 +1052,12 @@ def _enrich_track(
                 canonical_artist = deezer_result.get("artistName", "")
                 if not canonical_title:
                     canonical_title = deezer_result.get("trackName", "")
-                log.info("album resolved via Deezer", artist=artist, track=track_name, album=album)
+                log.info(
+                    "album resolved via Deezer",
+                    artist=artist,
+                    track=track_name,
+                    album=album,
+                )
 
     # ── 2. Build MB recording IDs for cover art (CAA) ────────────────────
     rids_to_try: list[str] = []
@@ -1019,8 +1072,8 @@ def _enrich_track(
             artist=artist,
             track=track_name,
         )
-        rids_to_try, _mb_artist_from_search, _mb_title_from_search = _mb_search_recording(
-            artist, track_name
+        rids_to_try, _mb_artist_from_search, _mb_title_from_search = (
+            _mb_search_recording(artist, track_name)
         )
         if rids_to_try:
             _write_tags(dest_path, artist, track_name, rids_to_try[0])
@@ -1090,7 +1143,9 @@ def _enrich_track(
                     canonical_artist = itunes_result.get("artistName", "")
             itunes_art = itunes_result.get("artwork_url", "")
             if itunes_art:
-                log.info("embedding cover art from iTunes", artist=artist, track=track_name)
+                log.info(
+                    "embedding cover art from iTunes", artist=artist, track=track_name
+                )
                 _embed_art_from_url(dest_path, itunes_art)
                 art_embedded = True
 
@@ -1102,7 +1157,9 @@ def _enrich_track(
                     canonical_artist = deezer_result.get("artistName", "")
             deezer_art = deezer_result.get("artwork_url", "")
             if deezer_art:
-                log.info("embedding cover art from Deezer", artist=artist, track=track_name)
+                log.info(
+                    "embedding cover art from Deezer", artist=artist, track=track_name
+                )
                 _embed_art_from_url(dest_path, deezer_art)
                 art_embedded = True
 
@@ -1156,8 +1213,8 @@ def tag_and_import(
         else:
             log.warning("MB direct lookup failed, falling back to search", mbid=mbid)
             if artist and track_name:
-                recording_ids, mb_artist_name, mb_recording_title = _mb_search_recording(
-                    artist, track_name
+                recording_ids, mb_artist_name, mb_recording_title = (
+                    _mb_search_recording(artist, track_name)
                 )
     elif artist and track_name:
         recording_ids, mb_artist_name, mb_recording_title = _mb_search_recording(
@@ -1172,7 +1229,9 @@ def tag_and_import(
         )
 
     # Write initial tags to staging file
-    _write_tags(str(path), artist, track_name, recording_ids[0] if recording_ids else "")
+    _write_tags(
+        str(path), artist, track_name, recording_ids[0] if recording_ids else ""
+    )
 
     # Enrich staging file: album from iTunes/Deezer/MB + cover art
     album, canonical_artist, canonical_title = _enrich_track(
@@ -1226,9 +1285,19 @@ def tag_and_import(
 
     # If file already exists at dest, treat as already in library
     if dest_path.exists():
-        log.info("file already exists in music_dir, treating as duplicate", dest=str(dest_path))
+        log.info(
+            "file already exists in music_dir, treating as duplicate",
+            dest=str(dest_path),
+        )
         _cleanup_staging(path)
-        return True, str(dest_path), effective_artist, effective_track, album, result_mb_recording_id
+        return (
+            True,
+            str(dest_path),
+            effective_artist,
+            effective_track,
+            album,
+            result_mb_recording_id,
+        )
 
     # Copy enriched staging file to final destination
     try:
@@ -1244,7 +1313,14 @@ def tag_and_import(
         return False, "", "", "", "", ""
 
     _cleanup_staging(path)
-    return True, str(dest_path), effective_artist, effective_track, album, result_mb_recording_id
+    return (
+        True,
+        str(dest_path),
+        effective_artist,
+        effective_track,
+        album,
+        result_mb_recording_id,
+    )
 
 
 def _cleanup_staging(path: Path):
