@@ -2,7 +2,7 @@
 tests/unit/test_tagger.py
 tagger.py 단위 테스트 (beets 제거 후 MB 직접 매칭 구현 기준)
 
-- _sanitize_filename: 파일시스템 특수문자 제거 검증
+- sanitize_path_component: 파일시스템 특수문자 제거 검증 (src.utils.fs)
 - _write_tags / _read_tags: 실제 FLAC 더미 파일에 mutagen 태그 쓰기/읽기 검증
 - _pretag: 하위 호환 wrapper 검증
 - tag_and_import: MB 검색 실패 → False, 성공 → True + 파일 복사
@@ -30,7 +30,6 @@ from src.pipeline.tagger import (
     _pretag,
     _primary_artist,
     _read_tags,
-    _sanitize_filename,
     _write_artist_tag,
     _write_mb_trackid_tag,
     _write_tags,
@@ -38,6 +37,7 @@ from src.pipeline.tagger import (
     write_artist_tag,
     write_mb_trackid_tag,
 )
+from src.utils.fs import sanitize_path_component
 
 # ── FLAC 더미 파일 생성 헬퍼 ─────────────────────────────────────────────────
 
@@ -85,36 +85,36 @@ def _make_flac(tmp_path: Path, name: str = "test.flac") -> Path:
     return p
 
 
-# ── _sanitize_filename 테스트 ────────────────────────────────────────────────
+# ── sanitize_path_component 테스트 ───────────────────────────────────────────
 
 
 def test_sanitize_filename_removes_special_chars():
-    assert "/" not in _sanitize_filename("AC/DC")
-    assert "\\" not in _sanitize_filename("path\\file")
-    assert ":" not in _sanitize_filename("foo:bar")
-    assert "*" not in _sanitize_filename("star*fish")
-    assert "?" not in _sanitize_filename("what?")
-    assert '"' not in _sanitize_filename('say "hello"')
-    assert "<" not in _sanitize_filename("<tag>")
-    assert ">" not in _sanitize_filename("<tag>")
-    assert "|" not in _sanitize_filename("pipe|line")
+    assert "/" not in sanitize_path_component("AC/DC")
+    assert "\\" not in sanitize_path_component("path\\file")
+    assert ":" not in sanitize_path_component("foo:bar")
+    assert "*" not in sanitize_path_component("star*fish")
+    assert "?" not in sanitize_path_component("what?")
+    assert '"' not in sanitize_path_component('say "hello"')
+    assert "<" not in sanitize_path_component("<tag>")
+    assert ">" not in sanitize_path_component("<tag>")
+    assert "|" not in sanitize_path_component("pipe|line")
 
 
 def test_sanitize_filename_limits_length():
     long_name = "a" * 300
-    assert len(_sanitize_filename(long_name)) <= 255
+    assert len(sanitize_path_component(long_name)) <= 255
 
 
 def test_sanitize_filename_nonempty_fallback():
     # 모두 특수문자인 경우 "_"을 반환
-    result = _sanitize_filename("///")
+    result = sanitize_path_component("///")
     assert result != ""
     assert len(result) > 0
 
 
 def test_sanitize_filename_normal_name_unchanged():
-    assert _sanitize_filename("Radiohead") == "Radiohead"
-    assert _sanitize_filename("Pablo Honey") == "Pablo Honey"
+    assert sanitize_path_component("Radiohead") == "Radiohead"
+    assert sanitize_path_component("Pablo Honey") == "Pablo Honey"
 
 
 # ── _write_tags / _read_tags 테스트 ──────────────────────────────────────────
@@ -2163,7 +2163,7 @@ def test_tag_and_import_falls_back_to_original_track_when_no_canonical_title(
 
 
 def test_tag_and_import_canonical_title_applied_with_sanitize(tmp_path, monkeypatch):
-    """canonical_title에 파일시스템 특수문자가 있으면 _sanitize_filename이 적용된다."""
+    """canonical_title에 파일시스템 특수문자가 있으면 sanitize_path_component가 적용된다."""
     flac_path = _make_flac(tmp_path)
     monkeypatch.setattr(
         "src.pipeline.tagger._mb_search_recording", lambda a, t: ([], "", "")

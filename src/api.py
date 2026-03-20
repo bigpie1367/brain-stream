@@ -4,7 +4,6 @@ import glob as _glob
 import hashlib
 import json
 import os
-import re
 import secrets
 import shutil
 import threading
@@ -54,6 +53,7 @@ from src.state import (
     mark_pending,
     update_track_info,
 )
+from src.utils.fs import sanitize_path_component
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -628,17 +628,10 @@ async def rematch_search(
     return {"candidates": candidates}
 
 
-def _sanitize_path_component(name: str) -> str:
-    """파일시스템 안전 문자열로 변환 (tagger.py _sanitize_filename과 동일 규칙)."""
-    sanitized = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "_", name)
-    sanitized = sanitized.strip(". ")
-    return sanitized or "Unknown"
-
-
 def _resolve_dir(parent: str, name: str) -> str:
     """대소문자 무시 기준으로 parent 안에 name과 동일한 폴더가 있으면 그 실제 이름 반환.
     없으면 sanitize된 name 그대로 반환."""
-    sanitized = _sanitize_path_component(name)
+    sanitized = sanitize_path_component(name)
     if os.path.isdir(parent):
         lower = sanitized.lower()
         for entry in os.listdir(parent):
@@ -950,9 +943,9 @@ async def edit_metadata(song_id: str, req: EditRequest):
     # 5. Move file if artist / album / track_name changed
     ext = os.path.splitext(old_file_path)[1]
     music_root = _cfg.beets.music_dir
-    new_artist_dir = os.path.join(music_root, _sanitize_path_component(new_artist))
-    new_album_dir = os.path.join(new_artist_dir, _sanitize_path_component(new_album))
-    new_filename = _sanitize_path_component(new_track_name) + ext
+    new_artist_dir = os.path.join(music_root, sanitize_path_component(new_artist))
+    new_album_dir = os.path.join(new_artist_dir, sanitize_path_component(new_album))
+    new_filename = sanitize_path_component(new_track_name) + ext
     new_file_path = os.path.join(new_album_dir, new_filename)
 
     if new_file_path != old_file_path:

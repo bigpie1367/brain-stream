@@ -10,21 +10,13 @@ import mutagen.mp4
 import mutagen.oggopus
 import requests
 
+from src.utils.fs import sanitize_path_component
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
 _MB_API = "https://musicbrainz.org/ws/2"
 _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
-
-
-def _sanitize_filename(name: str) -> str:
-    """Remove filesystem-unsafe characters and limit length to 255."""
-    sanitized = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "_", name)
-    sanitized = sanitized.strip(". ")
-    if not sanitized:
-        sanitized = "_"
-    return sanitized[:255]
 
 
 def _pick_best_recording(recordings: list, track_name: str = "") -> str:
@@ -1255,14 +1247,14 @@ def tag_and_import(
             mb_artist=mb_artist_name,
         )
     sanitized_artist = (
-        _sanitize_filename(_primary_artist(effective_artist))
+        sanitize_path_component(_primary_artist(effective_artist))
         if effective_artist
         else "Unknown Artist"
     )
 
     # Determine final track filename: canonical from iTunes/Deezer preferred, else original request
     effective_track = canonical_title if canonical_title else (track_name or path.stem)
-    sanitized_track = _sanitize_filename(effective_track)
+    sanitized_track = sanitize_path_component(effective_track)
     if canonical_title and canonical_title != track_name:
         log.info(
             "using canonical track title for filename",
@@ -1276,7 +1268,7 @@ def tag_and_import(
     _write_tags(str(path), effective_artist, effective_track)
 
     # Compute final destination path based on resolved album
-    sanitized_album = _sanitize_filename(album) if album else "Unknown Album"
+    sanitized_album = sanitize_path_component(album) if album else "Unknown Album"
     dest_dir = Path(music_dir) / sanitized_artist / sanitized_album
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / (sanitized_track + path.suffix)
