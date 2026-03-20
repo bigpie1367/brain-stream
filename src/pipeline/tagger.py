@@ -1,3 +1,4 @@
+import base64
 import difflib
 import re
 import shutil
@@ -17,6 +18,94 @@ log = get_logger(__name__)
 
 _MB_API = "https://musicbrainz.org/ws/2"
 _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
+
+
+# ── Format dispatch infrastructure ──────────────────────────────────────────
+
+
+def _detect_format(path: str) -> str:
+    """확장자 기반 포맷 감지."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".flac":
+        return "flac"
+    elif suffix in (".opus", ".ogg"):
+        return "opus"
+    elif suffix in (".m4a", ".mp4"):
+        return "mp4"
+    return "generic"
+
+
+_FORMAT_OPENER = {
+    "flac": mutagen.flac.FLAC,
+    "opus": mutagen.oggopus.OggOpus,
+    "mp4": mutagen.mp4.MP4,
+    "generic": mutagen.File,
+}
+
+_FORMAT_KEYS = {
+    "flac": {
+        "artist": "artist",
+        "title": "title",
+        "album": "album",
+        "mb_trackid": "musicbrainz_trackid",
+    },
+    "opus": {
+        "artist": "artist",
+        "title": "title",
+        "album": "album",
+        "mb_trackid": "musicbrainz_trackid",
+    },
+    "mp4": {
+        "artist": "\xa9ART",
+        "title": "\xa9nam",
+        "album": "\xa9alb",
+        "mb_trackid": "----:com.apple.iTunes:MusicBrainz Track Id",
+    },
+    "generic": {
+        "artist": "artist",
+        "title": "title",
+        "album": "album",
+        "mb_trackid": "musicbrainz_trackid",
+    },
+}
+
+
+def _wrap_value(fmt: str, key_name: str, value: str):
+    """포맷별 값 래핑."""
+    if key_name == "mb_trackid" and fmt == "mp4":
+        return [mutagen.mp4.MP4FreeForm(value.encode("utf-8"))]
+    return [value]
+
+
+def _embed_flac_art(f, image_data: bytes, content_type: str):
+    pic = mutagen.flac.Picture()
+    pic.type = 3
+    pic.mime = content_type
+    pic.data = image_data
+    f.clear_pictures()
+    f.add_picture(pic)
+
+
+def _embed_opus_art(f, image_data: bytes, content_type: str):
+    pic = mutagen.flac.Picture()
+    pic.type = 3
+    pic.mime = content_type
+    pic.data = image_data
+    f["metadata_block_picture"] = [base64.b64encode(pic.write()).decode("ascii")]
+
+
+def _embed_mp4_art(f, image_data: bytes, content_type: str):
+    fmt_tag = mutagen.mp4.MP4Cover.FORMAT_JPEG
+    if "png" in content_type:
+        fmt_tag = mutagen.mp4.MP4Cover.FORMAT_PNG
+    f["covr"] = [mutagen.mp4.MP4Cover(image_data, imageformat=fmt_tag)]
+
+
+_ART_EMBEDDER = {
+    "flac": _embed_flac_art,
+    "opus": _embed_opus_art,
+    "mp4": _embed_mp4_art,
+}
 
 
 def _pick_best_recording(recordings: list, track_name: str = "") -> str:
@@ -387,147 +476,54 @@ def _mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, 
 def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = ""):
     """Write artist, title, and optionally mb_trackid tags to audio file."""
     try:
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(file_path)
-            f["artist"] = [artist]
-            f["title"] = [track_name]
-            if mb_trackid:
-                f["musicbrainz_trackid"] = [mb_trackid]
-            f.save()
-        elif suffix in (".opus", ".ogg"):
-            f = mutagen.oggopus.OggOpus(file_path)
-            f["artist"] = [artist]
-            f["title"] = [track_name]
-            if mb_trackid:
-                f["musicbrainz_trackid"] = [mb_trackid]
-            f.save()
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(file_path)
-            f["\xa9ART"] = [artist]
-            f["\xa9nam"] = [track_name]
-            if mb_trackid:
-                f["----:com.apple.iTunes:MusicBrainz Track Id"] = [
-                    mutagen.mp4.MP4FreeForm(mb_trackid.encode())
-                ]
-            f.save()
-        else:
-            f = mutagen.File(file_path)
-            if f is not None:
-                f["artist"] = [artist]
-                f["title"] = [track_name]
-                if mb_trackid:
-                    f["musicbrainz_trackid"] = [mb_trackid]
-                f.save()
+        fmt = _detect_format(file_path)
+        f = _FORMAT_OPENER[fmt](file_path)
+        if f is None:
+            log.warning("could not open file for tagging", file=file_path)
+            return
+        keys = _FORMAT_KEYS[fmt]
+        f[keys["artist"]] = _wrap_value(fmt, "artist", artist)
+        f[keys["title"]] = _wrap_value(fmt, "title", track_name)
+        if mb_trackid:
+            f[keys["mb_trackid"]] = _wrap_value(fmt, "mb_trackid", mb_trackid)
+        f.save()
         log.debug("wrote tags to file", file=file_path, artist=artist, title=track_name)
     except Exception as exc:
         log.warning("could not write tags to file", file=file_path, error=str(exc))
 
 
+def _write_single_tag(file_path: str, key_name: str, value: str):
+    """Write a single tag to audio file."""
+    try:
+        fmt = _detect_format(file_path)
+        f = _FORMAT_OPENER[fmt](file_path)
+        if f is None:
+            return
+        f[_FORMAT_KEYS[fmt][key_name]] = _wrap_value(fmt, key_name, value)
+        f.save()
+        log.debug(f"wrote {key_name} tag", file=file_path, value=value)
+    except Exception as exc:
+        log.warning(f"could not write {key_name} tag", file=file_path, error=str(exc))
+
+
 def _write_mb_trackid_tag(file_path: str, recording_id: str):
     """Write MusicBrainz recording ID (mb_trackid) tag to audio file."""
-    try:
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(file_path)
-            f["musicbrainz_trackid"] = [recording_id]
-            f.save()
-        elif suffix in (".opus", ".ogg"):
-            f = mutagen.oggopus.OggOpus(file_path)
-            f["musicbrainz_trackid"] = [recording_id]
-            f.save()
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(file_path)
-            f["----:com.apple.iTunes:MusicBrainz Track Id"] = [
-                mutagen.mp4.MP4FreeForm(recording_id.encode())
-            ]
-            f.save()
-        else:
-            f = mutagen.File(file_path)
-            if f is not None:
-                f["musicbrainz_trackid"] = [recording_id]
-                f.save()
-        log.debug("wrote mb_trackid tag", file=file_path, recording_id=recording_id)
-    except Exception as exc:
-        log.warning("could not write mb_trackid tag", file=file_path, error=str(exc))
+    _write_single_tag(file_path, "mb_trackid", recording_id)
 
 
 def _write_album_tag(file_path: str, album: str):
     """Write album tag to audio file using mutagen."""
-    try:
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(file_path)
-            f["album"] = [album]
-            f.save()
-        elif suffix in (".opus", ".ogg"):
-            f = mutagen.oggopus.OggOpus(file_path)
-            f["album"] = [album]
-            f.save()
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(file_path)
-            f["\xa9alb"] = [album]
-            f.save()
-        else:
-            f = mutagen.File(file_path)
-            if f is not None:
-                f["album"] = [album]
-                f.save()
-        log.debug("wrote album tag", file=file_path, album=album)
-    except Exception as exc:
-        log.warning("could not write album tag", file=file_path, error=str(exc))
+    _write_single_tag(file_path, "album", album)
 
 
 def _write_artist_tag(file_path: str, artist: str):
     """Write artist tag to audio file using mutagen."""
-    try:
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(file_path)
-            f["artist"] = [artist]
-            f.save()
-        elif suffix in (".opus", ".ogg"):
-            f = mutagen.oggopus.OggOpus(file_path)
-            f["artist"] = [artist]
-            f.save()
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(file_path)
-            f["\xa9ART"] = [artist]
-            f.save()
-        else:
-            f = mutagen.File(file_path)
-            if f is not None:
-                f["artist"] = [artist]
-                f.save()
-        log.debug("wrote artist tag", file=file_path, artist=artist)
-    except Exception as exc:
-        log.warning("could not write artist tag", file=file_path, error=str(exc))
+    _write_single_tag(file_path, "artist", artist)
 
 
 def _write_title_tag(file_path: str, title: str):
     """Write title tag to audio file using mutagen."""
-    try:
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(file_path)
-            f["title"] = [title]
-            f.save()
-        elif suffix in (".opus", ".ogg"):
-            f = mutagen.oggopus.OggOpus(file_path)
-            f["title"] = [title]
-            f.save()
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(file_path)
-            f["\xa9nam"] = [title]
-            f.save()
-        else:
-            f = mutagen.File(file_path)
-            if f is not None:
-                f["title"] = [title]
-                f.save()
-        log.debug("wrote title tag", file=file_path, title=title)
-    except Exception as exc:
-        log.warning("could not write title tag", file=file_path, error=str(exc))
+    _write_single_tag(file_path, "title", title)
 
 
 def _read_tags(file_path: str) -> dict:
@@ -543,39 +539,34 @@ def _read_tags(file_path: str) -> dict:
         "has_art": False,
     }
     try:
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(file_path)
-            result["artist"] = (f.get("artist") or [""])[0]
-            result["title"] = (f.get("title") or [""])[0]
-            result["album"] = (f.get("album") or [""])[0]
-            result["mb_trackid"] = (f.get("musicbrainz_trackid") or [""])[0]
-            result["has_art"] = bool(f.pictures)
-        elif suffix in (".opus", ".ogg"):
-            f = mutagen.oggopus.OggOpus(file_path)
-            result["artist"] = (f.get("artist") or [""])[0]
-            result["title"] = (f.get("title") or [""])[0]
-            result["album"] = (f.get("album") or [""])[0]
-            result["mb_trackid"] = (f.get("musicbrainz_trackid") or [""])[0]
-            result["has_art"] = bool(f.get("metadata_block_picture"))
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(file_path)
-            result["artist"] = (f.get("\xa9ART") or [""])[0]
-            result["title"] = (f.get("\xa9nam") or [""])[0]
-            result["album"] = (f.get("\xa9alb") or [""])[0]
-            raw_mb = f.get("----:com.apple.iTunes:MusicBrainz Track Id")
-            if raw_mb:
+        fmt = _detect_format(file_path)
+        f = _FORMAT_OPENER[fmt](file_path)
+        if f is None:
+            return result
+        keys = _FORMAT_KEYS[fmt]
+
+        for tag in ("artist", "title", "album"):
+            val = (f.get(keys[tag]) or [""])[0]
+            result[tag] = str(val) if fmt == "generic" else val
+
+        # mb_trackid: MP4 needs bytes decode
+        raw_mb = f.get(keys["mb_trackid"])
+        if raw_mb:
+            if fmt == "mp4":
                 result["mb_trackid"] = bytes(raw_mb[0]).decode(
                     "utf-8", errors="replace"
                 )
+            else:
+                val = raw_mb if isinstance(raw_mb, list) else [raw_mb]
+                result["mb_trackid"] = str(val[0]) if fmt == "generic" else str(val[0])
+
+        # has_art detection
+        if fmt == "flac":
+            result["has_art"] = bool(f.pictures)
+        elif fmt == "opus":
+            result["has_art"] = bool(f.get("metadata_block_picture"))
+        elif fmt == "mp4":
             result["has_art"] = bool(f.get("covr"))
-        else:
-            f = mutagen.File(file_path)
-            if f is not None:
-                result["artist"] = str((f.get("artist") or [""])[0])
-                result["title"] = str((f.get("title") or [""])[0])
-                result["album"] = str((f.get("album") or [""])[0])
-                result["mb_trackid"] = str((f.get("musicbrainz_trackid") or [""])[0])
     except Exception as exc:
         log.warning("could not read tags from file", file=file_path, error=str(exc))
     return result
@@ -860,38 +851,14 @@ def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
         content_type = r.headers.get("Content-Type", "image/jpeg")
         log.info("embedding cover art", file=file_path, size=len(image_data))
 
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(file_path)
-            pic = mutagen.flac.Picture()
-            pic.type = 3  # front cover
-            pic.mime = content_type
-            pic.data = image_data
-            f.clear_pictures()
-            f.add_picture(pic)
-            f.save()
-        elif suffix in (".opus", ".ogg"):
-            import base64
-
-            f = mutagen.oggopus.OggOpus(file_path)
-            pic = mutagen.flac.Picture()
-            pic.type = 3
-            pic.mime = content_type
-            pic.data = image_data
-            f["metadata_block_picture"] = [
-                base64.b64encode(pic.write()).decode("ascii")
-            ]
-            f.save()
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(file_path)
-            fmt = mutagen.mp4.MP4Cover.FORMAT_JPEG
-            if "png" in content_type:
-                fmt = mutagen.mp4.MP4Cover.FORMAT_PNG
-            f["covr"] = [mutagen.mp4.MP4Cover(image_data, imageformat=fmt)]
-            f.save()
-        else:
+        fmt = _detect_format(file_path)
+        embedder = _ART_EMBEDDER.get(fmt)
+        if embedder is None:
             log.warning("unsupported format for art embedding", file=file_path)
             return False
+        f = _FORMAT_OPENER[fmt](file_path)
+        embedder(f, image_data, content_type)
+        f.save()
 
         log.info("cover art embedded", file=file_path)
         return True
@@ -939,38 +906,14 @@ def _embed_art_from_url(file_path: str, url: str) -> bool:
             "embedding thumbnail as cover art", file=file_path, size=len(image_data)
         )
 
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".flac":
-            f = mutagen.flac.FLAC(file_path)
-            pic = mutagen.flac.Picture()
-            pic.type = 3  # front cover
-            pic.mime = content_type
-            pic.data = image_data
-            f.clear_pictures()
-            f.add_picture(pic)
-            f.save()
-        elif suffix in (".opus", ".ogg"):
-            import base64
-
-            f = mutagen.oggopus.OggOpus(file_path)
-            pic = mutagen.flac.Picture()
-            pic.type = 3
-            pic.mime = content_type
-            pic.data = image_data
-            f["metadata_block_picture"] = [
-                base64.b64encode(pic.write()).decode("ascii")
-            ]
-            f.save()
-        elif suffix in (".m4a", ".mp4"):
-            f = mutagen.mp4.MP4(file_path)
-            fmt = mutagen.mp4.MP4Cover.FORMAT_JPEG
-            if "png" in content_type:
-                fmt = mutagen.mp4.MP4Cover.FORMAT_PNG
-            f["covr"] = [mutagen.mp4.MP4Cover(image_data, imageformat=fmt)]
-            f.save()
-        else:
+        fmt = _detect_format(file_path)
+        embedder = _ART_EMBEDDER.get(fmt)
+        if embedder is None:
             log.warning("unsupported format for art embedding", file=file_path)
             return False
+        f = _FORMAT_OPENER[fmt](file_path)
+        embedder(f, image_data, content_type)
+        f.save()
 
         log.info("thumbnail embedded as cover art", file=file_path)
         return True
@@ -1333,3 +1276,4 @@ write_artist_tag = _write_artist_tag
 write_title_tag = _write_title_tag
 write_mb_trackid_tag = _write_mb_trackid_tag
 itunes_search = _itunes_search
+deezer_search = _deezer_search
