@@ -66,16 +66,19 @@ async def lifespan(app: FastAPI):
 
 **파일**: `src/api.py`
 
-`rematch_search`, `rematch_apply` 내부 변경:
+`rematch_search`, `rematch_apply`, 및 이들이 호출하는 헬퍼(`_navidrome_get_song` 등) 내부 변경:
 
 | Before | After |
 |--------|-------|
 | `requests.get()` | `await request.app.state.http_client.get()` |
 | `time.sleep(1)` | `await asyncio.sleep(1)` |
 
+`_navidrome_get_song`도 `requests.get`을 사용하므로 async 전환 대상에 포함.
+호출 체인의 모든 `requests` 사용처를 httpx async로 전환해야 `requests` import를 제거할 수 있음.
+
 `edit_metadata`의 mutagen 파일 I/O는 단건 ms 단위이므로 현 상태 유지.
 
-`requests` import는 이 두 함수에서만 제거. 다른 곳에서 미사용 시 import 자체 삭제.
+`requests` import는 전환 완료 후 미사용 시 제거.
 
 ---
 
@@ -185,6 +188,8 @@ def move_to_music_dir(
 `_resolve_dir`도 `api.py`에서 `utils.py`로 이동.
 
 `rematch_apply`, `edit_metadata`, `jobs.run_download_job` 모두 `move_to_music_dir()` 호출로 통일.
+
+**의도된 동작 변경**: `edit_metadata`는 현재 `_resolve_dir`을 사용하지 않아 같은 아티스트가 대소문자 차이로 별도 폴더에 들어갈 수 있음. `move_to_music_dir`을 적용하면 `edit_metadata`에도 case-insensitive 폴더 매칭이 추가됨. 이는 #8의 목적(폴더 분리 방지) 자체이므로 의도된 변경.
 
 ---
 
