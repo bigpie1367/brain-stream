@@ -4,9 +4,30 @@ FastAPI TestClient로 API 엔드포인트 통합 테스트
 - pipeline 실행, download_track, tag_and_import, trigger_scan 등은 mock 처리
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.state import get_all_downloads, mark_done, mark_pending
+
+
+# ── httpx 응답 헬퍼 ──────────────────────────────────────────────────────────
+
+
+def _httpx_response(json_data, status_code=200):
+    """httpx.AsyncClient.get mock 반환값 헬퍼."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = json_data
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+def _mock_http_client(client, return_value=None, side_effect=None):
+    """app.state.http_client.get을 AsyncMock으로 패치하는 컨텍스트 매니저를 반환한다."""
+    mock_get = AsyncMock(return_value=return_value, side_effect=side_effect)
+    return patch.object(
+        client.app.state, "http_client", MagicMock(get=mock_get)
+    ), mock_get
+
 
 # ── POST /api/download ────────────────────────────────────────────────────────
 
@@ -20,7 +41,9 @@ def test_post_download_returns_200_and_job_id(client):
         mock_thread = MagicMock()
         mock_thread_cls.return_value = mock_thread
 
-        resp = client.post("/api/download", json={"artist": "Radiohead", "track": "Creep"})
+        resp = client.post(
+            "/api/download", json={"artist": "Radiohead", "track": "Creep"}
+        )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -42,7 +65,9 @@ def test_post_download_creates_pending_row_in_db(client, tmp_state_db):
     """POST /api/download 후 state DB에 pending 레코드가 생성되어야 한다."""
     with patch("src.api.threading.Thread") as mock_thread_cls:
         mock_thread_cls.return_value = MagicMock()
-        resp = client.post("/api/download", json={"artist": "Queen", "track": "Bohemian Rhapsody"})
+        resp = client.post(
+            "/api/download", json={"artist": "Queen", "track": "Bohemian Rhapsody"}
+        )
 
     job_id = resp.json()["job_id"]
     rows = get_all_downloads(tmp_state_db)
@@ -204,7 +229,9 @@ def test_delete_download_marks_record_as_ignored(client, tmp_state_db):
     assert row["status"] == "ignored"
 
 
-def test_delete_download_removes_file_when_file_path_set(client, tmp_state_db, tmp_path):
+def test_delete_download_removes_file_when_file_path_set(
+    client, tmp_state_db, tmp_path
+):
     """file_path가 DB에 저장돼 있으면 실제 파일을 삭제한다."""
     from src.state import mark_done
 
@@ -361,7 +388,11 @@ def test_get_download_detail_flac_reads_year_tag(client, tmp_state_db, tmp_path)
 
     mock_audio = MagicMock()
     mock_audio.get.side_effect = lambda key, default=None: (
-        ["The Marshall Mathers LP"] if key == "album" else ["2000"] if key == "date" else default
+        ["The Marshall Mathers LP"]
+        if key == "album"
+        else ["2000"]
+        if key == "date"
+        else default
     )
     mock_audio.pictures = []
 
@@ -461,7 +492,9 @@ def test_get_download_detail_no_album_tag_returns_null(client, tmp_state_db, tmp
     assert data["cover_art"] is None
 
 
-def test_get_download_detail_mutagen_exception_returns_null_album(client, tmp_state_db, tmp_path):
+def test_get_download_detail_mutagen_exception_returns_null_album(
+    client, tmp_state_db, tmp_path
+):
     """mutagen 파싱 중 예외 발생 시 album_name이 null이고 에러 없이 200을 반환한다."""
     dummy_file = tmp_path / "track.flac"
     dummy_file.write_bytes(b"corrupted data")
@@ -484,11 +517,8 @@ def test_get_download_detail_mutagen_exception_returns_null_album(client, tmp_st
 
 
 def _mb_search_response(recordings):
-    """requests.get mock 반환값 헬퍼."""
-    mock = MagicMock()
-    mock.raise_for_status = MagicMock()
-    mock.json.return_value = {"recordings": recordings}
-    return mock
+    """httpx AsyncClient.get mock 반환값 헬퍼."""
+    return _httpx_response({"recordings": recordings})
 
 
 def _make_recording(rec_id, releases, artist_name="Radiohead"):
@@ -503,13 +533,22 @@ def _make_release(release_id, title, date="2000-01-01"):
     return {"id": release_id, "title": title, "date": date}
 
 
+def _patch_http_client_get(client, return_value=None, side_effect=None):
+    """app.state.http_client.get을 AsyncMock으로 교체한다."""
+    mock_get = AsyncMock(return_value=return_value, side_effect=side_effect)
+    mock_client = MagicMock()
+    mock_client.get = mock_get
+    return patch.object(client.app.state, "http_client", mock_client), mock_get
+
+
 def test_rematch_search_returns_candidates(client):
     """MB stage1 검색이 성공하면 candidates 목록이 반환된다."""
     release = _make_release("album-id-001", "OK Computer")
     rec = _make_recording("rec-id-001", [release])
 
-    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, return_value=_mb_search_response([rec]))
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", return_value={}):
                 resp = client.get(
                     "/api/rematch/search",
@@ -531,8 +570,9 @@ def test_rematch_search_returns_candidates(client):
 
 def test_rematch_search_empty_when_no_recording(client):
     """두 stage 모두 결과 없고 iTunes도 결과 없으면 빈 candidates를 반환한다."""
-    with patch("src.api.requests.get", return_value=_mb_search_response([])):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, return_value=_mb_search_response([]))
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", return_value={}):
                 resp = client.get(
                     "/api/rematch/search",
@@ -550,15 +590,16 @@ def test_rematch_search_stage2_fallback(client):
 
     call_count = 0
 
-    def side_effect(*args, **kwargs):
+    async def side_effect(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return _mb_search_response([])  # stage1: 빈 결과
         return _mb_search_response([rec])  # stage2: 결과 있음
 
-    with patch("src.api.requests.get", side_effect=side_effect):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, side_effect=side_effect)
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", return_value={}):
                 resp = client.get(
                     "/api/rematch/search",
@@ -580,8 +621,9 @@ def test_rematch_search_multiple_album_candidates(client):
     ]
     rec = _make_recording("rec-001", releases)
 
-    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, return_value=_mb_search_response([rec]))
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", return_value={}):
                 resp = client.get(
                     "/api/rematch/search",
@@ -600,8 +642,9 @@ def test_rematch_search_year_extracted_from_date(client):
     release = _make_release("album-yr", "OK Computer", "1997-06-16")
     rec = _make_recording("rec-yr", [release])
 
-    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, return_value=_mb_search_response([rec]))
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", return_value={}):
                 resp = client.get(
                     "/api/rematch/search",
@@ -618,8 +661,11 @@ def test_rematch_search_deduplicates_album_ids(client):
     rec1 = _make_recording("rec-dup-1", [release])
     rec2 = _make_recording("rec-dup-2", [release])
 
-    with patch("src.api.requests.get", return_value=_mb_search_response([rec1, rec2])):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(
+        client, return_value=_mb_search_response([rec1, rec2])
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", return_value={}):
                 resp = client.get(
                     "/api/rematch/search",
@@ -633,8 +679,9 @@ def test_rematch_search_deduplicates_album_ids(client):
 
 def test_rematch_search_mb_request_error_returns_empty(client):
     """MB API 호출 중 예외 발생 시 빈 candidates를 반환한다."""
-    with patch("src.api.requests.get", side_effect=Exception("network error")):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, side_effect=Exception("network error"))
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             resp = client.get(
                 "/api/rematch/search",
                 params={"artist": "Artist", "track": "Track"},
@@ -648,10 +695,14 @@ def test_rematch_search_returns_combined_sources(client):
     """MB 결과 뒤에 iTunes 후보가 source='itunes'로 추가된다."""
     release = _make_release("album-mb-001", "OK Computer")
     rec = _make_recording("rec-mb-001", [release])
-    itunes_result = {"album": "OK Computer", "artwork_url": "https://example.com/art.jpg"}
+    itunes_result = {
+        "album": "OK Computer",
+        "artwork_url": "https://example.com/art.jpg",
+    }
 
-    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, return_value=_mb_search_response([rec]))
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", return_value=itunes_result):
                 resp = client.get(
                     "/api/rematch/search",
@@ -682,7 +733,7 @@ def test_rematch_search_returns_combined_sources(client):
 
 
 def test_rematch_apply_success(client, tmp_path):
-    """정상 흐름: 파일 존재 + getSong 성공 + MB release 조회 성공 → 200 반환."""
+    """정상 흐름: 파일 존재 + getSong 성공 + MB release 조회 성공 -> 200 반환."""
     dummy_audio = tmp_path / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
@@ -692,19 +743,27 @@ def test_rematch_apply_success(client, tmp_path):
     # 파일을 /app/data/music/... 에 생성하는 대신 os.path.exists를 mock한다.
     song_relative_path = "Artist/Album/track.flac"
 
-    with patch("src.api._navidrome_get_song", return_value={"path": song_relative_path}):
+    with patch(
+        "src.api._navidrome_get_song",
+        new_callable=AsyncMock,
+        return_value={"path": song_relative_path},
+    ):
         with patch("src.api.os.path.exists", return_value=True):
-            with patch("src.api.requests.get") as mock_get:
-                mock_get.return_value = MagicMock(
-                    status_code=200,
-                    json=MagicMock(return_value={"title": "OK Computer"}),
-                    raise_for_status=MagicMock(),
-                )
-                with patch("src.api.write_album_tag") as mock_write:
-                    with patch("src.api.embed_cover_art", return_value=True):
-                        with patch("src.api.shutil.move"):
-                            with patch("src.api.os.makedirs"):
-                                with patch("src.api.threading.Thread") as mock_thread_cls:
+            patcher, _ = _patch_http_client_get(
+                client,
+                return_value=_httpx_response({"title": "OK Computer"}),
+            )
+            with patcher:
+                with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+                    with patch("src.api.write_album_tag") as mock_write:
+                        with patch("src.api.embed_cover_art", return_value=True):
+                            with patch(
+                                "src.api.move_to_music_dir",
+                                return_value="/app/data/music/Artist/Album/track.flac",
+                            ):
+                                with patch(
+                                    "src.api.threading.Thread"
+                                ) as mock_thread_cls:
                                     mock_thread_cls.return_value = MagicMock()
                                     resp = client.post(
                                         "/api/rematch/apply",
@@ -724,7 +783,11 @@ def test_rematch_apply_success(client, tmp_path):
 
 def test_rematch_apply_song_not_found_returns_500(client):
     """getSong 실패 시 500을 반환한다."""
-    with patch("src.api._navidrome_get_song", side_effect=RuntimeError("getSong error")):
+    with patch(
+        "src.api._navidrome_get_song",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("getSong error"),
+    ):
         resp = client.post(
             "/api/rematch/apply",
             json={
@@ -738,7 +801,11 @@ def test_rematch_apply_song_not_found_returns_500(client):
 
 def test_rematch_apply_file_not_found_returns_404(client):
     """getSong 성공 but 파일이 없으면 404를 반환한다."""
-    with patch("src.api._navidrome_get_song", return_value={"path": "Artist/track.flac"}):
+    with patch(
+        "src.api._navidrome_get_song",
+        new_callable=AsyncMock,
+        return_value={"path": "Artist/track.flac"},
+    ):
         with patch("src.api.os.path.exists", return_value=False):
             resp = client.post(
                 "/api/rematch/apply",
@@ -753,17 +820,25 @@ def test_rematch_apply_file_not_found_returns_404(client):
 
 def test_rematch_apply_mb_release_lookup_fails_returns_500(client):
     """MB release 조회 실패 시 500을 반환한다."""
-    with patch("src.api._navidrome_get_song", return_value={"path": "Artist/track.flac"}):
+    with patch(
+        "src.api._navidrome_get_song",
+        new_callable=AsyncMock,
+        return_value={"path": "Artist/track.flac"},
+    ):
         with patch("src.api.os.path.exists", return_value=True):
-            with patch("src.api.requests.get", side_effect=Exception("network error")):
-                resp = client.post(
-                    "/api/rematch/apply",
-                    json={
-                        "song_id": "nav-song-123",
-                        "mb_recording_id": "rec-001",
-                        "mb_album_id": "album-001",
-                    },
-                )
+            patcher, _ = _patch_http_client_get(
+                client, side_effect=Exception("network error")
+            )
+            with patcher:
+                with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+                    resp = client.post(
+                        "/api/rematch/apply",
+                        json={
+                            "song_id": "nav-song-123",
+                            "mb_recording_id": "rec-001",
+                            "mb_album_id": "album-001",
+                        },
+                    )
     assert resp.status_code == 500
 
 
@@ -777,7 +852,7 @@ def test_rematch_apply_missing_song_id_and_mbid_returns_422(client):
 
 
 def test_rematch_apply_via_mbid_success(client, tmp_state_db, tmp_path):
-    """mbid 경로: state.db에서 file_path 조회 후 재태깅 성공 → 200 반환."""
+    """mbid 경로: state.db에서 file_path 조회 후 재태깅 성공 -> 200 반환."""
     dummy_audio = tmp_path / "track.flac"
     dummy_audio.write_bytes(b"fake flac data")
 
@@ -786,16 +861,17 @@ def test_rematch_apply_via_mbid_success(client, tmp_state_db, tmp_path):
     mark_pending(tmp_state_db, "manual-abc12345", "Lose Yourself", "Eminem")
     mark_done(tmp_state_db, "manual-abc12345", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "The Marshall Mathers LP"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag") as mock_write:
-            with patch("src.api.embed_cover_art", return_value=True):
-                with patch("src.api.shutil.move"):
-                    with patch("src.api.os.makedirs"):
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "The Marshall Mathers LP"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag") as mock_write:
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch(
+                        "src.api.move_to_music_dir", return_value=str(dummy_audio)
+                    ):
                         with patch("src.api.threading.Thread") as mock_thread_cls:
                             mock_thread_cls.return_value = MagicMock()
                             resp = client.post(
@@ -829,29 +905,31 @@ def test_rematch_apply_moves_file_when_album_changes(client, tmp_state_db, tmp_p
 
     new_album_name = "NewAlbum"
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": new_album_name}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.embed_cover_art", return_value=True):
-                with patch("src.api.threading.Thread") as mock_thread_cls:
-                    mock_thread_cls.return_value = MagicMock()
-                    resp = client.post(
-                        "/api/rematch/apply",
-                        json={
-                            "mbid": "manual-moveme",
-                            "mb_recording_id": "rec-001",
-                            "mb_album_id": "album-001",
-                        },
-                    )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": new_album_name}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-moveme",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                            },
+                        )
 
     assert resp.status_code == 200
     new_file_path = str(artist_dir / new_album_name / "track.flac")
     assert not dummy_audio.exists(), "원본 파일이 이동되어 있어야 한다"
-    assert (artist_dir / new_album_name / "track.flac").exists(), "새 경로에 파일이 있어야 한다"
+    assert (artist_dir / new_album_name / "track.flac").exists(), (
+        "새 경로에 파일이 있어야 한다"
+    )
 
     row = get_download_by_mbid(tmp_state_db, "manual-moveme")
     assert row["file_path"] == new_file_path
@@ -870,31 +948,31 @@ def test_rematch_apply_no_move_when_album_unchanged(client, tmp_state_db, tmp_pa
     mark_pending(tmp_state_db, "manual-nomove", "Track", "Artist")
     mark_done(tmp_state_db, "manual-nomove", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "SameAlbum"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.embed_cover_art", return_value=True):
-                with patch("src.api.threading.Thread") as mock_thread_cls:
-                    mock_thread_cls.return_value = MagicMock()
-                    resp = client.post(
-                        "/api/rematch/apply",
-                        json={
-                            "mbid": "manual-nomove",
-                            "mb_recording_id": "rec-001",
-                            "mb_album_id": "album-001",
-                        },
-                    )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "SameAlbum"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-nomove",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                            },
+                        )
 
     assert resp.status_code == 200
     assert dummy_audio.exists(), "앨범명이 같으면 파일이 그대로 있어야 한다"
 
 
 def test_rematch_apply_move_fails_returns_500(client, tmp_state_db, tmp_path):
-    """shutil.move 실패 시 500을 반환한다."""
+    """move_to_music_dir 실패 시 500을 반환한다."""
     artist_dir = tmp_path / "Artist"
     old_album_dir = artist_dir / "OldAlbum"
     old_album_dir.mkdir(parents=True)
@@ -906,22 +984,25 @@ def test_rematch_apply_move_fails_returns_500(client, tmp_state_db, tmp_path):
     mark_pending(tmp_state_db, "manual-movefail", "Track", "Artist")
     mark_done(tmp_state_db, "manual-movefail", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "DifferentAlbum"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.shutil.move", side_effect=OSError("permission denied")):
-                resp = client.post(
-                    "/api/rematch/apply",
-                    json={
-                        "mbid": "manual-movefail",
-                        "mb_recording_id": "rec-001",
-                        "mb_album_id": "album-001",
-                    },
-                )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "DifferentAlbum"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch(
+                    "src.api.move_to_music_dir",
+                    side_effect=OSError("permission denied"),
+                ):
+                    resp = client.post(
+                        "/api/rematch/apply",
+                        json={
+                            "mbid": "manual-movefail",
+                            "mb_recording_id": "rec-001",
+                            "mb_album_id": "album-001",
+                        },
+                    )
 
     assert resp.status_code == 500
     assert "file move failed" in resp.json()["detail"]
@@ -980,19 +1061,26 @@ def test_rematch_apply_song_id_absolute_path_used_directly(client):
     """getSong이 /app/data/music/... 형태의 절대경로를 반환할 때 prefix를 이중으로 붙이지 않는다."""
     absolute_path = "/app/data/music/Artist/Album/track.flac"
 
-    with patch("src.api._navidrome_get_song", return_value={"path": absolute_path}):
+    with patch(
+        "src.api._navidrome_get_song",
+        new_callable=AsyncMock,
+        return_value={"path": absolute_path},
+    ):
         with patch("src.api.os.path.exists", return_value=True):
-            with patch("src.api.requests.get") as mock_get:
-                mock_get.return_value = MagicMock(
-                    status_code=200,
-                    json=MagicMock(return_value={"title": "OK Computer"}),
-                    raise_for_status=MagicMock(),
-                )
-                with patch("src.api.write_album_tag") as mock_write:
-                    with patch("src.api.embed_cover_art", return_value=True):
-                        with patch("src.api.shutil.move"):
-                            with patch("src.api.os.makedirs"):
-                                with patch("src.api.threading.Thread") as mock_thread_cls:
+            patcher, _ = _patch_http_client_get(
+                client,
+                return_value=_httpx_response({"title": "OK Computer"}),
+            )
+            with patcher:
+                with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+                    with patch("src.api.write_album_tag") as mock_write:
+                        with patch("src.api.embed_cover_art", return_value=True):
+                            with patch(
+                                "src.api.move_to_music_dir", return_value=absolute_path
+                            ):
+                                with patch(
+                                    "src.api.threading.Thread"
+                                ) as mock_thread_cls:
                                     mock_thread_cls.return_value = MagicMock()
                                     resp = client.post(
                                         "/api/rematch/apply",
@@ -1024,13 +1112,13 @@ def _setup_done_record(db_path, mbid, artist, track_name, album, file_path):
 
 
 def test_edit_song_not_found_returns_404(client):
-    """존재하지 않는 song_id → 404."""
+    """존재하지 않는 song_id -> 404."""
     resp = client.post("/api/edit/nonexistent-id", json={"artist": "New Artist"})
     assert resp.status_code == 404
 
 
 def test_edit_file_path_null_returns_404(client, tmp_state_db):
-    """file_path가 None인 레코드 → 404."""
+    """file_path가 None인 레코드 -> 404."""
     from src.state import mark_pending
 
     mark_pending(tmp_state_db, "manual-nofp2", "Track", "Artist")
@@ -1039,7 +1127,7 @@ def test_edit_file_path_null_returns_404(client, tmp_state_db):
 
 
 def test_edit_file_missing_returns_404(client, tmp_state_db):
-    """file_path가 기록되어 있지만 파일이 실제로 없으면 → 404."""
+    """file_path가 기록되어 있지만 파일이 실제로 없으면 -> 404."""
     _setup_done_record(
         tmp_state_db,
         "manual-gone2",
@@ -1056,7 +1144,9 @@ def test_edit_no_change_returns_200_immediately(client, tmp_state_db, tmp_path):
     """artist / album / track_name이 모두 기존값과 같으면 즉시 200 반환."""
     dummy = tmp_path / "track.flac"
     dummy.write_bytes(b"fake")
-    _setup_done_record(tmp_state_db, "manual-noop", "Artist", "Track", "Album", str(dummy))
+    _setup_done_record(
+        tmp_state_db, "manual-noop", "Artist", "Track", "Album", str(dummy)
+    )
     with patch("src.api.write_artist_tag") as mock_artist:
         with patch("src.api.write_album_tag") as mock_album:
             with patch("src.api.write_title_tag") as mock_title:
@@ -1081,7 +1171,9 @@ def test_edit_artist_only_updates_tags_and_moves_file(client, tmp_state_db, tmp_
     dummy = album_dir / "Track.flac"
     dummy.write_bytes(b"fake")
 
-    _setup_done_record(tmp_state_db, "manual-edt1", "OldArtist", "Track", "Album", str(dummy))
+    _setup_done_record(
+        tmp_state_db, "manual-edt1", "OldArtist", "Track", "Album", str(dummy)
+    )
 
     import src.api as api_module
 
@@ -1121,7 +1213,9 @@ def test_edit_track_name_only(client, tmp_state_db, tmp_path):
     dummy = album_dir / "OldTitle.opus"
     dummy.write_bytes(b"fake")
 
-    _setup_done_record(tmp_state_db, "manual-edt2", "Artist", "OldTitle", "Album", str(dummy))
+    _setup_done_record(
+        tmp_state_db, "manual-edt2", "Artist", "OldTitle", "Album", str(dummy)
+    )
 
     import src.api as api_module
 
@@ -1157,7 +1251,9 @@ def test_edit_conflict_returns_409(client, tmp_state_db, tmp_path):
     conflict = new_album_dir / "Track.flac"
     conflict.write_bytes(b"existing")
 
-    _setup_done_record(tmp_state_db, "manual-conflict", "Artist", "Track", "OldAlbum", str(dummy))
+    _setup_done_record(
+        tmp_state_db, "manual-conflict", "Artist", "Track", "OldAlbum", str(dummy)
+    )
 
     import src.api as api_module
 
@@ -1183,7 +1279,9 @@ def test_edit_tag_write_failure_returns_500(client, tmp_state_db, tmp_path):
     dummy = album_dir / "Track.flac"
     dummy.write_bytes(b"fake")
 
-    _setup_done_record(tmp_state_db, "manual-tagfail", "Artist", "Track", "Album", str(dummy))
+    _setup_done_record(
+        tmp_state_db, "manual-tagfail", "Artist", "Track", "Album", str(dummy)
+    )
 
     import src.api as api_module
 
@@ -1204,19 +1302,26 @@ def test_rematch_apply_song_id_relative_path_gets_prefix(client):
     relative_path = "Artist/Album/track.flac"
     expected_path = f"/app/data/music/{relative_path}"
 
-    with patch("src.api._navidrome_get_song", return_value={"path": relative_path}):
+    with patch(
+        "src.api._navidrome_get_song",
+        new_callable=AsyncMock,
+        return_value={"path": relative_path},
+    ):
         with patch("src.api.os.path.exists", return_value=True):
-            with patch("src.api.requests.get") as mock_get:
-                mock_get.return_value = MagicMock(
-                    status_code=200,
-                    json=MagicMock(return_value={"title": "OK Computer"}),
-                    raise_for_status=MagicMock(),
-                )
-                with patch("src.api.write_album_tag") as mock_write:
-                    with patch("src.api.embed_cover_art", return_value=True):
-                        with patch("src.api.shutil.move"):
-                            with patch("src.api.os.makedirs"):
-                                with patch("src.api.threading.Thread") as mock_thread_cls:
+            patcher, _ = _patch_http_client_get(
+                client,
+                return_value=_httpx_response({"title": "OK Computer"}),
+            )
+            with patcher:
+                with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+                    with patch("src.api.write_album_tag") as mock_write:
+                        with patch("src.api.embed_cover_art", return_value=True):
+                            with patch(
+                                "src.api.move_to_music_dir", return_value=expected_path
+                            ):
+                                with patch(
+                                    "src.api.threading.Thread"
+                                ) as mock_thread_cls:
                                     mock_thread_cls.return_value = MagicMock()
                                     resp = client.post(
                                         "/api/rematch/apply",
@@ -1253,8 +1358,9 @@ def test_rematch_search_itunes_kr_added_when_different_album(client):
             "artwork_url": "https://example.com/kr.jpg",
         }
 
-    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, return_value=_mb_search_response([rec]))
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", side_effect=itunes_side_effect):
                 resp = client.get(
                     "/api/rematch/search",
@@ -1285,8 +1391,9 @@ def test_rematch_search_itunes_kr_deduplicated_when_same_album(client):
     def itunes_same(artist, track, country=None):
         return {"album": "OK Computer", "artwork_url": "https://example.com/art.jpg"}
 
-    with patch("src.api.requests.get", return_value=_mb_search_response([rec])):
-        with patch("src.api.time.sleep"):
+    patcher, _ = _patch_http_client_get(client, return_value=_mb_search_response([rec]))
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
             with patch("src.api.itunes_search", side_effect=itunes_same):
                 resp = client.get(
                     "/api/rematch/search",
@@ -1298,31 +1405,42 @@ def test_rematch_search_itunes_kr_deduplicated_when_same_album(client):
     candidates = data["candidates"]
     # MB 1개 + iTunes 1개 (중복 제거로 KR은 추가 안 됨)
     assert len(candidates) == 2
-    itunes_candidates = [c for c in candidates if c["source"] in ("itunes", "itunes-kr")]
+    itunes_candidates = [
+        c for c in candidates if c["source"] in ("itunes", "itunes-kr")
+    ]
     assert len(itunes_candidates) == 1
 
 
 def test_rematch_apply_itunes_candidate_no_mb_album_id(client):
     """mb_album_id가 없고 album_name이 있으면 MB 조회 없이 직접 태깅한다."""
-    with patch("src.api._navidrome_get_song", return_value={"path": "Artist/track.flac"}):
+    with patch(
+        "src.api._navidrome_get_song",
+        new_callable=AsyncMock,
+        return_value={"path": "Artist/track.flac"},
+    ):
         with patch("src.api.os.path.exists", return_value=True):
-            with patch("src.api.requests.get") as mock_get:
+            patcher, mock_get = _patch_http_client_get(client)
+            with patcher:
                 with patch("src.api.write_album_tag") as mock_write:
-                    with patch("src.api.embed_art_from_url", return_value=True) as mock_embed:
-                        with patch("src.api.shutil.move"):
-                            with patch("src.api.os.makedirs"):
-                                with patch("src.api.threading.Thread") as mock_thread_cls:
-                                    mock_thread_cls.return_value = MagicMock()
-                                    resp = client.post(
-                                        "/api/rematch/apply",
-                                        json={
-                                            "song_id": "nav-song-itunes",
-                                            "mb_recording_id": "",
-                                            "mb_album_id": "",
-                                            "album_name": "OK Computer",
-                                            "cover_url": "https://example.com/art.jpg",
-                                        },
-                                    )
+                    with patch(
+                        "src.api.embed_art_from_url", return_value=True
+                    ) as mock_embed:
+                        with patch(
+                            "src.api.move_to_music_dir",
+                            return_value="/app/data/music/Artist/OK Computer/track.flac",
+                        ):
+                            with patch("src.api.threading.Thread") as mock_thread_cls:
+                                mock_thread_cls.return_value = MagicMock()
+                                resp = client.post(
+                                    "/api/rematch/apply",
+                                    json={
+                                        "song_id": "nav-song-itunes",
+                                        "mb_recording_id": "",
+                                        "mb_album_id": "",
+                                        "album_name": "OK Computer",
+                                        "cover_url": "https://example.com/art.jpg",
+                                    },
+                                )
 
     # MB API 호출이 없어야 한다
     mock_get.assert_not_called()
@@ -1337,7 +1455,11 @@ def test_rematch_apply_itunes_candidate_no_mb_album_id(client):
 
 def test_rematch_apply_no_mb_album_id_no_album_name_returns_422(client):
     """mb_album_id와 album_name 모두 없으면 422를 반환한다."""
-    with patch("src.api._navidrome_get_song", return_value={"path": "Artist/track.flac"}):
+    with patch(
+        "src.api._navidrome_get_song",
+        new_callable=AsyncMock,
+        return_value={"path": "Artist/track.flac"},
+    ):
         with patch("src.api.os.path.exists", return_value=True):
             resp = client.post(
                 "/api/rematch/apply",
@@ -1363,32 +1485,34 @@ def test_rematch_apply_artist_name_rewrites_artist_tag(client, tmp_state_db, tmp
     mark_pending(tmp_state_db, "manual-artist-tag", "Track", "OldArtist")
     mark_done(tmp_state_db, "manual-artist-tag", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "SameAlbum"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.write_artist_tag") as mock_write_artist:
-                with patch("src.api.embed_cover_art", return_value=True):
-                    with patch("src.api.threading.Thread") as mock_thread_cls:
-                        mock_thread_cls.return_value = MagicMock()
-                        resp = client.post(
-                            "/api/rematch/apply",
-                            json={
-                                "mbid": "manual-artist-tag",
-                                "mb_recording_id": "rec-001",
-                                "mb_album_id": "album-001",
-                                "artist_name": "NewArtist",
-                            },
-                        )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "SameAlbum"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.write_artist_tag") as mock_write_artist:
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "mbid": "manual-artist-tag",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                    "artist_name": "NewArtist",
+                                },
+                            )
 
     assert resp.status_code == 200
     mock_write_artist.assert_called_once_with(str(dummy_audio), "NewArtist")
 
 
-def test_rematch_apply_artist_name_moves_to_new_artist_dir(client, tmp_state_db, tmp_path):
+def test_rematch_apply_artist_name_moves_to_new_artist_dir(
+    client, tmp_state_db, tmp_path
+):
     """artist_name이 주어지면 파일이 새 아티스트 폴더 아래 앨범 폴더로 이동된다."""
     music_root = tmp_path / "music"
     artist_dir = music_root / "OldArtist"
@@ -1402,26 +1526,26 @@ def test_rematch_apply_artist_name_moves_to_new_artist_dir(client, tmp_state_db,
     mark_pending(tmp_state_db, "manual-artist-move", "Track", "OldArtist")
     mark_done(tmp_state_db, "manual-artist-move", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "SameAlbum"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.write_artist_tag"):
-                with patch("src.api.embed_cover_art", return_value=True):
-                    with patch("src.api.threading.Thread") as mock_thread_cls:
-                        mock_thread_cls.return_value = MagicMock()
-                        resp = client.post(
-                            "/api/rematch/apply",
-                            json={
-                                "mbid": "manual-artist-move",
-                                "mb_recording_id": "rec-001",
-                                "mb_album_id": "album-001",
-                                "artist_name": "NewArtist",
-                            },
-                        )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "SameAlbum"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.write_artist_tag"):
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "mbid": "manual-artist-move",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                    "artist_name": "NewArtist",
+                                },
+                            )
 
     assert resp.status_code == 200
     expected_path = music_root / "NewArtist" / "SameAlbum" / "track.flac"
@@ -1432,7 +1556,9 @@ def test_rematch_apply_artist_name_moves_to_new_artist_dir(client, tmp_state_db,
     assert row["file_path"] == str(expected_path)
 
 
-def test_rematch_apply_artist_and_album_change_moves_correctly(client, tmp_state_db, tmp_path):
+def test_rematch_apply_artist_and_album_change_moves_correctly(
+    client, tmp_state_db, tmp_path
+):
     """artist_name과 album_name이 모두 변경되면 새 아티스트/앨범 경로로 이동된다."""
     music_root = tmp_path / "music"
     artist_dir = music_root / "OldArtist"
@@ -1446,26 +1572,26 @@ def test_rematch_apply_artist_and_album_change_moves_correctly(client, tmp_state
     mark_pending(tmp_state_db, "manual-both-change", "Track", "OldArtist")
     mark_done(tmp_state_db, "manual-both-change", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "NewAlbum"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.write_artist_tag"):
-                with patch("src.api.embed_cover_art", return_value=True):
-                    with patch("src.api.threading.Thread") as mock_thread_cls:
-                        mock_thread_cls.return_value = MagicMock()
-                        resp = client.post(
-                            "/api/rematch/apply",
-                            json={
-                                "mbid": "manual-both-change",
-                                "mb_recording_id": "rec-001",
-                                "mb_album_id": "album-001",
-                                "artist_name": "NewArtist",
-                            },
-                        )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "NewAlbum"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.write_artist_tag"):
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "mbid": "manual-both-change",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                    "artist_name": "NewArtist",
+                                },
+                            )
 
     assert resp.status_code == 200
     expected_path = music_root / "NewArtist" / "NewAlbum" / "track.flac"
@@ -1476,7 +1602,9 @@ def test_rematch_apply_artist_and_album_change_moves_correctly(client, tmp_state
     assert row["file_path"] == str(expected_path)
 
 
-def test_rematch_apply_no_artist_name_keeps_existing_artist_dir(client, tmp_state_db, tmp_path):
+def test_rematch_apply_no_artist_name_keeps_existing_artist_dir(
+    client, tmp_state_db, tmp_path
+):
     """artist_name이 없으면 기존 아티스트 폴더를 유지하고 앨범 폴더만 변경된다."""
     music_root = tmp_path / "music"
     artist_dir = music_root / "ExistingArtist"
@@ -1490,34 +1618,38 @@ def test_rematch_apply_no_artist_name_keeps_existing_artist_dir(client, tmp_stat
     mark_pending(tmp_state_db, "manual-no-artist", "Track", "ExistingArtist")
     mark_done(tmp_state_db, "manual-no-artist", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "NewAlbum"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.write_artist_tag") as mock_write_artist:
-                with patch("src.api.embed_cover_art", return_value=True):
-                    with patch("src.api.threading.Thread") as mock_thread_cls:
-                        mock_thread_cls.return_value = MagicMock()
-                        resp = client.post(
-                            "/api/rematch/apply",
-                            json={
-                                "mbid": "manual-no-artist",
-                                "mb_recording_id": "rec-001",
-                                "mb_album_id": "album-001",
-                            },
-                        )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "NewAlbum"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.write_artist_tag") as mock_write_artist:
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "mbid": "manual-no-artist",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                },
+                            )
 
     assert resp.status_code == 200
     expected_path = artist_dir / "NewAlbum" / "track.flac"
     assert not dummy_audio.exists(), "앨범이 바뀌었으므로 파일이 이동되어야 한다"
-    assert expected_path.exists(), "기존 아티스트 폴더 안 새 앨범 경로에 파일이 있어야 한다"
+    assert expected_path.exists(), (
+        "기존 아티스트 폴더 안 새 앨범 경로에 파일이 있어야 한다"
+    )
     mock_write_artist.assert_not_called()
 
 
-def test_rematch_apply_removes_empty_album_dir_after_move(client, tmp_state_db, tmp_path):
+def test_rematch_apply_removes_empty_album_dir_after_move(
+    client, tmp_state_db, tmp_path
+):
     """파일 이동 후 기존 앨범 폴더가 비어있으면 삭제된다."""
     artist_dir = tmp_path / "Artist"
     old_album_dir = artist_dir / "OldAlbum"
@@ -1530,24 +1662,24 @@ def test_rematch_apply_removes_empty_album_dir_after_move(client, tmp_state_db, 
     mark_pending(tmp_state_db, "manual-rmdir", "Track", "Artist")
     mark_done(tmp_state_db, "manual-rmdir", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "NewAlbum"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.embed_cover_art", return_value=True):
-                with patch("src.api.threading.Thread") as mock_thread_cls:
-                    mock_thread_cls.return_value = MagicMock()
-                    resp = client.post(
-                        "/api/rematch/apply",
-                        json={
-                            "mbid": "manual-rmdir",
-                            "mb_recording_id": "rec-001",
-                            "mb_album_id": "album-001",
-                        },
-                    )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "NewAlbum"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-rmdir",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                            },
+                        )
 
     assert resp.status_code == 200
     assert not old_album_dir.exists(), "이동 후 빈 앨범 폴더는 삭제되어야 한다"
@@ -1567,78 +1699,82 @@ def test_rematch_apply_updates_artist_in_db_after_move(client, tmp_state_db, tmp
     mark_pending(tmp_state_db, "manual-artist-db", "Track", "OldArtist")
     mark_done(tmp_state_db, "manual-artist-db", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "Album"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.write_artist_tag"):
-                with patch("src.api.embed_cover_art", return_value=True):
-                    with patch("src.api.threading.Thread") as mock_thread_cls:
-                        mock_thread_cls.return_value = MagicMock()
-                        resp = client.post(
-                            "/api/rematch/apply",
-                            json={
-                                "mbid": "manual-artist-db",
-                                "mb_recording_id": "rec-001",
-                                "mb_album_id": "album-001",
-                                "artist_name": "NewArtist",
-                            },
-                        )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "Album"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.write_artist_tag"):
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "mbid": "manual-artist-db",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                    "artist_name": "NewArtist",
+                                },
+                            )
 
     assert resp.status_code == 200
     row = get_download_by_mbid(tmp_state_db, "manual-artist-db")
-    assert row["artist"] == "NewArtist", "state.db의 artist 컬럼이 NewArtist로 업데이트되어야 한다"
+    assert row["artist"] == "NewArtist", (
+        "state.db의 artist 컬럼이 NewArtist로 업데이트되어야 한다"
+    )
 
 
-# ── _resolve_dir 단위 테스트 ──────────────────────────────────────────────────
+# ── resolve_dir 단위 테스트 ──────────────────────────────────────────────────
 
 
 def test_resolve_dir_reuses_existing_case_insensitive_folder(tmp_path):
     """parent 안에 대소문자만 다른 폴더가 있으면 그 실제 이름을 반환한다."""
-    from src.api import _resolve_dir
+    from src.utils.fs import resolve_dir
 
     existing = tmp_path / "Eminem"
     existing.mkdir()
 
-    result = _resolve_dir(str(tmp_path), "eminem")
+    result = resolve_dir(str(tmp_path), "eminem")
     assert result == "Eminem"
 
 
 def test_resolve_dir_returns_sanitized_when_no_match(tmp_path):
     """일치하는 폴더가 없으면 sanitize된 name을 그대로 반환한다."""
-    from src.api import _resolve_dir
+    from src.utils.fs import resolve_dir
 
-    result = _resolve_dir(str(tmp_path), "NewArtist")
+    result = resolve_dir(str(tmp_path), "NewArtist")
     assert result == "NewArtist"
 
 
 def test_resolve_dir_returns_sanitized_when_parent_not_exist(tmp_path):
     """parent 디렉토리 자체가 없으면 sanitize된 name을 반환한다."""
-    from src.api import _resolve_dir
+    from src.utils.fs import resolve_dir
 
     nonexistent = str(tmp_path / "no_such_dir")
-    result = _resolve_dir(nonexistent, "SomeArtist")
+    result = resolve_dir(nonexistent, "SomeArtist")
     assert result == "SomeArtist"
 
 
 def test_resolve_dir_does_not_match_file(tmp_path):
     """파일(디렉토리가 아님)은 매칭 대상에서 제외된다."""
-    from src.api import _resolve_dir
+    from src.utils.fs import resolve_dir
 
     file_entry = tmp_path / "eminem"
     file_entry.write_text("not a dir")
 
-    result = _resolve_dir(str(tmp_path), "Eminem")
+    result = resolve_dir(str(tmp_path), "Eminem")
     assert result == "Eminem"
 
 
 # ── case-insensitive 폴더 충돌 방지 통합 테스트 ──────────────────────────────
 
 
-def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(client, tmp_state_db, tmp_path):
+def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(
+    client, tmp_state_db, tmp_path
+):
     """artist_name의 대소문자가 기존 폴더와 달라도 기존 폴더를 재사용한다."""
     music_root = tmp_path / "music"
     existing_artist_dir = music_root / "Eminem"
@@ -1652,26 +1788,26 @@ def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(client, tmp_s
     mark_pending(tmp_state_db, "manual-case-artist", "Track", "Eminem")
     mark_done(tmp_state_db, "manual-case-artist", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "NewAlbum"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.write_artist_tag"):
-                with patch("src.api.embed_cover_art", return_value=True):
-                    with patch("src.api.threading.Thread") as mock_thread_cls:
-                        mock_thread_cls.return_value = MagicMock()
-                        resp = client.post(
-                            "/api/rematch/apply",
-                            json={
-                                "mbid": "manual-case-artist",
-                                "mb_recording_id": "rec-001",
-                                "mb_album_id": "album-001",
-                                "artist_name": "eminem",
-                            },
-                        )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "NewAlbum"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.write_artist_tag"):
+                    with patch("src.api.embed_cover_art", return_value=True):
+                        with patch("src.api.threading.Thread") as mock_thread_cls:
+                            mock_thread_cls.return_value = MagicMock()
+                            resp = client.post(
+                                "/api/rematch/apply",
+                                json={
+                                    "mbid": "manual-case-artist",
+                                    "mb_recording_id": "rec-001",
+                                    "mb_album_id": "album-001",
+                                    "artist_name": "eminem",
+                                },
+                            )
 
     assert resp.status_code == 200
     # 기존 "Eminem" 폴더를 재사용해야 한다 (대소문자 불일치 입력 "eminem"이 들어와도)
@@ -1682,10 +1818,14 @@ def test_rematch_apply_reuses_existing_artist_dir_case_insensitive(client, tmp_s
     import platform
 
     if platform.system() == "Linux":
-        assert not (music_root / "eminem").exists(), "Linux: 새 소문자 폴더가 생기면 안 된다"
+        assert not (music_root / "eminem").exists(), (
+            "Linux: 새 소문자 폴더가 생기면 안 된다"
+        )
 
 
-def test_rematch_apply_reuses_existing_album_dir_case_insensitive(client, tmp_state_db, tmp_path):
+def test_rematch_apply_reuses_existing_album_dir_case_insensitive(
+    client, tmp_state_db, tmp_path
+):
     """album_name의 대소문자가 기존 폴더와 달라도 기존 앨범 폴더를 재사용한다."""
     music_root = tmp_path / "music"
     artist_dir = music_root / "Artist"
@@ -1701,24 +1841,24 @@ def test_rematch_apply_reuses_existing_album_dir_case_insensitive(client, tmp_st
     mark_pending(tmp_state_db, "manual-case-album", "Track", "Artist")
     mark_done(tmp_state_db, "manual-case-album", file_path=str(dummy_audio))
 
-    with patch("src.api.requests.get") as mock_get:
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=MagicMock(return_value={"title": "the marshall mathers lp"}),
-            raise_for_status=MagicMock(),
-        )
-        with patch("src.api.write_album_tag"):
-            with patch("src.api.embed_cover_art", return_value=True):
-                with patch("src.api.threading.Thread") as mock_thread_cls:
-                    mock_thread_cls.return_value = MagicMock()
-                    resp = client.post(
-                        "/api/rematch/apply",
-                        json={
-                            "mbid": "manual-case-album",
-                            "mb_recording_id": "rec-001",
-                            "mb_album_id": "album-001",
-                        },
-                    )
+    patcher, _ = _patch_http_client_get(
+        client,
+        return_value=_httpx_response({"title": "the marshall mathers lp"}),
+    )
+    with patcher:
+        with patch("src.api.asyncio.sleep", new_callable=AsyncMock):
+            with patch("src.api.write_album_tag"):
+                with patch("src.api.embed_cover_art", return_value=True):
+                    with patch("src.api.threading.Thread") as mock_thread_cls:
+                        mock_thread_cls.return_value = MagicMock()
+                        resp = client.post(
+                            "/api/rematch/apply",
+                            json={
+                                "mbid": "manual-case-album",
+                                "mb_recording_id": "rec-001",
+                                "mb_album_id": "album-001",
+                            },
+                        )
 
     assert resp.status_code == 200
     # 기존 "The Marshall Mathers LP" 폴더를 재사용해야 한다

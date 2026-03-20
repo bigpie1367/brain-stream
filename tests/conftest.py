@@ -92,7 +92,9 @@ def client(tmp_state_db, tmp_path, monkeypatch):
         listenbrainz=ListenBrainzConfig(username="test_user", token="test_token"),
         download=DownloadConfig(staging_dir=staging_dir),
         beets=BeetsConfig(music_dir=music_dir),
-        navidrome=NavidromeConfig(url="http://localhost:4533", username="admin", password="pass"),
+        navidrome=NavidromeConfig(
+            url="http://localhost:4533", username="admin", password="pass"
+        ),
         scheduler=SchedulerConfig(interval_hours=6),
         state_db=tmp_state_db,
         log_level="INFO",
@@ -109,8 +111,19 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     # Rate limit store 초기화 (테스트 간 429 오염 방지)
     api_module._rate_store.clear()
 
+    # lifespan이 TestClient 밖에서 http_client를 설정하지 않으므로 직접 주입
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_http_client = MagicMock()
+    mock_http_client.get = AsyncMock()
+    mock_http_client.aclose = AsyncMock()
+    api_module.app.state.http_client = mock_http_client
+
     yield TestClient(api_module.app, raise_server_exceptions=True)
 
     # 픽스처 해제: 원래 _cfg 복원
     api_module._cfg = original_cfg
     worker_module._job_queues.clear()
+    # http_client 정리
+    if hasattr(api_module.app.state, "http_client"):
+        del api_module.app.state.http_client
