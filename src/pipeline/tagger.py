@@ -142,22 +142,22 @@ def _write_single_tag(file_path: str, key_name: str, value: str):
         log.warning(f"could not write {key_name} tag", file=file_path, error=str(exc))
 
 
-def _write_mb_trackid_tag(file_path: str, recording_id: str):
+def write_mb_trackid_tag(file_path: str, recording_id: str):
     """Write MusicBrainz recording ID (mb_trackid) tag to audio file."""
     _write_single_tag(file_path, "mb_trackid", recording_id)
 
 
-def _write_album_tag(file_path: str, album: str):
+def write_album_tag(file_path: str, album: str):
     """Write album tag to audio file using mutagen."""
     _write_single_tag(file_path, "album", album)
 
 
-def _write_artist_tag(file_path: str, artist: str):
+def write_artist_tag(file_path: str, artist: str):
     """Write artist tag to audio file using mutagen."""
     _write_single_tag(file_path, "artist", artist)
 
 
-def _write_title_tag(file_path: str, title: str):
+def write_title_tag(file_path: str, title: str):
     """Write title tag to audio file using mutagen."""
     _write_single_tag(file_path, "title", title)
 
@@ -225,7 +225,7 @@ def _pretag(path: Path, artist: str, track_name: str):
     _write_tags(str(path), artist, track_name)
 
 
-def _itunes_search(artist: str, track_name: str, country: str | None = None) -> dict:
+def itunes_search(artist: str, track_name: str, country: str | None = None) -> dict:
     """Search iTunes Search API for album name and cover art URL.
 
     Returns {"album": str, "artwork_url": str} or empty dict on failure.
@@ -290,7 +290,7 @@ def _itunes_search(artist: str, track_name: str, country: str | None = None) -> 
     return {}
 
 
-def _deezer_search(artist: str, track_name: str) -> dict:
+def deezer_search(artist: str, track_name: str) -> dict:
     """Search Deezer API for album name and cover art URL.
 
     Returns {"album": str, "artwork_url": str} or empty dict on failure.
@@ -350,7 +350,7 @@ def _deezer_search(artist: str, track_name: str) -> dict:
         return {}
 
 
-def _embed_cover_art(file_path: str, mb_albumid: str) -> bool:
+def embed_cover_art(file_path: str, mb_albumid: str) -> bool:
     """Download front cover from Cover Art Archive and embed into audio file.
 
     Returns True on success, False on failure (404, network error, etc.).
@@ -406,7 +406,7 @@ def _primary_artist(artist: str) -> str:
     return result.strip()
 
 
-def _embed_art_from_url(file_path: str, url: str) -> bool:
+def embed_art_from_url(file_path: str, url: str) -> bool:
     """Download image from URL and embed into audio file.
 
     Returns True on success, False on failure.
@@ -473,7 +473,7 @@ def _enrich_track(
 
     if not has_album and artist and track_name:
         # iTunes (most reliable for album names)
-        itunes_result = _itunes_search(artist, track_name)
+        itunes_result = itunes_search(artist, track_name)
         album = itunes_result.get("album", "")
         if album:
             canonical_artist = itunes_result.get("artistName", "")
@@ -497,7 +497,7 @@ def _enrich_track(
 
         # Deezer fallback
         if not album:
-            deezer_result = _deezer_search(artist, track_name)
+            deezer_result = deezer_search(artist, track_name)
             album = deezer_result.get("album", "")
             if album:
                 canonical_artist = deezer_result.get("artistName", "")
@@ -573,13 +573,13 @@ def _enrich_track(
 
     if album and not has_album:
         log.info("setting album tag", artist=artist, track=track_name, album=album)
-        _write_album_tag(dest_path, album)
+        write_album_tag(dest_path, album)
 
     # ── 4. Cover art: CAA → iTunes → Deezer → YouTube thumbnail ─────────
     art_embedded = False
     if not has_art and mb_albumid_candidates:
         for candidate_id in mb_albumid_candidates:
-            if _embed_cover_art(dest_path, candidate_id):
+            if embed_cover_art(dest_path, candidate_id):
                 art_embedded = True
                 break
         if art_embedded:
@@ -589,7 +589,7 @@ def _enrich_track(
         # iTunes art
         if not art_embedded:
             if not itunes_result and artist and track_name:
-                itunes_result = _itunes_search(artist, track_name)
+                itunes_result = itunes_search(artist, track_name)
                 if not canonical_artist:
                     canonical_artist = itunes_result.get("artistName", "")
             itunes_art = itunes_result.get("artwork_url", "")
@@ -597,13 +597,13 @@ def _enrich_track(
                 log.info(
                     "embedding cover art from iTunes", artist=artist, track=track_name
                 )
-                _embed_art_from_url(dest_path, itunes_art)
+                embed_art_from_url(dest_path, itunes_art)
                 art_embedded = True
 
         # Deezer art
         if not art_embedded:
             if not deezer_result and artist and track_name:
-                deezer_result = _deezer_search(artist, track_name)
+                deezer_result = deezer_search(artist, track_name)
                 if not canonical_artist:
                     canonical_artist = deezer_result.get("artistName", "")
             deezer_art = deezer_result.get("artwork_url", "")
@@ -611,7 +611,7 @@ def _enrich_track(
                 log.info(
                     "embedding cover art from Deezer", artist=artist, track=track_name
                 )
-                _embed_art_from_url(dest_path, deezer_art)
+                embed_art_from_url(dest_path, deezer_art)
                 art_embedded = True
 
         # YouTube thumbnail — last resort
@@ -623,7 +623,7 @@ def _enrich_track(
                     artist=artist,
                     track=track_name,
                 )
-                _embed_art_from_url(dest_path, thumbnail_url)
+                embed_art_from_url(dest_path, thumbnail_url)
 
     return album, canonical_artist, canonical_title
 
@@ -780,14 +780,3 @@ def _cleanup_staging(path: Path):
         log.debug("staging file removed", file=str(path))
     except OSError as exc:
         log.warning("could not remove staging file", error=str(exc))
-
-
-# Public aliases for use by api.py (rematch endpoints)
-embed_cover_art = _embed_cover_art
-embed_art_from_url = _embed_art_from_url
-write_album_tag = _write_album_tag
-write_artist_tag = _write_artist_tag
-write_title_tag = _write_title_tag
-write_mb_trackid_tag = _write_mb_trackid_tag
-itunes_search = _itunes_search
-deezer_search = _deezer_search

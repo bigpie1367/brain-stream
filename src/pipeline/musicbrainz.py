@@ -1,14 +1,35 @@
 """MusicBrainz API client — shared constants, lookup, and search functions."""
 
 import difflib
+import re
 import time
 
 import requests
 
-from src.pipeline.tagger import _is_live_title, _normalize_for_match
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+
+# ── Shared utility functions (duplicated from tagger.py to avoid circular import) ──
+
+
+def _normalize_for_match(s: str) -> str:
+    """Lowercase and strip non-alphanumeric characters for fuzzy comparison."""
+    return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
+
+
+_LIVE_TITLE_RE = re.compile(r"\d{4}-\d{2}-\d{2}[,:]")
+_LIVE_TITLE_KEYWORDS = ("live", "concert", "festival", "bootleg", "unplugged")
+
+
+def _is_live_title(title: str) -> bool:
+    """Return True if the release title looks like a live event."""
+    if _LIVE_TITLE_RE.search(title):
+        return True
+    lower = title.lower()
+    return any(kw in lower for kw in _LIVE_TITLE_KEYWORDS)
+
 
 MB_API = "https://musicbrainz.org/ws/2"
 MB_HEADERS = {
