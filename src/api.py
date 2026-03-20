@@ -654,21 +654,6 @@ async def rematch_apply(req: RematchApplyRequest, request: Request):
         except Exception as exc:
             log.warning("rematch_apply: failed to remove empty dirs", error=str(exc))
 
-        if req.mbid is not None:
-            try:
-                update_track_info(
-                    _cfg.state_db,
-                    req.mbid,
-                    artist=req.artist_name if req.artist_name else None,
-                    file_path=file_path,
-                )
-            except Exception as exc:
-                log.warning(
-                    "rematch_apply: state.db update failed",
-                    mbid=req.mbid,
-                    error=str(exc),
-                )
-
     # 4. Embed cover art
     if req.mb_album_id:
         art_ok = embed_cover_art(file_path, req.mb_album_id)
@@ -685,12 +670,14 @@ async def rematch_apply(req: RematchApplyRequest, request: Request):
                 cover_url=req.cover_url,
             )
 
-    # 4-1. Update album (and optionally mb_recording_id) in state.db
+    # 4-1. Update artist, file_path, album, and mb_recording_id in state.db
     if req.mbid is not None:
         try:
             update_track_info(
                 _cfg.state_db,
                 req.mbid,
+                artist=req.artist_name if req.artist_name else None,
+                file_path=file_path,
                 album=album_name,
                 mb_recording_id=req.mb_recording_id if req.mb_recording_id else None,
             )
