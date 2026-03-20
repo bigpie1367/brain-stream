@@ -51,7 +51,8 @@ def lookup_recording(mbid: str) -> dict:
 | `tagger.py` | `_MB_API`, `_MB_HEADERS` 상수 (line 18-19), `_lookup_recording_by_mbid` 함수 | `from src.pipeline.musicbrainz import MB_API, MB_HEADERS, lookup_recording` |
 | `downloader.py` | `_MB_API`, `_MB_HEADERS` 상수 (line 32-33) | `from src.pipeline.musicbrainz import MB_API, MB_HEADERS` |
 | `listenbrainz.py` | `_MB_API`, `_MB_HEADERS` 상수 (line 11-12), `_lookup_recording` 함수 | `from src.pipeline.musicbrainz import MB_API, MB_HEADERS, lookup_recording` |
-| `api.py` | `_MB_API`, `_MB_HEADERS` (rematch_apply line 731-732), `_MB_SEARCH_HEADERS` (line 498) | `from src.pipeline.musicbrainz import MB_API, MB_HEADERS` |
+| `api.py` | `_MB_API`, `_MB_HEADERS` (rematch_apply 내 로컬 변수), `_MB_SEARCH_HEADERS` | `from src.pipeline.musicbrainz import MB_API, MB_HEADERS` |
+| `main.py` | `from src.pipeline.listenbrainz import _lookup_recording` | `from src.pipeline.musicbrainz import lookup_recording` (호출처 `_lookup_recording(mbid)` → `lookup_recording(mbid)`) |
 
 api.py의 `_MB_SEARCH_URL` (line 497)도 `musicbrainz.py`로 이동:
 ```python
@@ -95,7 +96,7 @@ from src.pipeline.tagger import (
     tag_and_import, write_album_tag, write_artist_tag,
     write_mb_trackid_tag, write_title_tag,
 )
-from src.pipeline.musicbrainz import MB_API, MB_HEADERS, mb_search_recording
+from src.pipeline.musicbrainz import MB_API, MB_HEADERS
 ```
 
 ---
