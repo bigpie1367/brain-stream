@@ -17,12 +17,21 @@ import mutagen.flac
 import mutagen.oggopus
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import src.worker as worker
-from src.pipeline.downloader import download_track, download_track_by_id, search_candidates
+from src.pipeline.downloader import (
+    download_track,
+    download_track_by_id,
+    search_candidates,
+)
 from src.pipeline.navidrome import trigger_scan, wait_for_scan
 from src.pipeline.tagger import (
     embed_art_from_url,
@@ -48,7 +57,15 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-app = FastAPI(title="Music Bot")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    app.state.http_client = httpx.AsyncClient(timeout=60.0)
+    yield
+    await app.state.http_client.aclose()
+
+
+app = FastAPI(title="Music Bot", lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory="src/static"), name="static")
 
 # ── Rate Limiting ──────────────────────────────────────────────────────────
@@ -145,14 +162,26 @@ def _run_download_job(cfg, job_spec: dict):
         # Fix 3: copy2 완료 후 mark_done 직전 크래시 대응
         # file_path가 이미 기록되어 있고 파일도 존재하면 다운로드/태깅 스킵
         existing = get_download_by_mbid(cfg.state_db, mbid)
-        if existing and existing.get("file_path") and os.path.exists(existing["file_path"]):
+        if (
+            existing
+            and existing.get("file_path")
+            and os.path.exists(existing["file_path"])
+        ):
             log.info(
-                "file already exists, skipping download", mbid=mbid, path=existing["file_path"]
+                "file already exists, skipping download",
+                mbid=mbid,
+                path=existing["file_path"],
             )
-            mark_done(cfg.state_db, mbid, existing["file_path"], album=existing.get("album"))
+            mark_done(
+                cfg.state_db, mbid, existing["file_path"], album=existing.get("album")
+            )
             worker.emit(job_id, "scanning", "Navidrome 스캔 중...")
-            if trigger_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password):
-                wait_for_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password)
+            if trigger_scan(
+                cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password
+            ):
+                wait_for_scan(
+                    cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password
+                )
             worker.emit(job_id, "done", "완료")
             return
 
@@ -187,16 +216,21 @@ def _run_download_job(cfg, job_spec: dict):
             return
 
         worker.emit(job_id, "tagging", "태깅 중...")
-        success, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id = (
-            tag_and_import(
-                file_path,
-                cfg.beets.music_dir,
-                artist=artist,
-                track_name=track,
-                yt_metadata=yt_metadata,
-                db_path=cfg.state_db,
-                mbid=mbid,
-            )
+        (
+            success,
+            dest_path,
+            canonical_artist,
+            canonical_title,
+            canonical_album,
+            mb_recording_id,
+        ) = tag_and_import(
+            file_path,
+            cfg.beets.music_dir,
+            artist=artist,
+            track_name=track,
+            yt_metadata=yt_metadata,
+            db_path=cfg.state_db,
+            mbid=mbid,
         )
         if not success:
             mark_failed(cfg.state_db, mbid, "tagging failed")
@@ -211,21 +245,34 @@ def _run_download_job(cfg, job_spec: dict):
         )
 
         # LB 트랙은 mbid 자체가 MB recording UUID이므로 tagger 반환값 대신 mbid 우선 사용
-        final_mb_recording_id = mbid if not mbid.startswith("manual-") else mb_recording_id
+        final_mb_recording_id = (
+            mbid if not mbid.startswith("manual-") else mb_recording_id
+        )
 
-        if canonical_artist or canonical_title or canonical_album or final_mb_recording_id:
+        if (
+            canonical_artist
+            or canonical_title
+            or canonical_album
+            or final_mb_recording_id
+        ):
             update_track_info(
                 cfg.state_db,
                 mbid,
                 artist=canonical_artist if canonical_artist else None,
                 track_name=canonical_title if canonical_title else None,
                 album=canonical_album if canonical_album else None,
-                mb_recording_id=final_mb_recording_id if final_mb_recording_id else None,
+                mb_recording_id=final_mb_recording_id
+                if final_mb_recording_id
+                else None,
             )
 
         worker.emit(job_id, "scanning", "Navidrome 스캔 중...")
-        if trigger_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password):
-            wait_for_scan(cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password)
+        if trigger_scan(
+            cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password
+        ):
+            wait_for_scan(
+                cfg.navidrome.url, cfg.navidrome.username, cfg.navidrome.password
+            )
 
         worker.emit(job_id, "done", "완료")
 
@@ -374,7 +421,9 @@ async def get_download_detail(mbid: str):
                 pics = audio.pictures
                 if pics:
                     pic = pics[0]
-                    cover_art = f"data:{pic.mime};base64,{base64.b64encode(pic.data).decode()}"
+                    cover_art = (
+                        f"data:{pic.mime};base64,{base64.b64encode(pic.data).decode()}"
+                    )
             except Exception:
                 cover_art = None
         elif lower.endswith(".opus") or lower.endswith(".ogg"):
@@ -389,7 +438,9 @@ async def get_download_detail(mbid: str):
                 raw = audio.get("METADATA_BLOCK_PICTURE", [None])[0]
                 if raw:
                     pic = mutagen.flac.Picture(base64.b64decode(raw))
-                    cover_art = f"data:{pic.mime};base64,{base64.b64encode(pic.data).decode()}"
+                    cover_art = (
+                        f"data:{pic.mime};base64,{base64.b64encode(pic.data).decode()}"
+                    )
             except Exception:
                 cover_art = None
     except Exception:
@@ -639,9 +690,13 @@ async def rematch_apply(req: RematchApplyRequest):
             raise HTTPException(status_code=404, detail=f"mbid not found: {req.mbid}")
         file_path = record.get("file_path")
         if not file_path:
-            raise HTTPException(status_code=500, detail="file_path not recorded in state.db")
+            raise HTTPException(
+                status_code=500, detail="file_path not recorded in state.db"
+            )
         if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"audio file not found: {file_path}")
+            raise HTTPException(
+                status_code=404, detail=f"audio file not found: {file_path}"
+            )
     else:
         # Navidrome 탭에서 호출: getSong으로 경로 조회
         try:
@@ -652,7 +707,9 @@ async def rematch_apply(req: RematchApplyRequest):
                 req.song_id,
             )
         except Exception as exc:
-            log.error("rematch_apply: getSong failed", song_id=req.song_id, error=str(exc))
+            log.error(
+                "rematch_apply: getSong failed", song_id=req.song_id, error=str(exc)
+            )
             raise HTTPException(status_code=500, detail=f"getSong failed: {exc}")
 
         raw_path = song.get("path", "")
@@ -665,7 +722,9 @@ async def rematch_apply(req: RematchApplyRequest):
         else:
             file_path = f"/app/data/music/{raw_path}"
         if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"audio file not found: {file_path}")
+            raise HTTPException(
+                status_code=404, detail=f"audio file not found: {file_path}"
+            )
 
     # 2. Fetch album name
     _MB_API = "https://musicbrainz.org/ws/2"
@@ -688,21 +747,26 @@ async def rematch_apply(req: RematchApplyRequest):
                 mb_album_id=req.mb_album_id,
                 error=str(exc),
             )
-            raise HTTPException(status_code=500, detail=f"MB release lookup failed: {exc}")
+            raise HTTPException(
+                status_code=500, detail=f"MB release lookup failed: {exc}"
+            )
         if not album_name:
             raise HTTPException(status_code=500, detail="MB release returned no title")
     else:
         album_name = req.album_name
         if not album_name:
             raise HTTPException(
-                status_code=422, detail="album_name is required when mb_album_id is empty"
+                status_code=422,
+                detail="album_name is required when mb_album_id is empty",
             )
 
     # 3. Rewrite album tag (mb_albumid NOT written — prevents Navidrome album split)
     try:
         write_album_tag(file_path, album_name)
     except Exception as exc:
-        log.error("rematch_apply: write_album_tag failed", file=file_path, error=str(exc))
+        log.error(
+            "rematch_apply: write_album_tag failed", file=file_path, error=str(exc)
+        )
         raise HTTPException(status_code=500, detail=f"tag write failed: {exc}")
 
     # 3-mb. Write mb_trackid tag if mb_recording_id is provided
@@ -731,7 +795,9 @@ async def rematch_apply(req: RematchApplyRequest):
     else:
         new_artist_dir = current_artist_dir
 
-    new_album_dir = os.path.join(new_artist_dir, _resolve_dir(new_artist_dir, album_name))
+    new_album_dir = os.path.join(
+        new_artist_dir, _resolve_dir(new_artist_dir, album_name)
+    )
     new_file_path = os.path.join(new_album_dir, filename)
 
     if new_file_path != file_path:
@@ -753,7 +819,9 @@ async def rematch_apply(req: RematchApplyRequest):
             if os.path.isdir(old_album_dir) and not os.listdir(old_album_dir):
                 os.rmdir(old_album_dir)
                 # 상위 아티스트 폴더도 비어있으면 삭제
-                if os.path.isdir(current_artist_dir) and not os.listdir(current_artist_dir):
+                if os.path.isdir(current_artist_dir) and not os.listdir(
+                    current_artist_dir
+                ):
                     os.rmdir(current_artist_dir)
         except Exception as exc:
             log.warning("rematch_apply: failed to remove empty dirs", error=str(exc))
@@ -842,13 +910,17 @@ async def edit_metadata(song_id: str, req: EditRequest):
     if not old_file_path:
         raise HTTPException(status_code=404, detail="file_path is not recorded")
     if not os.path.exists(old_file_path):
-        raise HTTPException(status_code=404, detail=f"audio file not found: {old_file_path}")
+        raise HTTPException(
+            status_code=404, detail=f"audio file not found: {old_file_path}"
+        )
 
     # 2. Resolve final values (None → keep existing; DB NULL treated as "")
     new_artist = req.artist if req.artist is not None else (record.get("artist") or "")
     new_album = req.album if req.album is not None else (record.get("album") or "")
     new_track_name = (
-        req.track_name if req.track_name is not None else (record.get("track_name") or "")
+        req.track_name
+        if req.track_name is not None
+        else (record.get("track_name") or "")
     )
 
     # 3. No-op if nothing changed
@@ -886,7 +958,9 @@ async def edit_metadata(song_id: str, req: EditRequest):
             os.makedirs(new_album_dir, exist_ok=True)
             shutil.move(old_file_path, new_file_path)
         except Exception as exc:
-            log.error("edit_metadata: file move failed", song_id=song_id, error=str(exc))
+            log.error(
+                "edit_metadata: file move failed", song_id=song_id, error=str(exc)
+            )
             raise HTTPException(status_code=500, detail=f"file move failed: {exc}")
 
         # 빈 폴더 정리 (앨범 → 아티스트 순)
@@ -913,7 +987,9 @@ async def edit_metadata(song_id: str, req: EditRequest):
             file_path=final_file_path,
         )
     except Exception as exc:
-        log.warning("edit_metadata: state.db update failed", song_id=song_id, error=str(exc))
+        log.warning(
+            "edit_metadata: state.db update failed", song_id=song_id, error=str(exc)
+        )
 
     # 7. Trigger Navidrome rescan (fire-and-forget)
     threading.Thread(
@@ -972,11 +1048,13 @@ async def subsonic_proxy(path: str, request: Request):
     target_url = f"{_cfg.navidrome.url.rstrip('/')}/rest/{path}"
 
     # 포워딩할 요청 헤더 필터링 (hop-by-hop 제외)
-    forward_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    forward_headers = {
+        k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
+    }
 
     request_body = await request.body()
 
-    client = httpx.AsyncClient(timeout=60.0)
+    client = request.app.state.http_client
     try:
         upstream = await client.send(
             client.build_request(
@@ -989,16 +1067,16 @@ async def subsonic_proxy(path: str, request: Request):
             stream=True,
         )
     except httpx.ConnectError:
-        await client.aclose()
         log.error("subsonic proxy: navidrome connection failed", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome unavailable")
     except httpx.TimeoutException:
-        await client.aclose()
         log.error("subsonic proxy: navidrome request timed out", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome request timed out")
 
     response_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP_RESPONSE
+        k: v
+        for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP_RESPONSE
     }
 
     async def generate():
@@ -1007,7 +1085,6 @@ async def subsonic_proxy(path: str, request: Request):
                 yield chunk
         finally:
             await upstream.aclose()
-            await client.aclose()
 
     return StreamingResponse(
         generate(),
@@ -1041,30 +1118,32 @@ async def subsonic_authed_proxy(path: str, request: Request):
 
     # 클라이언트 쿼리 파라미터에서 인증 관련 키 제거 후 auth_params와 합산
     client_params = {
-        k: v for k, v in request.query_params.items() if k.lower() not in _SUBSONIC_AUTH_PARAMS
+        k: v
+        for k, v in request.query_params.items()
+        if k.lower() not in _SUBSONIC_AUTH_PARAMS
     }
     # 클라이언트가 f(format)를 명시하면 덮어쓰기 허용; 아니면 json 기본값 사용
     merged_params = {**auth_params, **client_params}
 
     target_url = f"{_cfg.navidrome.url.rstrip('/')}/rest/{path}"
 
-    client = httpx.AsyncClient(timeout=60.0)
+    client = request.app.state.http_client
     try:
         upstream = await client.send(
             client.build_request("GET", target_url, params=merged_params),
             stream=True,
         )
     except httpx.ConnectError:
-        await client.aclose()
         log.error("subsonic authed proxy: navidrome connection failed", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome unavailable")
     except httpx.TimeoutException:
-        await client.aclose()
         log.error("subsonic authed proxy: navidrome request timed out", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome request timed out")
 
     response_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP_RESPONSE
+        k: v
+        for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP_RESPONSE
     }
 
     async def generate():
@@ -1073,7 +1152,6 @@ async def subsonic_authed_proxy(path: str, request: Request):
                 yield chunk
         finally:
             await upstream.aclose()
-            await client.aclose()
 
     return StreamingResponse(
         generate(),
@@ -1101,11 +1179,13 @@ async def navidrome_proxy(path: str, request: Request):
     """Navidrome 웹 UI 투명 프록시. 인증 주입 없이 요청을 그대로 전달한다."""
     target_url = f"{_NAVIDROME_BASE}/navidrome/{path}"
 
-    forward_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    forward_headers = {
+        k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
+    }
 
     request_body = await request.body()
 
-    client = httpx.AsyncClient(timeout=60.0)
+    client = request.app.state.http_client
     try:
         upstream = await client.send(
             client.build_request(
@@ -1118,16 +1198,16 @@ async def navidrome_proxy(path: str, request: Request):
             stream=True,
         )
     except httpx.ConnectError:
-        await client.aclose()
         log.error("navidrome proxy: connection failed", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome unavailable")
     except httpx.TimeoutException:
-        await client.aclose()
         log.error("navidrome proxy: request timed out", url=target_url)
         raise HTTPException(status_code=503, detail="navidrome request timed out")
 
     response_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP_RESPONSE
+        k: v
+        for k, v in upstream.headers.items()
+        if k.lower() not in _HOP_BY_HOP_RESPONSE
     }
 
     # 리다이렉트 응답: Location의 내부 주소를 /navidrome 경로로 재작성
@@ -1140,7 +1220,6 @@ async def navidrome_proxy(path: str, request: Request):
         if location.startswith("/") and not location.startswith("/navidrome"):
             location = "/navidrome" + location
         await upstream.aclose()
-        await client.aclose()
         return RedirectResponse(url=location, status_code=upstream.status_code)
 
     async def generate():
@@ -1149,7 +1228,6 @@ async def navidrome_proxy(path: str, request: Request):
                 yield chunk
         finally:
             await upstream.aclose()
-            await client.aclose()
 
     return StreamingResponse(
         generate(),
