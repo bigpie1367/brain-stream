@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import secrets
-import shutil
 import threading
 import time
 import uuid
@@ -44,7 +43,7 @@ from src.state import (
     mark_pending,
     update_track_info,
 )
-from src.utils.fs import sanitize_path_component
+from src.utils.fs import move_to_music_dir, resolve_dir, sanitize_path_component
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -482,18 +481,6 @@ async def rematch_search(
     return {"candidates": candidates}
 
 
-def _resolve_dir(parent: str, name: str) -> str:
-    """대소문자 무시 기준으로 parent 안에 name과 동일한 폴더가 있으면 그 실제 이름 반환.
-    없으면 sanitize된 name 그대로 반환."""
-    sanitized = sanitize_path_component(name)
-    if os.path.isdir(parent):
-        lower = sanitized.lower()
-        for entry in os.listdir(parent):
-            if entry.lower() == lower and os.path.isdir(os.path.join(parent, entry)):
-                return entry
-    return sanitized
-
-
 async def _navidrome_get_song(
     client: httpx.AsyncClient, url: str, username: str, password: str, song_id: str
 ) -> dict:
@@ -643,27 +630,20 @@ async def rematch_apply(req: RematchApplyRequest, request: Request):
     current_artist_dir = os.path.dirname(old_album_dir)
     music_root = os.path.dirname(current_artist_dir)
 
-    if req.artist_name:
-        new_artist_name = _resolve_dir(music_root, req.artist_name)
-        new_artist_dir = os.path.join(music_root, new_artist_name)
-    else:
-        new_artist_dir = current_artist_dir
-
-    new_album_dir = os.path.join(
-        new_artist_dir, _resolve_dir(new_artist_dir, album_name)
+    artist_for_move = (
+        req.artist_name if req.artist_name else os.path.basename(current_artist_dir)
     )
-    new_file_path = os.path.join(new_album_dir, filename)
+    expected_artist = resolve_dir(music_root, artist_for_move)
+    expected_album = resolve_dir(os.path.join(music_root, expected_artist), album_name)
+    expected_path = os.path.join(music_root, expected_artist, expected_album, filename)
 
-    if new_file_path != file_path:
+    if expected_path != file_path:
         try:
-            os.makedirs(new_album_dir, exist_ok=True)
-            shutil.move(file_path, new_file_path)
-            file_path = new_file_path
-            log.info(
-                "rematch_apply: file moved to new album dir",
-                new_path=file_path,
-                album=album_name,
+            new_file_path = move_to_music_dir(
+                file_path, music_root, artist_for_move, album_name, filename
             )
+            file_path = new_file_path
+            log.info("rematch_apply: file moved", new_path=file_path, album=album_name)
         except Exception as exc:
             log.error("rematch_apply: file move failed", error=str(exc))
             raise HTTPException(status_code=500, detail=f"file move failed: {exc}")
@@ -797,20 +777,26 @@ async def edit_metadata(song_id: str, req: EditRequest):
     # 5. Move file if artist / album / track_name changed
     ext = os.path.splitext(old_file_path)[1]
     music_root = _cfg.beets.music_dir
-    new_artist_dir = os.path.join(music_root, sanitize_path_component(new_artist))
-    new_album_dir = os.path.join(new_artist_dir, sanitize_path_component(new_album))
     new_filename = sanitize_path_component(new_track_name) + ext
-    new_file_path = os.path.join(new_album_dir, new_filename)
+    # Build expected path using case-insensitive dir matching
+    expected_artist = resolve_dir(music_root, new_artist)
+    expected_album = resolve_dir(os.path.join(music_root, expected_artist), new_album)
+    expected_path = os.path.join(
+        music_root, expected_artist, expected_album, new_filename
+    )
 
-    if new_file_path != old_file_path:
-        if os.path.exists(new_file_path):
+    if expected_path != old_file_path:
+        if os.path.exists(expected_path):
             raise HTTPException(
                 status_code=409,
-                detail=f"file already exists at new path: {new_file_path}",
+                detail=f"file already exists at new path: {expected_path}",
             )
+        old_album_dir = os.path.dirname(old_file_path)
+        old_artist_dir = os.path.dirname(old_album_dir)
         try:
-            os.makedirs(new_album_dir, exist_ok=True)
-            shutil.move(old_file_path, new_file_path)
+            new_file_path = move_to_music_dir(
+                old_file_path, music_root, new_artist, new_album, new_filename
+            )
         except Exception as exc:
             log.error(
                 "edit_metadata: file move failed", song_id=song_id, error=str(exc)
@@ -818,8 +804,6 @@ async def edit_metadata(song_id: str, req: EditRequest):
             raise HTTPException(status_code=500, detail=f"file move failed: {exc}")
 
         # 빈 폴더 정리 (앨범 → 아티스트 순)
-        old_album_dir = os.path.dirname(old_file_path)
-        old_artist_dir = os.path.dirname(old_album_dir)
         try:
             if os.path.isdir(old_album_dir) and not os.listdir(old_album_dir):
                 os.rmdir(old_album_dir)
@@ -827,8 +811,10 @@ async def edit_metadata(song_id: str, req: EditRequest):
                     os.rmdir(old_artist_dir)
         except Exception as exc:
             log.warning("edit_metadata: failed to remove empty dirs", error=str(exc))
+    else:
+        new_file_path = old_file_path
 
-    final_file_path = new_file_path if new_file_path != old_file_path else old_file_path
+    final_file_path = new_file_path
 
     # 6. Update state.db
     try:
