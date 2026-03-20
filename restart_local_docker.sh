@@ -102,10 +102,10 @@ CMD="${1:-restart}"
 
 case "$CMD" in
   restart)
+    dc down
     HOST_PORT=$(resolve_port_with_lsof)
     export HOST_PORT
     print_info
-    dc down
     dc up -d --build
     echo ""
     echo "Access at: http://localhost:${HOST_PORT}"

@@ -73,3 +73,15 @@ NOTE: Project name changed. Run 'docker compose -p brainstream-{old_name} down -
 `docs/superpowers/specs/2026-03-20-multi-worktree-compose-isolation-design.md`:
 - `.env` 자동 복사 섹션: "git rev-parse --show-toplevel로 찾은 원본 레포" → "git worktree list --porcelain으로 찾은 메인 워킹트리"로 정정
 - 포트 표시 방식 변경사항 반영
+
+### Minor 3: restart 서브커맨드 포트 결정 타이밍 (CodeRabbit PR #12)
+
+**문제:** `restart`에서 `resolve_port_with_lsof()`가 `dc down` 전에 호출되어, 자기 자신의 실행 중인 컨테이너를 포트 충돌로 오인할 수 있음.
+
+**수정:** `restart` case문에서 순서를 `dc down` → `resolve_port_with_lsof()` → `dc up`으로 변경.
+
+### Minor 4: plan 문서 코드 스니펫 불일치 (CodeRabbit PR #12)
+
+**문제:** plan 문서 line 61-63의 프로젝트명 코드 예시에 `SHORT_HASH` 변수가 누락.
+
+**수정:** `COMPOSE_PROJECT_NAME` 생성 코드에 `SHORT_HASH` 추가.
