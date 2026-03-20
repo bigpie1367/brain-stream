@@ -12,11 +12,19 @@ SANITIZED_NAME=$(echo "$WORKTREE_NAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z
 export COMPOSE_PROJECT_NAME="brainstream-${SANITIZED_NAME}"
 
 # --- Port assignment ---
-if [ -z "${HOST_PORT:-}" ]; then
+PORT_FILE="$SCRIPT_DIR/.compose-port"
+
+if [ -n "${HOST_PORT:-}" ]; then
+  # Explicit override — use it and persist
+  echo "$HOST_PORT" > "$PORT_FILE"
+elif [ -f "$PORT_FILE" ]; then
+  # Reuse previously assigned port (avoids lsof self-detection)
+  HOST_PORT=$(cat "$PORT_FILE")
+else
+  # First run — hash + lsof conflict resolution
   HASH=$(echo -n "$WORKTREE_ROOT" | cksum | awk '{print $1}')
   HOST_PORT=$(( (HASH % 919) + 8081 ))
 
-  # Auto-resolve port conflicts
   START_PORT=$HOST_PORT
   while lsof -iTCP:"$HOST_PORT" -sTCP:LISTEN -t >/dev/null 2>&1; do
     HOST_PORT=$(( HOST_PORT + 1 ))
@@ -28,6 +36,8 @@ if [ -z "${HOST_PORT:-}" ]; then
       exit 1
     fi
   done
+
+  echo "$HOST_PORT" > "$PORT_FILE"
 fi
 export HOST_PORT
 
@@ -73,6 +83,7 @@ case "$CMD" in
   stop)
     print_info
     dc down
+    rm -f "$PORT_FILE"
     ;;
   logs)
     print_info
