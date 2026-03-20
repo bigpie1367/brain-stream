@@ -160,7 +160,7 @@ Expected: `-rwxr-xr-x` (이미 실행 권한 있어야 함. 없으면 `chmod +x 
 Run: `./restart_local_docker.sh info`
 Expected output (예시):
 ```
-Project: brainstream-brain-stream
+Project: brainstream-brain-stream-xxxx
 Port:    8XXX
 ```
 
