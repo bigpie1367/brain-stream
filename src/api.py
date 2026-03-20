@@ -16,7 +16,6 @@ from typing import Optional
 import httpx
 import mutagen.flac
 import mutagen.oggopus
-import requests
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import (
     FileResponse,
@@ -500,6 +499,7 @@ _MB_SEARCH_HEADERS = {"User-Agent": "brainstream/1.0"}
 
 @app.get("/api/rematch/search")
 async def rematch_search(
+    request: Request,
     artist: str = Query(max_length=500),
     track: str = Query(max_length=500),
 ):
@@ -511,9 +511,11 @@ async def rematch_search(
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
 
+    client = request.app.state.http_client
+
     # Stage 1: strict query with artistname + recording fields
     try:
-        r = requests.get(
+        r = await client.get(
             _MB_SEARCH_URL,
             params={
                 "query": f'artistname:"{artist}" AND recording:"{track}"',
@@ -529,12 +531,12 @@ async def rematch_search(
         log.error("rematch_search: MB stage1 failed", error=str(exc))
         return {"candidates": []}
 
-    time.sleep(1)
+    await asyncio.sleep(1)
 
     # Stage 2: plain freetext query when stage 1 returns nothing
     if not recordings:
         try:
-            r = requests.get(
+            r = await client.get(
                 _MB_SEARCH_URL,
                 params={
                     "query": f"{artist} {track}",
@@ -550,7 +552,7 @@ async def rematch_search(
             log.error("rematch_search: MB stage2 failed", error=str(exc))
             return {"candidates": []}
 
-        time.sleep(1)
+        await asyncio.sleep(1)
 
     if not recordings:
         return {"candidates": []}
@@ -644,7 +646,9 @@ def _resolve_dir(parent: str, name: str) -> str:
     return sanitized
 
 
-def _navidrome_get_song(url: str, username: str, password: str, song_id: str) -> dict:
+async def _navidrome_get_song(
+    client: httpx.AsyncClient, url: str, username: str, password: str, song_id: str
+) -> dict:
     """Call Navidrome getSong and return the song dict, or raise on failure."""
     salt = secrets.token_hex(6)
     token = hashlib.md5(f"{password}{salt}".encode()).hexdigest()
@@ -658,7 +662,7 @@ def _navidrome_get_song(url: str, username: str, password: str, song_id: str) ->
         "id": song_id,
     }
     endpoint = f"{url.rstrip('/')}/rest/getSong"
-    resp = requests.get(endpoint, params=params, timeout=15)
+    resp = await client.get(endpoint, params=params, timeout=15)
     resp.raise_for_status()
     data = resp.json()
     subsonic = data.get("subsonic-response", {})
@@ -668,7 +672,7 @@ def _navidrome_get_song(url: str, username: str, password: str, song_id: str) ->
 
 
 @app.post("/api/rematch/apply")
-async def rematch_apply(req: RematchApplyRequest):
+async def rematch_apply(req: RematchApplyRequest, request: Request):
     """Apply a manual album rematch to a song file.
 
     1. Resolves the file path via state.db (mbid) or Navidrome getSong (song_id).
@@ -701,7 +705,8 @@ async def rematch_apply(req: RematchApplyRequest):
     else:
         # Navidrome 탭에서 호출: getSong으로 경로 조회
         try:
-            song = _navidrome_get_song(
+            song = await _navidrome_get_song(
+                request.app.state.http_client,
                 _cfg.navidrome.url,
                 _cfg.navidrome.username,
                 _cfg.navidrome.password,
@@ -733,8 +738,8 @@ async def rematch_apply(req: RematchApplyRequest):
 
     if req.mb_album_id:
         try:
-            time.sleep(1)  # rate limit
-            r = requests.get(
+            await asyncio.sleep(1)  # rate limit
+            r = await request.app.state.http_client.get(
                 f"{_MB_API}/release/{req.mb_album_id}",
                 params={"fmt": "json"},
                 headers=_MB_HEADERS,
