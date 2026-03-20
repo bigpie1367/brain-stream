@@ -58,12 +58,16 @@ def run_pipeline(cfg):
         # Retry tracks from state.db may have empty artist/track_name if the original
         # LB lookup failed. Re-lookup from MB if mbid is a real UUID (not "manual-").
         if (not artist or not track_name) and not mbid.startswith("manual-"):
-            log.info("retry track missing artist/track, re-looking up from MB", mbid=mbid)
+            log.info(
+                "retry track missing artist/track, re-looking up from MB", mbid=mbid
+            )
             meta = _lookup_recording(mbid)
             artist = meta.get("artist", "")
             track_name = meta.get("track_name", "")
             if not artist or not track_name:
-                log.warning("MB lookup still empty after retry, skipping track", mbid=mbid)
+                log.warning(
+                    "MB lookup still empty after retry, skipping track", mbid=mbid
+                )
                 mark_failed(cfg.state_db, mbid, "MB lookup returned empty artist/track")
                 continue
 
@@ -121,11 +125,11 @@ def main():
     api_module._cfg = cfg
 
     # Worker thread (single, sequential — non-daemon for graceful shutdown)
-    from src.api import _run_download_job
+    from src.jobs import run_download_job
 
     worker_thread = threading.Thread(
         target=worker_module.worker_loop,
-        args=(cfg, _run_download_job),
+        args=(cfg, run_download_job),
         daemon=False,
         name="worker",
     )
