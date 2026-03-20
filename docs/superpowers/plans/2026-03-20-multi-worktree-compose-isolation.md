@@ -58,9 +58,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$SCRIPT_DIR")
 WORKTREE_NAME=$(basename "$WORKTREE_ROOT")
 
-# --- Project name (sanitized) ---
+# --- Project name (sanitized + hash suffix for uniqueness) ---
 SANITIZED_NAME=$(echo "$WORKTREE_NAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/^-//;s/-$//')
-export COMPOSE_PROJECT_NAME="brainstream-${SANITIZED_NAME}"
+HASH=$(echo -n "$WORKTREE_ROOT" | cksum | awk '{print $1}')
+SHORT_HASH=$(printf '%04x' "$(( HASH % 65536 ))")
+export COMPOSE_PROJECT_NAME="brainstream-${SANITIZED_NAME}-${SHORT_HASH}"
 
 # --- Port assignment ---
 if [ -z "${HOST_PORT:-}" ]; then
@@ -159,8 +161,8 @@ Expected: `-rwxr-xr-x` (이미 실행 권한 있어야 함. 없으면 `chmod +x 
 
 Run: `./restart_local_docker.sh info`
 Expected output (예시):
-```
-Project: brainstream-brain-stream
+```text
+Project: brainstream-brain-stream-xxxx
 Port:    8XXX
 ```
 
