@@ -2,7 +2,6 @@
 tests/unit/test_state.py
 state.py의 StateDB 함수군 단위 테스트
 """
-import pytest
 
 from src.state import (
     mark_pending,
@@ -20,6 +19,7 @@ from src.state import (
 
 
 # ── mark_pending / get_all_downloads ──────────────────────────────────────────
+
 
 def test_mark_pending_creates_row(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-001", "Creep", "Radiohead")
@@ -39,12 +39,15 @@ def test_mark_pending_default_source_is_listenbrainz(tmp_state_db):
 
 
 def test_mark_pending_custom_source(tmp_state_db):
-    mark_pending(tmp_state_db, "manual-abc123", "Bohemian Rhapsody", "Queen", source="manual")
+    mark_pending(
+        tmp_state_db, "manual-abc123", "Bohemian Rhapsody", "Queen", source="manual"
+    )
     rows = get_all_downloads(tmp_state_db)
     assert rows[0]["source"] == "manual"
 
 
 # ── 중복 insert 무시 (dedup) ──────────────────────────────────────────────────
+
 
 def test_mark_pending_duplicate_ignored(tmp_state_db):
     """같은 mbid를 두 번 insert해도 레코드는 하나만 남아야 한다."""
@@ -58,6 +61,7 @@ def test_mark_pending_duplicate_ignored(tmp_state_db):
 
 # ── mark_downloading ──────────────────────────────────────────────────────────
 
+
 def test_mark_downloading_changes_status(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-dl", "Song", "Artist")
     mark_downloading(tmp_state_db, "mbid-dl")
@@ -66,6 +70,7 @@ def test_mark_downloading_changes_status(tmp_state_db):
 
 
 # ── mark_done ────────────────────────────────────────────────────────────────
+
 
 def test_mark_done_changes_status(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-done", "Song", "Artist")
@@ -78,7 +83,9 @@ def test_mark_done_changes_status(tmp_state_db):
 def test_mark_done_stores_file_path(tmp_state_db):
     """mark_done에 file_path를 전달하면 DB에 저장된다."""
     mark_pending(tmp_state_db, "mbid-fp", "Song", "Artist")
-    mark_done(tmp_state_db, "mbid-fp", file_path="/app/data/music/Artist/Album/Song.flac")
+    mark_done(
+        tmp_state_db, "mbid-fp", file_path="/app/data/music/Artist/Album/Song.flac"
+    )
     rows = get_all_downloads(tmp_state_db)
     assert rows[0]["file_path"] == "/app/data/music/Artist/Album/Song.flac"
 
@@ -135,6 +142,7 @@ def test_mark_ignored_included_in_get_all_downloads(tmp_state_db):
 
 # ── mark_failed ───────────────────────────────────────────────────────────────
 
+
 def test_mark_failed_changes_status(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-fail", "Song", "Artist")
     mark_failed(tmp_state_db, "mbid-fail", "download error")
@@ -152,6 +160,7 @@ def test_mark_failed_increments_attempts(tmp_state_db):
 
 
 # ── get_retryable ─────────────────────────────────────────────────────────────
+
 
 def test_get_retryable_returns_failed_under_max(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-r1", "Song A", "Artist A")
@@ -179,6 +188,7 @@ def test_get_retryable_excludes_done(tmp_state_db):
 
 # ── get_all_downloads 정렬 / limit ────────────────────────────────────────────
 
+
 def test_get_all_downloads_returns_latest_first(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-first", "First", "Artist")
     mark_pending(tmp_state_db, "mbid-second", "Second", "Artist")
@@ -197,6 +207,7 @@ def test_get_all_downloads_limit(tmp_state_db):
 
 # ── update_file_path ──────────────────────────────────────────────────────────
 
+
 def test_update_file_path_changes_stored_path(tmp_state_db):
     """update_file_path가 file_path 컬럼을 새 값으로 업데이트한다."""
     mark_pending(tmp_state_db, "mbid-upfp", "Track", "Artist")
@@ -210,10 +221,13 @@ def test_update_file_path_changes_stored_path(tmp_state_db):
 
 def test_update_file_path_nonexistent_mbid_does_not_raise(tmp_state_db):
     """존재하지 않는 mbid에 대해 update_file_path를 호출해도 예외가 발생하지 않는다."""
-    update_file_path(tmp_state_db, "mbid-ghost", "/some/path/track.flac")  # should not raise
+    update_file_path(
+        tmp_state_db, "mbid-ghost", "/some/path/track.flac"
+    )  # should not raise
 
 
 # ── update_track_info ─────────────────────────────────────────────────────────
+
 
 def test_update_track_info_updates_artist(tmp_state_db):
     """update_track_info로 artist 컬럼을 업데이트할 수 있다."""
@@ -236,7 +250,9 @@ def test_update_track_info_updates_both(tmp_state_db):
     """update_track_info로 artist와 file_path를 동시에 업데이트할 수 있다."""
     mark_pending(tmp_state_db, "mbid-ti3", "Track", "OldArtist")
     mark_done(tmp_state_db, "mbid-ti3", file_path="/old/path/track.flac")
-    update_track_info(tmp_state_db, "mbid-ti3", artist="NewArtist", file_path="/new/path/track.flac")
+    update_track_info(
+        tmp_state_db, "mbid-ti3", artist="NewArtist", file_path="/new/path/track.flac"
+    )
     row = get_download_by_mbid(tmp_state_db, "mbid-ti3")
     assert row["artist"] == "NewArtist"
     assert row["file_path"] == "/new/path/track.flac"
@@ -254,7 +270,9 @@ def test_update_track_info_no_fields_is_noop(tmp_state_db):
 
 def test_update_track_info_nonexistent_mbid_does_not_raise(tmp_state_db):
     """존재하지 않는 mbid에 update_track_info를 호출해도 예외가 발생하지 않는다."""
-    update_track_info(tmp_state_db, "mbid-ghost2", artist="SomeArtist")  # should not raise
+    update_track_info(
+        tmp_state_db, "mbid-ghost2", artist="SomeArtist"
+    )  # should not raise
 
 
 def test_update_track_info_updates_mb_recording_id(tmp_state_db):
@@ -286,3 +304,31 @@ def test_mb_recording_id_defaults_to_none(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-rec4", "Track", "Artist")
     row = get_download_by_mbid(tmp_state_db, "mbid-rec4")
     assert row["mb_recording_id"] is None
+
+
+# ── mark_done album COALESCE ──────────────────────────────────────────────────
+
+
+def test_mark_done_preserves_album_when_none(tmp_state_db):
+    """mark_done(album=None) should NOT overwrite existing album value."""
+    mark_pending(tmp_state_db, "mbid-album-test", "Creep", "Radiohead")
+    update_track_info(tmp_state_db, "mbid-album-test", album="The Bends")
+    mark_done(tmp_state_db, "mbid-album-test", file_path="/music/test.flac", album=None)
+    row = get_download_by_mbid(tmp_state_db, "mbid-album-test")
+    assert row["album"] == "The Bends", (
+        "album should be preserved when mark_done album=None"
+    )
+
+
+def test_mark_done_overwrites_album_when_provided(tmp_state_db):
+    """mark_done(album='X') should update album to 'X'."""
+    mark_pending(tmp_state_db, "mbid-album-test2", "Creep", "Radiohead")
+    update_track_info(tmp_state_db, "mbid-album-test2", album="The Bends")
+    mark_done(
+        tmp_state_db,
+        "mbid-album-test2",
+        file_path="/music/test.flac",
+        album="OK Computer",
+    )
+    row = get_download_by_mbid(tmp_state_db, "mbid-album-test2")
+    assert row["album"] == "OK Computer"

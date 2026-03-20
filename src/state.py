@@ -1,6 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from src.utils.logger import get_logger
@@ -37,7 +37,9 @@ def init_db(db_path: str):
         """)
         # Migrate: add source column if missing
         try:
-            conn.execute("ALTER TABLE downloads ADD COLUMN source TEXT DEFAULT 'listenbrainz'")
+            conn.execute(
+                "ALTER TABLE downloads ADD COLUMN source TEXT DEFAULT 'listenbrainz'"
+            )
         except sqlite3.OperationalError:
             pass  # already exists
         # Migrate: add file_path column if missing
@@ -70,46 +72,61 @@ def mark_pending(
     db_path: str, mbid: str, track_name: str, artist: str, source: str = "listenbrainz"
 ):
     with _conn(db_path) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT OR IGNORE INTO downloads (mbid, track_name, artist, status, source)
             VALUES (?, ?, ?, 'pending', ?)
-        """, (mbid, track_name, artist, source))
+        """,
+            (mbid, track_name, artist, source),
+        )
 
 
 def mark_downloading(db_path: str, mbid: str):
     with _conn(db_path) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE downloads SET status = 'downloading' WHERE mbid = ?
-        """, (mbid,))
+        """,
+            (mbid,),
+        )
 
 
 def mark_done(db_path: str, mbid: str, file_path: str = None, album: str = None):
     with _conn(db_path) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE downloads
-            SET status = 'done', downloaded_at = ?, file_path = ?, album = ?
+            SET status = 'done', downloaded_at = ?, file_path = ?, album = COALESCE(?, album)
             WHERE mbid = ?
-        """, (datetime.utcnow().isoformat(), file_path, album, mbid))
+        """,
+            (datetime.now(tz=timezone.utc).isoformat(), file_path, album, mbid),
+        )
 
 
 def mark_failed(db_path: str, mbid: str, error: str):
     with _conn(db_path) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE downloads
             SET status = 'failed',
                 attempts = attempts + 1,
                 error_msg = ?
             WHERE mbid = ?
-        """, (error, mbid))
+        """,
+            (error, mbid),
+        )
 
 
 def get_retryable(db_path: str, max_attempts: int = 3) -> List[sqlite3.Row]:
     with _conn(db_path) as conn:
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT mbid, track_name, artist
             FROM downloads
             WHERE status = 'failed' AND attempts < ?
-        """, (max_attempts,)).fetchall()
+        """,
+            (max_attempts,),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -127,24 +144,30 @@ def get_pending_jobs(db_path: str) -> List[dict]:
 
 def get_all_downloads(db_path: str, limit: int = 100) -> List[dict]:
     with _conn(db_path) as conn:
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT mbid, track_name, artist, album, status, source,
                    attempts, downloaded_at, error_msg, file_path, mb_recording_id
             FROM downloads
             ORDER BY rowid DESC
             LIMIT ?
-        """, (limit,)).fetchall()
+        """,
+            (limit,),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
 def get_download_by_mbid(db_path: str, mbid: str) -> Optional[dict]:
     with _conn(db_path) as conn:
-        row = conn.execute("""
+        row = conn.execute(
+            """
             SELECT mbid, track_name, artist, album, status, source,
                    attempts, downloaded_at, error_msg, file_path, mb_recording_id
             FROM downloads
             WHERE mbid = ?
-        """, (mbid,)).fetchone()
+        """,
+            (mbid,),
+        ).fetchone()
     return dict(row) if row is not None else None
 
 
