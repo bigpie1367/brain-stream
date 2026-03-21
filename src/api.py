@@ -38,8 +38,9 @@ from src.pipeline.tagger import (
     write_title_tag,
 )
 from src.state import (
-    get_all_downloads,
+    find_active_download,
     get_download_by_mbid,
+    get_downloads_page,
     mark_ignored,
     mark_pending,
     update_track_info,
@@ -190,6 +191,13 @@ async def start_download(req: DownloadRequest):
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
 
+    existing = find_active_download(_cfg.state_db, req.artist, req.track)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"이미 존재: {existing['mbid']} ({existing['status']})",
+        )
+
     job_id = "manual-" + uuid.uuid4().hex[:8]
     worker.create_sse_queue(job_id)
 
@@ -246,10 +254,14 @@ async def sse_stream(job_id: str):
 
 
 @app.get("/api/downloads")
-async def list_downloads():
+async def list_downloads(
+    limit: int = Query(default=100, le=500),
+    offset: int = Query(default=0, ge=0),
+    search: str = Query(default="", max_length=200),
+):
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
-    return get_all_downloads(_cfg.state_db)
+    return get_downloads_page(_cfg.state_db, limit=limit, offset=offset, search=search)
 
 
 @app.get("/api/stream/{mbid}")
