@@ -143,6 +143,11 @@ class EditRequest(BaseModel):
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     with open("src/static/index.html", encoding="utf-8") as f:
