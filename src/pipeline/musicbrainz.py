@@ -180,13 +180,22 @@ def _extract_mb_recording_title(recordings: list, best_id: str) -> str:
     return ""
 
 
+def _escape_mb_query(value: str) -> str:
+    """Escape Lucene special characters for MusicBrainz search queries."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _mb_lookup_artist_ids(artist: str, limit: int = 3) -> list[str]:
     """Search MB artist API by name, return list of artist MBIDs (up to `limit`)."""
     try:
         time.sleep(1)  # rate limit
         r = requests.get(
             f"{MB_API}/artist",
-            params={"query": f'artistname:"{artist}"', "fmt": "json", "limit": limit},
+            params={
+                "query": f'artistname:"{_escape_mb_query(artist)}"',
+                "fmt": "json",
+                "limit": limit,
+            },
             headers=MB_HEADERS,
             timeout=10,
         )
@@ -215,11 +224,13 @@ def mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, s
     mb_artist_name: primary artist name from artist-credit, or empty string.
     mb_recording_title: title of the best-matched recording, or empty string.
     """
+    safe_artist = _escape_mb_query(artist)
+    safe_track = _escape_mb_query(track_name)
     try:
         # Attempt 1: strict query — Official Album, exclude Live/Compilation/Soundtrack/Mixtape/DJ-mix/Remix
         time.sleep(1)  # rate limit
         strict_query = (
-            f'artistname:"{artist}" AND recording:"{track_name}"'
+            f'artistname:"{safe_artist}" AND recording:"{safe_track}"'
             " AND primarytype:Album AND status:Official"
             " AND NOT secondarytype:Live"
             " AND NOT secondarytype:Compilation"
@@ -265,7 +276,7 @@ def mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, s
             track=track_name,
         )
         time.sleep(1)  # rate limit
-        query = f'artistname:"{artist}" AND recording:"{track_name}"'
+        query = f'artistname:"{safe_artist}" AND recording:"{safe_track}"'
         r = requests.get(
             f"{MB_API}/recording",
             params={"query": query, "fmt": "json", "limit": 5, "inc": "artist-credits"},
@@ -299,7 +310,7 @@ def mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, s
                 r = requests.get(
                     f"{MB_API}/recording",
                     params={
-                        "query": f'arid:{arid} AND recording:"{track_name}"',
+                        "query": f'arid:{arid} AND recording:"{safe_track}"',
                         "fmt": "json",
                         "limit": 5,
                     },
@@ -347,7 +358,7 @@ def mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, s
         r2 = requests.get(
             f"{MB_API}/recording",
             params={
-                "query": f'recording:"{track_name}"',
+                "query": f'recording:"{safe_track}"',
                 "fmt": "json",
                 "limit": 5,
                 "inc": "artist-credits+aliases",
