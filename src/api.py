@@ -50,10 +50,24 @@ from src.utils.logger import get_logger
 log = get_logger(__name__)
 
 
+async def _periodic_rate_cleanup():
+    """Remove expired rate-limit entries every 5 minutes."""
+    while True:
+        await asyncio.sleep(300)
+        now = time.time()
+        expired = [
+            k for k, v in _rate_store.items() if all(now - t > _rate_window for t in v)
+        ]
+        for k in expired:
+            _rate_store.pop(k, None)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     app.state.http_client = httpx.AsyncClient(timeout=60.0)
+    cleanup_task = asyncio.create_task(_periodic_rate_cleanup())
     yield
+    cleanup_task.cancel()
     await app.state.http_client.aclose()
 
 
