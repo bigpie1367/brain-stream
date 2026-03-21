@@ -152,16 +152,23 @@ def _collect_recording_candidates(recordings: list, track_name: str = "") -> lis
     return candidates[:3]
 
 
-def _extract_mb_artist_name(recordings: list) -> str:
-    """Extract the primary artist name from the first recording's artist-credit."""
+def _extract_mb_artist_name(recordings: list, best_id: str) -> str:
+    """Extract joined artist-credit from the selected recording."""
     for rec in recordings:
-        credits = rec.get("artist-credit", [])
-        for credit in credits:
+        if best_id and rec.get("id") != best_id:
+            continue
+        artist_parts: list[str] = []
+        for credit in rec.get("artist-credit", []):
             if not isinstance(credit, dict):
                 continue
             name = credit.get("artist", {}).get("name", "")
             if name:
-                return name
+                artist_parts.append(name)
+            joinphrase = credit.get("joinphrase", "")
+            if joinphrase:
+                artist_parts.append(joinphrase)
+        if artist_parts:
+            return "".join(artist_parts).strip()
     return ""
 
 
@@ -237,7 +244,7 @@ def mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, s
         if recordings:
             candidates = _collect_recording_candidates(recordings, track_name)
             if candidates:
-                mb_artist_name = _extract_mb_artist_name(recordings)
+                mb_artist_name = _extract_mb_artist_name(recordings, candidates[0])
                 mb_recording_title = _extract_mb_recording_title(
                     recordings, candidates[0]
                 )
@@ -270,7 +277,7 @@ def mb_search_recording(artist: str, track_name: str) -> tuple[list[str], str, s
         if recordings:
             candidates = _collect_recording_candidates(recordings, track_name)
             if candidates:
-                mb_artist_name = _extract_mb_artist_name(recordings)
+                mb_artist_name = _extract_mb_artist_name(recordings, candidates[0])
                 mb_recording_title = _extract_mb_recording_title(
                     recordings, candidates[0]
                 )
