@@ -201,6 +201,34 @@
       display: none;
     }
 
+    /* History search */
+    .history-search-wrap {
+      margin-bottom: 10px;
+    }
+    #history-search {
+      width: 100%;
+      box-sizing: border-box;
+      background: #1a1e30;
+      border: 1px solid #2d3147;
+      border-radius: 6px;
+      color: #cbd5e0;
+      font-size: 0.85rem;
+      padding: 7px 12px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    #history-search::placeholder { color: #4a5568; }
+    #history-search:focus { border-color: #4a5fa8; }
+
+    /* Infinite scroll sentinel / loading indicator */
+    #history-load-more {
+      text-align: center;
+      color: #4a5568;
+      font-size: 0.8rem;
+      padding: 12px;
+      display: none;
+    }
+
     /* 삭제 버튼 */
     .btn-danger {
       background: none;
@@ -1246,7 +1274,10 @@
   <section id="section-history">
     <div class="table-header">
       <h2 style="margin-bottom:0">Download History</h2>
-      <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem; min-width:0;" onclick="loadHistory()">Refresh</button>
+      <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem; min-width:0;" onclick="resetAndLoadHistory()">Refresh</button>
+    </div>
+    <div class="history-search-wrap">
+      <input type="text" id="history-search" placeholder="Search artist or track…">
     </div>
     <div class="table-wrapper">
       <table style="width:100%;">
@@ -1265,6 +1296,8 @@
         </tbody>
       </table>
       <p id="no-data">No records</p>
+      <div id="history-load-more">Loading more…</div>
+      <div id="history-scroll-sentinel" style="height:1px;"></div>
     </div>
   </section>
 
@@ -1629,7 +1662,7 @@
     }
 
     // 테이블에 pending 행이 먼저 추가되도록 history를 미리 로드
-    await loadHistory();
+    await resetAndLoadHistory();
 
     // SSE (기존과 동일)
     const es = new EventSource('/api/sse/' + jobId);
@@ -1653,7 +1686,7 @@
         es.close();
         isDownloading = false;
         dlBtn.disabled = false;
-        loadHistory();
+        resetAndLoadHistory();
       }
     };
     es.onerror = () => {
@@ -1693,7 +1726,7 @@
     }
 
     // 테이블에 pending 행이 먼저 추가되도록 history를 미리 로드
-    await loadHistory();
+    await resetAndLoadHistory();
 
     // SSE
     const es = new EventSource('/api/sse/' + jobId);
@@ -1717,7 +1750,7 @@
         es.close();
         isDownloading = false;
         dlBtn.disabled = false;
-        loadHistory();
+        resetAndLoadHistory();
       }
     };
     es.onerror = () => {
@@ -1874,17 +1907,44 @@
     return { tr, expandTr };
   }
 
-  async function loadHistory() {
+  // ── History pagination + search state ──────────────────────────────────────
+  let _historyOffset = 0;
+  let _historyTotal = 0;
+  let _historySearch = '';
+  let _historyLoading = false;
+  let _historyRequestSeq = 0;
+  const HISTORY_LIMIT = 100;
+
+  async function loadHistory(append = false) {
+    if (_historyLoading) return;
+    const requestSeq = ++_historyRequestSeq;
+    _historyLoading = true;
+    const loadMoreEl = document.getElementById('history-load-more');
+    if (loadMoreEl) loadMoreEl.style.display = append ? 'block' : 'none';
     try {
-      const res = await fetch('/api/downloads');
-      const rows = await res.json();
+      const params = new URLSearchParams({
+        limit: HISTORY_LIMIT,
+        offset: _historyOffset,
+      });
+      if (_historySearch) params.set('search', _historySearch);
+      const res = await fetch('/api/downloads?' + params.toString());
+      if (requestSeq !== _historyRequestSeq) {
+        _historyLoading = false;
+        return; // Stale response, discard
+      }
+      const data = await res.json();
+      // Support both paginated format { items, total, ... } and plain array (legacy)
+      const rows = Array.isArray(data) ? data : (data.items || []);
+      _historyTotal = Array.isArray(data) ? rows.length : (data.total ?? rows.length);
       const tbody = document.getElementById('history-body');
       const noData = document.getElementById('no-data');
 
-      if (!rows.length) {
+      if (!append && !rows.length) {
         tbody.innerHTML = '';
         noData.style.display = 'block';
         _expandedMbid = null;
+        _historyLoading = false;
+        if (loadMoreEl) loadMoreEl.style.display = 'none';
         return;
       }
       noData.style.display = 'none';
@@ -1902,18 +1962,21 @@
       // 새 데이터의 mbid 집합
       const newMbids = new Set(rows.map(r => r.mbid));
 
-      // 사라진 행 제거
-      existingRows.forEach(({ mainTr, expandTr }, mbid) => {
-        if (!newMbids.has(mbid)) {
-          if (expandTr) expandTr.remove();
-          mainTr.remove();
-          if (_expandedMbid === mbid) _expandedMbid = null;
-        }
-      });
+      // 사라진 행 제거 (append 모드에서는 이전 페이지 행을 지우지 않음)
+      if (!append) {
+        existingRows.forEach(({ mainTr, expandTr }, mbid) => {
+          if (!newMbids.has(mbid)) {
+            if (expandTr) expandTr.remove();
+            mainTr.remove();
+            if (_expandedMbid === mbid) _expandedMbid = null;
+          }
+        });
+      }
 
       // 순서에 맞게 행 추가/업데이트
       // API 응답은 rowid DESC(최신순)이므로 rows 순서대로 DOM에 배치
-      let refNode = null; // tbody의 첫 번째 자식 앞에 삽입하기 위한 기준 노드
+      // append 모드에서는 기존 마지막 행 다음에 추가
+      let refNode = append ? (tbody.lastElementChild || null) : null;
 
       rows.forEach((r) => {
         if (existingRows.has(r.mbid)) {
@@ -2049,9 +2112,25 @@
           if (statusCell) statusCell.innerHTML = statusBadge(status);
         }
       });
+
+      // Update offset for next page
+      _historyOffset += rows.length;
     } catch (e) {
       console.error('history load failed', e);
+    } finally {
+      _historyLoading = false;
+      const loadMoreEl = document.getElementById('history-load-more');
+      if (loadMoreEl) loadMoreEl.style.display = 'none';
     }
+  }
+
+  // Reset pagination state and reload from scratch (e.g. on Refresh or search change)
+  async function resetAndLoadHistory() {
+    _historyOffset = 0;
+    _historyTotal = 0;
+    _historyLoading = false; // reset guard so a fresh load can proceed
+    document.getElementById('history-body').innerHTML = '';
+    await loadHistory(false);
   }
 
   function collapseAllExpandRows() {
@@ -2316,13 +2395,41 @@
 
   // Initial load + auto-refresh every 5 s
   // 삭제/재매칭 모달이 열려 있는 동안은 자동 갱신을 건너뛰어 참조 보호
-  loadHistory();
+  resetAndLoadHistory();
   setInterval(() => {
     const deleteModalOpen  = !document.getElementById('delete-modal').classList.contains('hidden');
     const rematchModalOpen = !document.getElementById('rematch-modal').classList.contains('hidden');
     const editModalOpen    = !document.getElementById('edit-modal').classList.contains('hidden');
-    if (!deleteModalOpen && !rematchModalOpen && !editModalOpen) loadHistory();
+    // Auto-refresh only reloads from the top (non-append) to pick up new items
+    if (!deleteModalOpen && !rematchModalOpen && !editModalOpen) resetAndLoadHistory();
   }, 5000);
+
+  // ── Infinite scroll ─────────────────────────────────────────────────────────
+  const _scrollSentinel = document.getElementById('history-scroll-sentinel');
+  if (_scrollSentinel && typeof IntersectionObserver !== 'undefined') {
+    const _scrollObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting && !_historyLoading && _historyOffset < _historyTotal) {
+          loadHistory(true /* append */);
+        }
+      });
+    }, { rootMargin: '200px' });
+    _scrollObserver.observe(_scrollSentinel);
+  }
+
+  // ── Debounced search ────────────────────────────────────────────────────────
+  (function() {
+    const searchInput = document.getElementById('history-search');
+    if (!searchInput) return;
+    let _searchTimer = null;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(_searchTimer);
+      _searchTimer = setTimeout(() => {
+        _historySearch = searchInput.value.trim();
+        resetAndLoadHistory();
+      }, 300);
+    });
+  })();
 
   // ── Library ────────────────────────────────────────────────────────────────
   let libraryLoaded = false;

@@ -223,6 +223,78 @@ def mark_ignored(db_path: str, mbid: str):
         )
 
 
+def get_downloads_page(
+    db_path: str, limit: int = 100, offset: int = 0, search: str = ""
+) -> dict:
+    """Paginated download list with optional search.
+
+    Returns: {"items": [...], "total": int, "limit": int, "offset": int}
+    """
+    with _conn(db_path) as conn:
+        if search:
+            pattern = f"%{search}%"
+            where = "WHERE status != 'ignored' AND (artist LIKE ? OR track_name LIKE ? OR album LIKE ?)"
+            params = (pattern, pattern, pattern)
+        else:
+            where = "WHERE status != 'ignored'"
+            params = ()
+
+        # Total count
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM downloads {where}", params
+        ).fetchone()[0]
+
+        # Paginated results
+        rows = conn.execute(
+            f"SELECT * FROM downloads {where} ORDER BY rowid DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+
+        return {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+
+def find_active_download(db_path: str, artist: str, track_name: str) -> dict | None:
+    """Find done/downloading/pending download with same artist+track_name.
+    Returns first match or None.
+    """
+    with _conn(db_path) as conn:
+        row = conn.execute(
+            """SELECT * FROM downloads
+               WHERE artist = ? AND track_name = ? AND status IN ('done', 'downloading', 'pending')
+               LIMIT 1""",
+            (artist, track_name),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def mark_pending_if_not_duplicate(
+    db_path: str, mbid: str, track_name: str, artist: str, source: str = "listenbrainz"
+) -> dict | None:
+    """Atomically check for active duplicate and insert pending row.
+    Returns existing record dict if duplicate found, None if inserted successfully.
+    """
+    with _conn(db_path) as conn:
+        row = conn.execute(
+            """SELECT * FROM downloads
+               WHERE artist = ? AND track_name = ? AND status IN ('done', 'downloading', 'pending')
+               LIMIT 1""",
+            (artist, track_name),
+        ).fetchone()
+        if row:
+            return dict(row)
+        conn.execute(
+            """INSERT OR IGNORE INTO downloads (mbid, track_name, artist, status, source)
+               VALUES (?, ?, ?, 'pending', ?)""",
+            (mbid, track_name, artist, source),
+        )
+        return None
+
+
 def delete_download(db_path: str, mbid: str):
     with _conn(db_path) as conn:
         conn.execute("DELETE FROM downloads WHERE mbid = ?", (mbid,))

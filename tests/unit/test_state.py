@@ -4,15 +4,17 @@ state.py의 StateDB 함수군 단위 테스트
 """
 
 from src.state import (
-    mark_pending,
-    mark_downloading,
+    find_active_download,
+    get_all_downloads,
+    get_download_by_mbid,
+    get_downloads_page,
+    get_retryable,
+    is_downloaded,
     mark_done,
+    mark_downloading,
     mark_failed,
     mark_ignored,
-    get_all_downloads,
-    get_retryable,
-    get_download_by_mbid,
-    is_downloaded,
+    mark_pending,
     update_file_path,
     update_track_info,
 )
@@ -332,3 +334,54 @@ def test_mark_done_overwrites_album_when_provided(tmp_state_db):
     )
     row = get_download_by_mbid(tmp_state_db, "mbid-album-test2")
     assert row["album"] == "OK Computer"
+
+
+# ── get_downloads_page ────────────────────────────────────────────────────────
+
+
+def test_get_downloads_page_returns_paginated(tmp_state_db):
+    for i in range(5):
+        mark_pending(tmp_state_db, f"mbid-{i}", f"Track {i}", "Artist")
+    result = get_downloads_page(tmp_state_db, limit=2, offset=0)
+    assert result["total"] == 5
+    assert len(result["items"]) == 2
+    assert result["limit"] == 2
+    assert result["offset"] == 0
+
+
+def test_get_downloads_page_offset(tmp_state_db):
+    for i in range(5):
+        mark_pending(tmp_state_db, f"mbid-{i}", f"Track {i}", "Artist")
+    result = get_downloads_page(tmp_state_db, limit=2, offset=2)
+    assert len(result["items"]) == 2
+    assert result["offset"] == 2
+
+
+def test_get_downloads_page_search(tmp_state_db):
+    mark_pending(tmp_state_db, "mbid-1", "Creep", "Radiohead")
+    mark_pending(tmp_state_db, "mbid-2", "Karma Police", "Radiohead")
+    mark_pending(tmp_state_db, "mbid-3", "Bohemian Rhapsody", "Queen")
+    result = get_downloads_page(tmp_state_db, search="Radiohead")
+    assert result["total"] == 2
+
+
+# ── find_active_download ──────────────────────────────────────────────────────
+
+
+def test_find_active_download_found(tmp_state_db):
+    mark_pending(tmp_state_db, "mbid-1", "Creep", "Radiohead")
+    result = find_active_download(tmp_state_db, "Radiohead", "Creep")
+    assert result is not None
+    assert result["mbid"] == "mbid-1"
+
+
+def test_find_active_download_not_found(tmp_state_db):
+    result = find_active_download(tmp_state_db, "Radiohead", "Creep")
+    assert result is None
+
+
+def test_find_active_download_ignores_failed(tmp_state_db):
+    mark_pending(tmp_state_db, "mbid-1", "Creep", "Radiohead")
+    mark_failed(tmp_state_db, "mbid-1", "error")
+    result = find_active_download(tmp_state_db, "Radiohead", "Creep")
+    assert result is None

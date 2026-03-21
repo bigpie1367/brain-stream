@@ -38,10 +38,10 @@ from src.pipeline.tagger import (
     write_title_tag,
 )
 from src.state import (
-    get_all_downloads,
     get_download_by_mbid,
+    get_downloads_page,
     mark_ignored,
-    mark_pending,
+    mark_pending_if_not_duplicate,
     update_track_info,
 )
 from src.utils.fs import move_to_music_dir, resolve_dir, sanitize_path_component
@@ -193,13 +193,19 @@ async def start_download(req: DownloadRequest):
     job_id = "manual-" + uuid.uuid4().hex[:8]
     worker.create_sse_queue(job_id)
 
-    mark_pending(
+    existing = mark_pending_if_not_duplicate(
         _cfg.state_db,
         mbid=job_id,
         track_name=req.track,
         artist=req.artist,
         source="manual",
     )
+    if existing:
+        worker.remove_sse_queue(job_id)
+        raise HTTPException(
+            status_code=409,
+            detail=f"이미 존재: {existing['mbid']} ({existing['status']})",
+        )
 
     worker.enqueue_job(
         job_id=job_id,
@@ -246,10 +252,14 @@ async def sse_stream(job_id: str):
 
 
 @app.get("/api/downloads")
-async def list_downloads():
+async def list_downloads(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    search: str = Query(default="", max_length=200),
+):
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
-    return get_all_downloads(_cfg.state_db)
+    return get_downloads_page(_cfg.state_db, limit=limit, offset=offset, search=search)
 
 
 @app.get("/api/stream/{mbid}")

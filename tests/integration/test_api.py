@@ -52,11 +52,22 @@ def test_post_download_returns_200_and_job_id(client):
 
 
 def test_post_download_job_id_is_unique(client):
-    """POST /api/download를 두 번 호출하면 서로 다른 job_id가 반환되어야 한다."""
+    """POST /api/download를 같은 artist+track으로 두 번 호출하면 두 번째는 409 중복."""
     with patch("src.api.threading.Thread") as mock_thread_cls:
         mock_thread_cls.return_value = MagicMock()
         resp1 = client.post("/api/download", json={"artist": "A", "track": "B"})
         resp2 = client.post("/api/download", json={"artist": "A", "track": "B"})
+
+    assert resp1.status_code == 200
+    assert resp2.status_code == 409
+
+
+def test_post_download_different_tracks_both_succeed(client):
+    """POST /api/download를 다른 track으로 호출하면 서로 다른 job_id가 반환된다."""
+    with patch("src.api.threading.Thread") as mock_thread_cls:
+        mock_thread_cls.return_value = MagicMock()
+        resp1 = client.post("/api/download", json={"artist": "A", "track": "B"})
+        resp2 = client.post("/api/download", json={"artist": "A", "track": "C"})
 
     assert resp1.json()["job_id"] != resp2.json()["job_id"]
 
@@ -93,10 +104,12 @@ def test_post_download_missing_track_returns_422(client):
 
 
 def test_get_downloads_returns_200_empty_list(client):
-    """DB가 비어있을 때 GET /api/downloads는 200과 빈 리스트를 반환한다."""
+    """DB가 비어있을 때 GET /api/downloads는 200과 빈 items를 반환한다."""
     resp = client.get("/api/downloads")
     assert resp.status_code == 200
-    assert resp.json() == []
+    data = resp.json()
+    assert data["items"] == []
+    assert data["total"] == 0
 
 
 def test_get_downloads_returns_existing_records(client, tmp_state_db):
@@ -108,8 +121,8 @@ def test_get_downloads_returns_existing_records(client, tmp_state_db):
     resp = client.get("/api/downloads")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 2
-    mbids = [r["mbid"] for r in data]
+    assert data["total"] == 2
+    mbids = [r["mbid"] for r in data["items"]]
     assert "mbid-test-001" in mbids
     assert "mbid-test-002" in mbids
 
@@ -121,17 +134,21 @@ def test_get_downloads_returns_latest_first(client, tmp_state_db):
 
     resp = client.get("/api/downloads")
     data = resp.json()
-    assert data[0]["mbid"] == "mbid-second"
-    assert data[1]["mbid"] == "mbid-first"
+    assert data["items"][0]["mbid"] == "mbid-second"
+    assert data["items"][1]["mbid"] == "mbid-first"
 
 
 def test_get_downloads_response_schema(client, tmp_state_db):
-    """응답 각 항목에 필수 필드가 모두 있는지 확인한다."""
+    """응답에 pagination 필드와 각 항목에 필수 필드가 모두 있는지 확인한다."""
     mark_pending(tmp_state_db, "mbid-schema", "Track", "Artist")
     resp = client.get("/api/downloads")
     data = resp.json()
-    assert len(data) == 1
-    row = data[0]
+    assert "items" in data
+    assert "total" in data
+    assert "limit" in data
+    assert "offset" in data
+    assert data["total"] == 1
+    row = data["items"][0]
     for field in ("mbid", "track_name", "artist", "status", "source", "attempts"):
         assert field in row
 
