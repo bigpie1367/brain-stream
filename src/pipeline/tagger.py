@@ -597,8 +597,7 @@ def _enrich_track(
                 log.info(
                     "embedding cover art from iTunes", artist=artist, track=track_name
                 )
-                embed_art_from_url(dest_path, itunes_art)
-                art_embedded = True
+                art_embedded = embed_art_from_url(dest_path, itunes_art)
 
         # Deezer art
         if not art_embedded:
@@ -611,8 +610,7 @@ def _enrich_track(
                 log.info(
                     "embedding cover art from Deezer", artist=artist, track=track_name
                 )
-                embed_art_from_url(dest_path, deezer_art)
-                art_embedded = True
+                art_embedded = embed_art_from_url(dest_path, deezer_art)
 
         # YouTube thumbnail — last resort
         if not art_embedded and yt_metadata:
@@ -623,7 +621,7 @@ def _enrich_track(
                     artist=artist,
                     track=track_name,
                 )
-                embed_art_from_url(dest_path, thumbnail_url)
+                art_embedded = embed_art_from_url(dest_path, thumbnail_url)
 
     return album, canonical_artist, canonical_title
 
