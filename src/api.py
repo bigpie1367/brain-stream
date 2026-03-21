@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 import src.worker as worker
 from src.pipeline.downloader import search_candidates
+from src.pipeline.musicbrainz import MB_API, MB_HEADERS, MB_SEARCH_URL
 from src.pipeline.navidrome import trigger_scan
 from src.pipeline.tagger import (
     embed_art_from_url,
@@ -347,10 +348,6 @@ async def delete_download_entry(mbid: str):
     return {"deleted": True, "files_removed": files_removed}
 
 
-_MB_SEARCH_URL = "https://musicbrainz.org/ws/2/recording"
-_MB_SEARCH_HEADERS = {"User-Agent": "brainstream/1.0"}
-
-
 @app.get("/api/rematch/search")
 async def rematch_search(
     request: Request,
@@ -370,13 +367,13 @@ async def rematch_search(
     # Stage 1: strict query with artistname + recording fields
     try:
         r = await client.get(
-            _MB_SEARCH_URL,
+            MB_SEARCH_URL,
             params={
                 "query": f'artistname:"{artist}" AND recording:"{track}"',
                 "fmt": "json",
                 "limit": 10,
             },
-            headers=_MB_SEARCH_HEADERS,
+            headers=MB_HEADERS,
             timeout=10,
         )
         r.raise_for_status()
@@ -391,13 +388,13 @@ async def rematch_search(
     if not recordings:
         try:
             r = await client.get(
-                _MB_SEARCH_URL,
+                MB_SEARCH_URL,
                 params={
                     "query": f"{artist} {track}",
                     "fmt": "json",
                     "limit": 10,
                 },
-                headers=_MB_SEARCH_HEADERS,
+                headers=MB_HEADERS,
                 timeout=10,
             )
             r.raise_for_status()
@@ -568,16 +565,13 @@ async def rematch_apply(req: RematchApplyRequest, request: Request):
             )
 
     # 2. Fetch album name
-    _MB_API = "https://musicbrainz.org/ws/2"
-    _MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
-
     if req.mb_album_id:
         try:
             await asyncio.sleep(1)  # rate limit
             r = await request.app.state.http_client.get(
-                f"{_MB_API}/release/{req.mb_album_id}",
+                f"{MB_API}/release/{req.mb_album_id}",
                 params={"fmt": "json"},
-                headers=_MB_HEADERS,
+                headers=MB_HEADERS,
                 timeout=10,
             )
             r.raise_for_status()
@@ -660,21 +654,6 @@ async def rematch_apply(req: RematchApplyRequest, request: Request):
         except Exception as exc:
             log.warning("rematch_apply: failed to remove empty dirs", error=str(exc))
 
-        if req.mbid is not None:
-            try:
-                update_track_info(
-                    _cfg.state_db,
-                    req.mbid,
-                    artist=req.artist_name if req.artist_name else None,
-                    file_path=file_path,
-                )
-            except Exception as exc:
-                log.warning(
-                    "rematch_apply: state.db update failed",
-                    mbid=req.mbid,
-                    error=str(exc),
-                )
-
     # 4. Embed cover art
     if req.mb_album_id:
         art_ok = embed_cover_art(file_path, req.mb_album_id)
@@ -691,12 +670,14 @@ async def rematch_apply(req: RematchApplyRequest, request: Request):
                 cover_url=req.cover_url,
             )
 
-    # 4-1. Update album (and optionally mb_recording_id) in state.db
+    # 4-1. Update artist, file_path, album, and mb_recording_id in state.db
     if req.mbid is not None:
         try:
             update_track_info(
                 _cfg.state_db,
                 req.mbid,
+                artist=req.artist_name if req.artist_name else None,
+                file_path=file_path,
                 album=album_name,
                 mb_recording_id=req.mb_recording_id if req.mb_recording_id else None,
             )

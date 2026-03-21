@@ -17,7 +17,7 @@ class DownloadConfig:
 
 
 @dataclass
-class BeetsConfig:
+class MusicDirConfig:
     music_dir: str = "/app/data/music"
 
 
@@ -37,7 +37,7 @@ class SchedulerConfig:
 class AppConfig:
     listenbrainz: ListenBrainzConfig
     download: DownloadConfig = field(default_factory=DownloadConfig)
-    beets: BeetsConfig = field(default_factory=BeetsConfig)
+    beets: MusicDirConfig = field(default_factory=MusicDirConfig)
     navidrome: NavidromeConfig = field(default_factory=NavidromeConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     state_db: str = "/app/db/state.db"
@@ -53,7 +53,7 @@ def load_config() -> AppConfig:
 
     download = DownloadConfig()
 
-    beets = BeetsConfig()
+    beets = MusicDirConfig()
 
     navidrome = NavidromeConfig(
         url=os.environ.get("NAVIDROME_URL", "http://navidrome:4533/navidrome"),

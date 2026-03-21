@@ -7,7 +7,8 @@ import uvicorn
 import src.api as api_module
 import src.worker as worker_module
 from src.config import load_config
-from src.pipeline.listenbrainz import _lookup_recording, fetch_recommendations
+from src.pipeline.listenbrainz import fetch_recommendations
+from src.pipeline.musicbrainz import lookup_recording
 from src.state import (
     get_download_by_mbid,
     get_pending_jobs,
@@ -61,9 +62,9 @@ def run_pipeline(cfg):
             log.info(
                 "retry track missing artist/track, re-looking up from MB", mbid=mbid
             )
-            meta = _lookup_recording(mbid)
+            meta = lookup_recording(mbid)
             artist = meta.get("artist", "")
-            track_name = meta.get("track_name", "")
+            track_name = meta.get("title", "")
             if not artist or not track_name:
                 log.warning(
                     "MB lookup still empty after retry, skipping track", mbid=mbid

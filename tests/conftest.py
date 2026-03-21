@@ -76,7 +76,7 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     import src.worker as worker_module
     from src.config import (
         AppConfig,
-        BeetsConfig,
+        MusicDirConfig,
         DownloadConfig,
         ListenBrainzConfig,
         NavidromeConfig,
@@ -91,7 +91,7 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     dummy_cfg = AppConfig(
         listenbrainz=ListenBrainzConfig(username="test_user", token="test_token"),
         download=DownloadConfig(staging_dir=staging_dir),
-        beets=BeetsConfig(music_dir=music_dir),
+        beets=MusicDirConfig(music_dir=music_dir),
         navidrome=NavidromeConfig(
             url="http://localhost:4533", username="admin", password="pass"
         ),
