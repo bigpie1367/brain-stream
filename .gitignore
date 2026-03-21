@@ -27,5 +27,8 @@ env/
 *.swp
 *.swo
 
+# Worktrees
+.worktrees/
+
 # macOS
 .DS_Store

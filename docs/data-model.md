@@ -1,7 +1,7 @@
 # 데이터 모델
 
-- **버전**: 1.5.0
-- **작성일**: 2026-03-19
+- **버전**: 2.0.0
+- **작성일**: 2026-03-21
 
 ---
 
@@ -115,3 +115,21 @@ data/
 └── logs/
     └── music-bot.log           # music-bot 애플리케이션 로그
 ```
+
+---
+
+## 4. 주요 state.py 함수
+
+| 함수 | 설명 |
+|------|------|
+| `mark_pending(mbid, track_name, artist, source)` | 새 다운로드 레코드 생성 (status=pending) |
+| `mark_pending_if_not_duplicate(mbid, track_name, artist, source)` | 동일 artist+track의 done/downloading/pending 레코드가 없을 때만 INSERT. 중복 시 기존 레코드 반환, 신규 시 None 반환. 단일 트랜잭션으로 원자적 처리 |
+| `mark_downloading(mbid)` | status를 downloading으로 전이 |
+| `mark_done(mbid, album)` | status=done, downloaded_at 기록, album 저장 |
+| `mark_failed(mbid, error_msg)` | status=failed, attempts 증가, error_msg 기록 |
+| `get_download_by_mbid(mbid)` | 단일 레코드 조회 |
+| `get_all_downloads()` | 전체 레코드 조회 (최신 순, ignored 제외) |
+| `get_downloads_page(limit, offset, search)` | 페이지네이션 조회. `{"items": [...], "total": int, "limit": int, "offset": int}` 반환. ignored 상태 제외. search로 artist/track_name/album LIKE 검색 |
+| `find_active_download(artist, track_name)` | artist+track_name이 일치하는 done/downloading/pending 레코드 검색. 중복 다운로드 방지에 사용 |
+| `update_track_info(mbid, ...)` | artist/file_path/album/mb_recording_id 선택적 업데이트 |
+| `get_pending_jobs()` | pending/downloading 잡을 rowid ASC 순서로 반환 (재시작 복구용) |

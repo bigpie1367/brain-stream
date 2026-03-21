@@ -1,7 +1,7 @@
 # 운영 가이드
 
-- **버전**: 1.4.0
-- **작성일**: 2026-03-18
+- **버전**: 2.0.0
+- **작성일**: 2026-03-21
 
 ---
 
@@ -10,6 +10,8 @@
 - Docker 및 Docker Compose 설치
 - ListenBrainz 계정 및 API 토큰 ([발급](https://listenbrainz.org/profile/))
 - 로컬 포트 8080 사용 가능
+
+Note: `.dockerignore` 파일이 빌드 컨텍스트에서 `docs/`, `data/`, `logs/`, `.worktrees/` 등을 제외하여 이미지 크기를 최적화합니다.
 
 ---
 
@@ -83,6 +85,23 @@ docker compose -f docker-compose.prod.yml logs -f brainstream
 
 # navidrome 로그
 docker compose -f docker-compose.prod.yml logs -f navidrome
+```
+
+### 3.5 헬스체크
+
+```bash
+# 컨테이너 liveness 확인
+curl http://localhost:8080/health
+# {"status": "ok"}
+```
+
+Docker Compose에서 HEALTHCHECK로 사용 가능:
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
 ```
 
 ---
