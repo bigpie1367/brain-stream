@@ -1912,10 +1912,12 @@
   let _historyTotal = 0;
   let _historySearch = '';
   let _historyLoading = false;
+  let _historyRequestSeq = 0;
   const HISTORY_LIMIT = 100;
 
   async function loadHistory(append = false) {
     if (_historyLoading) return;
+    const requestSeq = ++_historyRequestSeq;
     _historyLoading = true;
     const loadMoreEl = document.getElementById('history-load-more');
     if (loadMoreEl) loadMoreEl.style.display = append ? 'block' : 'none';
@@ -1926,6 +1928,10 @@
       });
       if (_historySearch) params.set('search', _historySearch);
       const res = await fetch('/api/downloads?' + params.toString());
+      if (requestSeq !== _historyRequestSeq) {
+        _historyLoading = false;
+        return; // Stale response, discard
+      }
       const data = await res.json();
       // Support both paginated format { items, total, ... } and plain array (legacy)
       const rows = Array.isArray(data) ? data : (data.items || []);
