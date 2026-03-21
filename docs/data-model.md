@@ -125,7 +125,7 @@ data/
 | `mark_pending(mbid, track_name, artist, source)` | 새 다운로드 레코드 생성 (status=pending) |
 | `mark_pending_if_not_duplicate(mbid, track_name, artist, source)` | 동일 artist+track의 done/downloading/pending 레코드가 없을 때만 INSERT. 중복 시 기존 레코드 반환, 신규 시 None 반환. 단일 트랜잭션으로 원자적 처리 |
 | `mark_downloading(mbid)` | status를 downloading으로 전이 |
-| `mark_done(mbid, album)` | status=done, downloaded_at 기록, album 저장 |
+| `mark_done(db_path, mbid, file_path=None, album=None)` | status=done, downloaded_at 기록, file_path 및 album 저장 |
 | `mark_failed(mbid, error_msg)` | status=failed, attempts 증가, error_msg 기록 |
 | `get_download_by_mbid(mbid)` | 단일 레코드 조회 |
 | `get_all_downloads()` | 전체 레코드 조회 (최신 순, ignored 제외) |
