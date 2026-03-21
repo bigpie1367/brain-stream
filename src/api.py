@@ -50,10 +50,31 @@ from src.utils.logger import get_logger
 log = get_logger(__name__)
 
 
+async def _periodic_rate_cleanup():
+    """Remove expired rate-limit entries every 5 minutes."""
+    while True:
+        await asyncio.sleep(300)
+        now = time.time()
+        keys = list(_rate_store.keys())
+        expired = [
+            k
+            for k in keys
+            if k in _rate_store and all(now - t > _rate_window for t in _rate_store[k])
+        ]
+        for k in expired:
+            _rate_store.pop(k, None)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     app.state.http_client = httpx.AsyncClient(timeout=60.0)
+    cleanup_task = asyncio.create_task(_periodic_rate_cleanup())
     yield
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
     await app.state.http_client.aclose()
 
 
@@ -141,6 +162,11 @@ class EditRequest(BaseModel):
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 @app.get("/", response_class=HTMLResponse)
