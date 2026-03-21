@@ -55,8 +55,11 @@ async def _periodic_rate_cleanup():
     while True:
         await asyncio.sleep(300)
         now = time.time()
+        keys = list(_rate_store.keys())
         expired = [
-            k for k, v in _rate_store.items() if all(now - t > _rate_window for t in v)
+            k
+            for k in keys
+            if k in _rate_store and all(now - t > _rate_window for t in _rate_store[k])
         ]
         for k in expired:
             _rate_store.pop(k, None)
@@ -68,6 +71,10 @@ async def _lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(_periodic_rate_cleanup())
     yield
     cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
     await app.state.http_client.aclose()
 
 
