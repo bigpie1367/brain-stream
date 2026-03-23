@@ -1,22 +1,28 @@
+import random
 import threading
 import time
 
-import schedule
 import uvicorn
 
 import src.api as api_module
 import src.worker as worker_module
 from src.config import load_config
-from src.pipeline.listenbrainz import fetch_recommendations
+from src.pipeline.listenbrainz import (
+    fetch_lb_radio,
+    fetch_recommendations,
+    fetch_user_top_artists,
+)
 from src.pipeline.musicbrainz import lookup_recording
 from src.state import (
     get_download_by_mbid,
     get_pending_jobs,
     get_retryable,
+    get_setting,
     init_db,
     is_downloaded,
     mark_failed,
     mark_pending,
+    set_setting,
 )
 from src.utils.logger import get_logger, setup_logger
 
@@ -25,24 +31,84 @@ log = get_logger(__name__)
 
 def run_pipeline(cfg):
     log.info("pipeline started")
+    db = cfg.state_db
+    target = cfg.listenbrainz.recommendation_count  # default 25
+    cf_target = round(target * 0.8)
+    radio_target = target - cf_target
+    cf_exhausted = False
 
-    # 1. Fetch recommendations
+    # ── 1. CF 추천 (취향 80%) ──
+    cf_tracks = []
     try:
-        tracks = fetch_recommendations(
+        offset = int(get_setting(db, "cf_offset", "0"))
+        cf_tracks = fetch_recommendations(
             cfg.listenbrainz.username,
             cfg.listenbrainz.token,
-            cfg.listenbrainz.recommendation_count,
+            count=cf_target,
+            offset=offset,
         )
+        if cf_tracks:
+            # 모델 갱신 감지: offset=0일 때만 첫 MBID를 저장/비교
+            if offset == 0:
+                set_setting(db, "cf_first_mbid", cf_tracks[0]["mbid"])
+            set_setting(db, "cf_offset", str(offset + len(cf_tracks)))
+        else:
+            # CF 풀 소진 → 모델 갱신까지 대기, offset=0으로 리셋해서 다음에 재시도
+            if offset > 0:
+                # 풀 끝까지 감. offset 리셋하되, 다음 실행에서 모델 갱신 여부 확인
+                log.info("CF pool exhausted at offset, resetting to 0", offset=offset)
+                set_setting(db, "cf_offset", "0")
+            cf_exhausted = True
+            radio_target += cf_target
     except Exception as exc:
-        log.error("failed to fetch recommendations", error=str(exc))
-        return
+        log.error("CF fetch failed, proceeding with radio only", error=str(exc))
+        cf_exhausted = True
+        radio_target += cf_target
 
-    # 2. Filter already downloaded
-    new_tracks = [t for t in tracks if not is_downloaded(cfg.state_db, t["mbid"])]
-    log.info("tracks to process", new=len(new_tracks), total=len(tracks))
+    # ── 2. LB Radio (탐색 20%) ──
+    radio_tracks = []
+    try:
+        top_artists = fetch_user_top_artists(
+            cfg.listenbrainz.username, range_="quarter", count=10
+        )
+        if not top_artists:
+            top_artists = fetch_user_top_artists(
+                cfg.listenbrainz.username, range_="all_time", count=10
+            )
+        if top_artists:
+            seed = random.choice(top_artists)
+            prompt = f"artist:({seed['artist_name']})"
+            log.info("lb-radio seed artist", artist=seed["artist_name"])
+            radio_tracks = fetch_lb_radio(prompt, cfg.listenbrainz.token, mode="easy")
+            radio_tracks = radio_tracks[:radio_target]
+    except Exception as exc:
+        log.warning("radio fetch failed", error=str(exc))
 
-    # 3. Add retryable failures
-    retryable = get_retryable(cfg.state_db)
+    # Radio 실패 시 CF 폴백 (CF가 소진되지 않은 경우에만)
+    if not radio_tracks and not cf_exhausted:
+        cur_offset = int(get_setting(db, "cf_offset", "0"))
+        extra = fetch_recommendations(
+            cfg.listenbrainz.username,
+            cfg.listenbrainz.token,
+            count=radio_target,
+            offset=cur_offset,
+        )
+        radio_tracks = extra
+        if extra:
+            set_setting(db, "cf_offset", str(cur_offset + len(extra)))
+
+    # ── 3. 중복 필터링 ──
+    seen = set()
+    unique = []
+    for t in cf_tracks + radio_tracks:
+        if t["mbid"] not in seen:
+            seen.add(t["mbid"])
+            unique.append(t)
+    new_tracks = [t for t in unique if not is_downloaded(db, t["mbid"])]
+    log.info("tracks to process", new=len(new_tracks), total=len(unique))
+
+    # ── 4. 재시도 큐 추가 ──
+    retryable = get_retryable(db)
     if retryable:
         log.info("retrying failed tracks", count=len(retryable))
         new_tracks = retryable + new_tracks
@@ -51,28 +117,23 @@ def run_pipeline(cfg):
         log.info("nothing new to download")
         return
 
+    # ── 5. enqueue ──
     for track in new_tracks:
         mbid = track["mbid"]
         artist = track.get("artist", "")
         track_name = track.get("track_name", "")
 
-        # Retry tracks from state.db may have empty artist/track_name if the original
-        # LB lookup failed. Re-lookup from MB if mbid is a real UUID (not "manual-").
         if (not artist or not track_name) and not mbid.startswith("manual-"):
-            log.info(
-                "retry track missing artist/track, re-looking up from MB", mbid=mbid
-            )
+            log.info("retry track missing metadata, re-looking up from MB", mbid=mbid)
             meta = lookup_recording(mbid)
-            artist = meta.get("artist", "")
-            track_name = meta.get("title", "")
+            artist = artist or meta.get("artist", "")
+            track_name = track_name or meta.get("title", "")
             if not artist or not track_name:
-                log.warning(
-                    "MB lookup still empty after retry, skipping track", mbid=mbid
-                )
-                mark_failed(cfg.state_db, mbid, "MB lookup returned empty artist/track")
+                log.warning("MB lookup still empty, skipping", mbid=mbid)
+                mark_failed(db, mbid, "MB lookup returned empty artist/track")
                 continue
 
-        mark_pending(cfg.state_db, mbid, track_name, artist)
+        mark_pending(db, mbid, track_name, artist)
         worker_module.enqueue_job(
             job_id=mbid,
             artist=artist,
@@ -84,10 +145,22 @@ def run_pipeline(cfg):
 
 
 def _run_scheduler(cfg):
-    schedule.every(cfg.scheduler.interval_hours).hours.do(run_pipeline, cfg)
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    last_run = time.time()  # 초기 실행은 별도 스레드에서 이미 수행
+    default_interval = str(cfg.scheduler.interval_hours)
+    while not worker_module._shutdown_event.is_set():
+        worker_module._shutdown_event.wait(60)
+        try:
+            interval = int(
+                get_setting(cfg.state_db, "pipeline_interval_hours", default_interval)
+            )
+        except (ValueError, TypeError):
+            interval = cfg.scheduler.interval_hours
+        if time.time() - last_run >= interval * 3600:
+            try:
+                run_pipeline(cfg)
+            except Exception:
+                log.exception("pipeline run failed in scheduler")
+            last_run = time.time()
 
 
 def _reload_pending_jobs(cfg):

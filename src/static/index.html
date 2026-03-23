@@ -1266,6 +1266,18 @@
     <h2>ListenBrainz Pipeline</h2>
     <div class="lb-row">
       <button class="btn-secondary" onclick="runPipeline()">Run LB Pipeline</button>
+      <label style="font-size:0.83rem; color:#718096; display:inline-flex; align-items:center; gap:6px; margin-left:12px;">
+        Every
+        <select id="pipeline-interval" onchange="updateInterval(this.value)"
+                style="background:#1a1d2e; color:#e2e8f0; border:1px solid #2d3147; border-radius:4px; padding:2px 6px; font-size:0.83rem;">
+          <option value="1">1h</option>
+          <option value="2">2h</option>
+          <option value="3">3h</option>
+          <option value="6" selected>6h</option>
+          <option value="12">12h</option>
+          <option value="24">24h</option>
+        </select>
+      </label>
       <span id="lb-msg" style="font-size:0.83rem; color:#718096;"></span>
     </div>
   </section>
@@ -1768,6 +1780,42 @@
     });
   });
 
+  // ── Pipeline Interval ──────────────────────────────────────────────────────
+  async function loadInterval() {
+    try {
+      const res = await fetch('/api/settings/pipeline-interval');
+      if (res.ok) {
+        const data = await res.json();
+        const select = document.getElementById('pipeline-interval');
+        select.value = data.interval_hours;
+        select.dataset.prev = String(data.interval_hours);
+      }
+    } catch (e) { /* use default */ }
+  }
+
+  async function updateInterval(value) {
+    const select = document.getElementById('pipeline-interval');
+    const prev = select.dataset.prev || '6';
+    try {
+      const res = await fetch('/api/settings/pipeline-interval', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interval_hours: parseInt(value) }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      select.dataset.prev = String(value);
+    } catch (e) {
+      select.value = prev;
+      const lbMsg = document.getElementById('lb-msg');
+      if (lbMsg) {
+        lbMsg.textContent = 'Failed to update interval';
+        setTimeout(() => { if (lbMsg.textContent === 'Failed to update interval') lbMsg.textContent = ''; }, 5000);
+      }
+    }
+  }
+
+  loadInterval();
+
   // ── LB Pipeline ────────────────────────────────────────────────────────────
   async function runPipeline() {
     const lbMsg = document.getElementById('lb-msg');
@@ -1785,7 +1833,7 @@
   // ── History ────────────────────────────────────────────────────────────────
   function relativeTime(isoStr) {
     if (!isoStr) return '—';
-    const diff = Math.floor((Date.now() - new Date(isoStr + 'Z')) / 1000);
+    const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
     if (diff < 60)   return diff + 's ago';
     if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';

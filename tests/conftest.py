@@ -24,13 +24,6 @@ if "yt_dlp" not in sys.modules:
     sys.modules["yt_dlp"] = _yt_dlp_stub
     sys.modules["yt_dlp.utils"] = _utils_stub
 
-# schedule: 스케줄러 라이브러리. 로컬에 없으면 stub으로 대체한다.
-if "schedule" not in sys.modules:
-    _schedule_stub = types.ModuleType("schedule")
-    _schedule_stub.every = MagicMock()
-    _schedule_stub.run_pending = MagicMock()
-    sys.modules["schedule"] = _schedule_stub
-
 # uvicorn: ASGI 서버. 테스트에서는 실행하지 않으므로 stub으로 대체한다.
 if "uvicorn" not in sys.modules:
     _uvicorn_stub = types.ModuleType("uvicorn")

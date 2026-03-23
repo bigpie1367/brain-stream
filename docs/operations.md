@@ -44,6 +44,8 @@ NAVIDROME_PASSWORD=your_navidrome_password
 | `NAVIDROME_USER` | `admin` | Navidrome 사용자명 |
 | `NAVIDROME_PASSWORD` | — | Navidrome 비밀번호 **(필수)** |
 
+> **Note**: 런타임 설정(파이프라인 주기, CF offset)은 환경변수가 아닌 SQLite settings 테이블로 관리됩니다. Web UI 또는 `/api/settings/pipeline-interval` API로 재시작 없이 변경 가능합니다.
+
 ---
 
 ## 3. 배포
@@ -211,7 +213,21 @@ curl -X POST http://localhost:8080/api/pipeline/run
 curl http://localhost:8080/api/downloads | python3 -m json.tool
 ```
 
-### 5.3 다운로드 이력 확인
+### 5.3 설정 관리
+
+```bash
+# 파이프라인 주기 조회
+curl http://localhost:8080/api/settings/pipeline-interval
+
+# 파이프라인 주기 변경 (1-24시간)
+curl -X PUT http://localhost:8080/api/settings/pipeline-interval \
+  -H "Content-Type: application/json" \
+  -d '{"interval_hours": 3}'
+```
+
+> Web UI의 Settings 드롭다운에서도 동일하게 변경 가능합니다. 변경 사항은 SQLite settings 테이블에 즉시 저장되며 재시작 없이 적용됩니다.
+
+### 5.4 다운로드 이력 확인
 
 ```bash
 # API
@@ -226,7 +242,7 @@ docker compose -f docker-compose.prod.yml exec brainstream \
   sqlite3 /app/db/state.db "SELECT artist, track_name, error_msg, attempts FROM downloads WHERE status='failed';"
 ```
 
-### 5.4 라이브러리 파일 확인
+### 5.5 라이브러리 파일 확인
 
 ```bash
 # 특정 아티스트 폴더 확인
@@ -297,6 +313,18 @@ POST/DELETE 엔드포인트에 Rate Limiting이 적용되어 있다:
 - Docker `stop_grace_period: 40s` 설정 (30s join + 10s 버퍼)
 - 30s 내 미완료 시 Docker가 SIGKILL 전송 → `downloading` 상태 잡은 재시작 시 `mark_failed` 후 재시도
 - `docker kill`은 즉시 SIGKILL → 반드시 재시작 복구 경로로 처리됨
+
+### 추천 트랙이 반복됨 (같은 곡이 계속 나옴)
+
+CF 추천은 `cf_offset`을 증가시키며 페이지네이션하므로, offset이 LB 추천 총 개수를 초과하면 동일한 트랙이 반복될 수 있습니다. offset을 초기화하려면:
+
+```bash
+# cf_offset 초기화 (다음 파이프라인 실행 시 처음부터 다시 시작)
+docker compose exec brainstream \
+  sqlite3 /app/db/state.db "UPDATE settings SET value='0' WHERE key='cf_offset';"
+```
+
+또는 Web UI Settings에서 파이프라인을 수동 실행하면 자동으로 새 추천을 가져옵니다.
 
 ### 트랙이 다운로드되지 않음
 

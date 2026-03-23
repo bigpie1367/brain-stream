@@ -45,6 +45,25 @@ CREATE TABLE IF NOT EXISTS downloads (
 | album | TEXT | 태깅 완료 후 canonical album명으로 업데이트됨 | `Pablo Honey` |
 | mb_recording_id | TEXT | MusicBrainz recording UUID. LB 트랙은 mbid와 동일 값 저장. 수동 트랙은 MB 매칭 성공 시 기록, 실패 시 null | `3c3e5e5c-1234-5678-abcd-ef0123456789` |
 
+### 테이블: `settings`
+
+```sql
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+```
+
+파이프라인 동작에 영향을 주는 런타임 설정 및 상태 값을 키-값 쌍으로 저장한다.
+
+**알려진 키**
+
+| key | 설명 |
+|-----|------|
+| `cf_offset` | CF 추천 현재 offset 위치. 파이프라인 실행 시마다 진행됨. 모델 갱신 감지 시 0으로 리셋 |
+| `cf_first_mbid` | CF 추천 첫 번째 MBID. 모델 갱신 감지에 사용 — 새 실행 시 첫 MBID가 저장값과 다르면 offset 리셋 |
+| `pipeline_interval_hours` | 파이프라인 실행 주기 (시간 단위). `PUT /api/settings/pipeline-interval`으로 변경. 미설정 시 기본값 6 |
+
 ---
 
 ## 2. 상태 전이도

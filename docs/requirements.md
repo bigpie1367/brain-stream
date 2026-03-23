@@ -43,10 +43,10 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-01 |
-| 설명 | 설정된 ListenBrainz 계정의 CF 추천 트랙 목록을 주기적으로 가져온다 |
-| 입력 | username, token, count |
-| 출력 | mbid, artist, track_name 목록 |
-| 조건 | 이미 처리된 트랙(mbid 기준)은 건너뜀 |
+| 설명 | 설정된 ListenBrainz 계정의 CF 추천 트랙(80%) + LB Radio(탑 아티스트 시드, 20%)를 주기적으로 가져온다 |
+| 입력 | username, token, count, offset (settings 테이블의 cf_offset에서 읽음 — 매 실행마다 진행) |
+| 출력 | mbid, artist, track_name 목록 (source: "listenbrainz" 통일) |
+| 조건 | 이미 처리된 트랙(mbid 기준)은 건너뜀. CF와 Radio 간 중복 트랙은 MBID 기반으로 제거 |
 | 우선순위 | 필수 |
 
 ### FR-02. YouTube 자동 다운로드
@@ -98,8 +98,10 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-06 |
-| 설명 | 설정된 시간 간격(기본 6시간)으로 파이프라인을 자동 실행한다 |
-| 시작 | 컨테이너 기동 시 즉시 1회 실행 후 스케줄 등록 |
+| 설명 | 설정 가능한 시간 간격(기본 6시간, 1~24시간 범위)으로 파이프라인을 자동 실행한다 |
+| 동적 주기 | `pipeline_interval_hours`를 settings 테이블에 저장하고, Web UI 드롭다운 또는 `PUT /api/settings/pipeline-interval`로 런타임 변경 가능 |
+| 스케줄러 구현 | `schedule` 라이브러리 제거 — `_run_scheduler()`에서 직접 시간 비교(`time.time()`)로 대체. settings 테이블에서 매 tick마다 동적 주기를 읽어 적용 |
+| 시작 | 컨테이너 기동 시 즉시 1회 실행 후 스케줄 루프 진입 |
 | 재시도 | 실패한 트랙은 최대 3회(attempts < 3)까지 재시도 |
 | 우선순위 | 필수 |
 

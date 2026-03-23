@@ -385,3 +385,33 @@ def test_find_active_download_ignores_failed(tmp_state_db):
     mark_failed(tmp_state_db, "mbid-1", "error")
     result = find_active_download(tmp_state_db, "Radiohead", "Creep")
     assert result is None
+
+
+# ── settings 테이블 ──────────────────────────────────────────────────────────
+
+
+def test_get_setting_returns_default_when_not_set(tmp_state_db):
+    from src.state import get_setting
+
+    assert get_setting(tmp_state_db, "cf_offset", "0") == "0"
+
+
+def test_set_and_get_setting(tmp_state_db):
+    from src.state import get_setting, set_setting
+
+    set_setting(tmp_state_db, "cf_offset", "25")
+    assert get_setting(tmp_state_db, "cf_offset", "0") == "25"
+
+
+def test_set_setting_overwrites_existing(tmp_state_db):
+    from src.state import get_setting, set_setting
+
+    set_setting(tmp_state_db, "cf_offset", "25")
+    set_setting(tmp_state_db, "cf_offset", "50")
+    assert get_setting(tmp_state_db, "cf_offset", "0") == "50"
+
+
+def test_get_setting_returns_default_when_empty_string_key(tmp_state_db):
+    from src.state import get_setting
+
+    assert get_setting(tmp_state_db, "nonexistent") == ""

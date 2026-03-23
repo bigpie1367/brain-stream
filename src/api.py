@@ -40,8 +40,10 @@ from src.pipeline.tagger import (
 from src.state import (
     get_download_by_mbid,
     get_downloads_page,
+    get_setting,
     mark_ignored,
     mark_pending_if_not_duplicate,
+    set_setting,
     update_track_info,
 )
 from src.utils.fs import move_to_music_dir, resolve_dir, sanitize_path_component
@@ -89,6 +91,7 @@ _RATE_LIMITS: dict[str, int] = {
     "POST /api/rematch/apply": 10,
     "POST /api/edit/": 10,
     "DELETE /api/downloads/": 10,
+    "PUT /api/settings/": 10,
 }
 _rate_window = 60  # seconds
 _rate_store: dict[str, list[float]] = {}
@@ -1091,3 +1094,34 @@ async def navidrome_proxy(path: str, request: Request):
         status_code=upstream.status_code,
         headers=response_headers,
     )
+
+
+# ── Pipeline Interval Settings ────────────────────────────────────────────────
+
+
+@app.get("/api/settings/pipeline-interval")
+async def get_pipeline_interval():
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+    value = get_setting(
+        _cfg.state_db,
+        "pipeline_interval_hours",
+        str(_cfg.scheduler.interval_hours),
+    )
+    return {"interval_hours": int(value)}
+
+
+class IntervalUpdate(BaseModel):
+    interval_hours: int = Field(ge=1, le=24)
+
+
+@app.put("/api/settings/pipeline-interval")
+async def set_pipeline_interval(body: IntervalUpdate):
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
+    set_setting(
+        _cfg.state_db,
+        "pipeline_interval_hours",
+        str(body.interval_hours),
+    )
+    return {"interval_hours": body.interval_hours}
