@@ -163,7 +163,7 @@ def test_fetch_recommendations_passes_correct_headers_and_params(monkeypatch):
     mock_get.assert_called_once()
     _, kwargs = mock_get.call_args
     assert kwargs["headers"] == {"Authorization": "Token mytoken"}
-    assert kwargs["params"] == {"count": 10}
+    assert kwargs["params"] == {"count": 10, "offset": 0}
 
 
 def test_fetch_recommendations_url_contains_username(monkeypatch):
@@ -177,3 +177,29 @@ def test_fetch_recommendations_url_contains_username(monkeypatch):
 
     called_url = mock_get.call_args[0][0]
     assert "specificuser" in called_url
+
+
+def test_fetch_recommendations_passes_offset_param(monkeypatch):
+    """offset 파라미터가 API 요청에 전달되는지 확인한다."""
+    fake_response = _make_mock_response({"payload": {"mbids": []}})
+
+    with patch(
+        "src.pipeline.listenbrainz.requests.get", return_value=fake_response
+    ) as mock_get:
+        fetch_recommendations("myuser", "mytoken", count=20, offset=50)
+
+    _, kwargs = mock_get.call_args
+    assert kwargs["params"] == {"count": 20, "offset": 50}
+
+
+def test_fetch_recommendations_default_offset_is_zero(monkeypatch):
+    """offset 미지정 시 기본값 0이 전달된다."""
+    fake_response = _make_mock_response({"payload": {"mbids": []}})
+
+    with patch(
+        "src.pipeline.listenbrainz.requests.get", return_value=fake_response
+    ) as mock_get:
+        fetch_recommendations("myuser", "mytoken", count=10)
+
+    _, kwargs = mock_get.call_args
+    assert kwargs["params"] == {"count": 10, "offset": 0}

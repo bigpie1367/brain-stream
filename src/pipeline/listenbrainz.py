@@ -11,13 +11,13 @@ LB_BASE = "https://api.listenbrainz.org/1"
 
 
 def fetch_recommendations(
-    username: str, token: str, count: int = 25
+    username: str, token: str, count: int = 25, offset: int = 0
 ) -> List[Dict[str, Any]]:
     url = f"{LB_BASE}/cf/recommendation/user/{username}/recording"
     headers = {"Authorization": f"Token {token}"}
-    params = {"count": count}
+    params = {"count": count, "offset": offset}
 
-    log.info("fetching recommendations", username=username, count=count)
+    log.info("fetching recommendations", username=username, count=count, offset=offset)
     resp = requests.get(url, headers=headers, params=params, timeout=30)
     resp.raise_for_status()
 
