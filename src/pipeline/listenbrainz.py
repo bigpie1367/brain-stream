@@ -90,15 +90,14 @@ def fetch_lb_radio(prompt: str, token: str, mode: str = "easy") -> List[Dict[str
         resp = requests.get(url, headers=headers, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        tracks = (
-            data.get("payload", {})
-            .get("jspf", {})
-            .get("playlist", {})
-            .get("tracks", [])
-        )
+        playlist = data.get("payload", {}).get("jspf", {}).get("playlist", {})
+        tracks = playlist.get("track", playlist.get("tracks", []))
         results = []
         for t in tracks:
             identifier = t.get("identifier", "")
+            # identifier can be a list of URLs or a single string
+            if isinstance(identifier, list):
+                identifier = identifier[0] if identifier else ""
             if not identifier:
                 continue
             mbid = identifier.rstrip("/").split("/")[-1]
