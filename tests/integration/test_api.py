@@ -1920,3 +1920,40 @@ def test_rate_limit_not_applied_to_get(client):
     for _ in range(20):
         resp = client.get("/api/downloads")
         assert resp.status_code == 200
+
+
+# ── Pipeline Interval Settings ────────────────────────────────────────────────
+
+
+def test_get_pipeline_interval_returns_default(client):
+    resp = client.get("/api/settings/pipeline-interval")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["interval_hours"] == 6
+
+
+def test_put_pipeline_interval_updates_value(client):
+    resp = client.put(
+        "/api/settings/pipeline-interval",
+        json={"interval_hours": 12},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["interval_hours"] == 12
+
+    # Verify persisted
+    resp2 = client.get("/api/settings/pipeline-interval")
+    assert resp2.json()["interval_hours"] == 12
+
+
+def test_put_pipeline_interval_rejects_invalid(client):
+    resp = client.put(
+        "/api/settings/pipeline-interval",
+        json={"interval_hours": 0},
+    )
+    assert resp.status_code == 422
+
+    resp2 = client.put(
+        "/api/settings/pipeline-interval",
+        json={"interval_hours": 25},
+    )
+    assert resp2.status_code == 422
