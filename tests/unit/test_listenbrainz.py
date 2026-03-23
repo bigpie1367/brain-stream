@@ -203,3 +203,157 @@ def test_fetch_recommendations_default_offset_is_zero(monkeypatch):
 
     _, kwargs = mock_get.call_args
     assert kwargs["params"] == {"count": 10, "offset": 0}
+
+
+# ── fetch_user_top_artists ────────────────────────────────────────────────────
+
+from src.pipeline.listenbrainz import fetch_user_top_artists
+
+
+def test_fetch_user_top_artists_parses_response(monkeypatch):
+    """탑 아티스트 API 응답을 파싱하여 artist_name/artist_mbid 리스트를 반환한다."""
+    fake_response = _make_mock_response(
+        {
+            "payload": {
+                "artists": [
+                    {
+                        "artist_name": "Radiohead",
+                        "artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+                    },
+                    {
+                        "artist_name": "IU",
+                        "artist_mbid": "b9545342-1e6d-4dae-84ac-013374ad8d7c",
+                    },
+                ]
+            }
+        }
+    )
+
+    with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response):
+        results = fetch_user_top_artists("testuser", range_="quarter", count=5)
+
+    assert len(results) == 2
+    assert results[0]["artist_name"] == "Radiohead"
+    assert results[1]["artist_mbid"] == "b9545342-1e6d-4dae-84ac-013374ad8d7c"
+
+
+def test_fetch_user_top_artists_returns_empty_on_error(monkeypatch):
+    """API 에러 시 빈 리스트를 반환한다."""
+    with patch(
+        "src.pipeline.listenbrainz.requests.get",
+        side_effect=requests.ConnectionError("timeout"),
+    ):
+        results = fetch_user_top_artists("testuser")
+
+    assert results == []
+
+
+# ── fetch_lb_radio ────────────────────────────────────────────────────────────
+
+from src.pipeline.listenbrainz import fetch_lb_radio
+
+
+def test_fetch_lb_radio_parses_jspf(monkeypatch):
+    """JSPF 응답을 파싱하여 mbid/artist/track_name 리스트를 반환한다."""
+    fake_response = _make_mock_response(
+        {
+            "payload": {
+                "jspf": {
+                    "playlist": {
+                        "tracks": [
+                            {
+                                "title": "Creep",
+                                "creator": "Radiohead",
+                                "identifier": "https://musicbrainz.org/recording/aaaa-0001",
+                            },
+                            {
+                                "title": "Karma Police",
+                                "creator": "Radiohead",
+                                "identifier": "https://musicbrainz.org/recording/bbbb-0002",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
+    with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response):
+        results = fetch_lb_radio("artist:(Radiohead)", mode="easy")
+
+    assert len(results) == 2
+    assert results[0]["mbid"] == "aaaa-0001"
+    assert results[0]["artist"] == "Radiohead"
+    assert results[0]["track_name"] == "Creep"
+
+
+def test_fetch_lb_radio_skips_entries_without_identifier(monkeypatch):
+    """identifier가 없는 트랙은 건너뛴다."""
+    fake_response = _make_mock_response(
+        {
+            "payload": {
+                "jspf": {
+                    "playlist": {
+                        "tracks": [
+                            {
+                                "title": "Valid",
+                                "creator": "Artist",
+                                "identifier": "https://musicbrainz.org/recording/aaaa-0001",
+                            },
+                            {"title": "Invalid", "creator": "Artist"},
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
+    with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response):
+        results = fetch_lb_radio("artist:(Test)", mode="easy")
+
+    assert len(results) == 1
+
+
+def test_fetch_lb_radio_returns_empty_on_error(monkeypatch):
+    """API 에러 시 빈 리스트를 반환한다."""
+    with patch(
+        "src.pipeline.listenbrainz.requests.get",
+        side_effect=requests.ConnectionError("timeout"),
+    ):
+        results = fetch_lb_radio("artist:(Test)")
+
+    assert results == []
+
+
+def test_fetch_lb_radio_falls_back_to_lookup_when_creator_missing(monkeypatch):
+    """creator가 없는 트랙은 lookup_recording으로 보강한다."""
+    fake_response = _make_mock_response(
+        {
+            "payload": {
+                "jspf": {
+                    "playlist": {
+                        "tracks": [
+                            {
+                                "title": "",
+                                "creator": "",
+                                "identifier": "https://musicbrainz.org/recording/aaaa-0001",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
+    def fake_lookup(mbid):
+        return {"artist": "Radiohead", "title": "Creep"}
+
+    with (
+        patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response),
+        patch("src.pipeline.listenbrainz.lookup_recording", side_effect=fake_lookup),
+    ):
+        results = fetch_lb_radio("artist:(Radiohead)", mode="easy")
+
+    assert len(results) == 1
+    assert results[0]["artist"] == "Radiohead"
+    assert results[0]["track_name"] == "Creep"
