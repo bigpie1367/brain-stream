@@ -1,7 +1,7 @@
 # 시스템 아키텍처
 
-- **버전**: 1.9.0
-- **작성일**: 2026-03-18
+- **버전**: 2.0.0
+- **작성일**: 2026-03-21
 
 ---
 
@@ -81,6 +81,9 @@ External APIs:
 | `src/pipeline/listenbrainz.py` | ListenBrainz CF 추천 API 호출; `recording_mbid`만 반환하므로 `_lookup_recording(mbid)`로 MB API에서 artist/track 조회 |
 | `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `ytsearch5:` 5개 후보 검색 후 차단 영상 감지 시 다음 후보 retry; `(file_path, yt_metadata)` 튜플 반환. `search_candidates(artist, track)`: 다운로드 없이 후보 5개 메타데이터 반환. `download_track_by_id(video_id, ...)`: 지정 video_id로 직접 다운로드. `_select_best_entry(entries, artist, track_name, strict=True)`: strict 모드에서 라이브/커버 영상을 점수 패널티 대신 사전 필터링으로 제외하고 클린 후보가 없을 때만 전체 후보 대상 스코어링으로 폴백. `download_track()`은 기본값 strict=True 사용 |
 | `src/pipeline/tagger.py` | MB API recording 검색 (artist 유사도 검증, 4단계 폴백) → mutagen 전체 태그 쓰기 → shutil 파일 복사 → MB enrichment → CAA/iTunes/Deezer 커버아트 임베딩 → YouTube 썸네일/채널명 폴백. `_lookup_recording_by_mbid(mbid)`: MB recording UUID로 직접 recording 조회. `_mb_lookup_artist_ids(artist, limit=3)`: MB Artist API로 아티스트명 검색 → MBID 목록 반환 (Stage 2.5에서 사용). `write_mb_trackid_tag(file_path, recording_id)`: 파일 포맷별(FLAC/Opus/MP4/기타) mb_trackid 태그 기록. `_write_artist_tag`, `_write_album_tag`, `_write_title_tag`, `_itunes_search(country=)` 등 public alias로 `api.py` 재매칭/편집에도 사용. LB 트랙은 `_lookup_recording_by_mbid(mbid)` 직접 조회 후 실패 시 `_mb_search_recording()`으로 폴백. `tag_and_import()` 반환: `(bool, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id)` 6-tuple |
+| `src/jobs.py` | 다운로드 잡 실행 로직. `run_download_job()` — 워커 스레드에서 호출되어 다운로드→태깅→스캔→상태 업데이트 전체 흐름 실행. `api.py`와 `worker.py`에서 분리된 잡 실행 책임 |
+| `src/pipeline/musicbrainz.py` | 공유 MusicBrainz API 클라이언트. `lookup_recording(mbid)`, `_escape_mb_query()`, MB 검색 관련 공통 함수. tagger.py에서 분리되어 순환 import 방지 |
+| `src/utils/fs.py` | 공유 파일시스템 유틸리티. `sanitize_path_component()` (특수문자 제거), `resolve_dir()` (대소문자 무시 기존 폴더 재사용), `move_to_music_dir()` (파일 이동 + 빈 폴더 정리) |
 | `src/pipeline/navidrome.py` | Subsonic API token-auth, startScan + getScanStatus 폴링 |
 | `src/utils/logger.py` | structlog 설정 (TTY: 컬러 콘솔, non-TTY: JSON). `RotatingFileHandler` 50MB × 5 백업 |
 | `src/static/index.html` | 다크 테마 단일 파일 Web UI. Downloads 탭 + Library 탭 (아티스트/앨범/트랙 브라우징, 트랙별 앨범 재매칭 버튼). 수동 다운로드 섹션에 Auto/Pick 모드 토글 — Pick 모드에서 YouTube 후보 카드(썸네일, 제목, 채널, 재생시간, Live/Cover 배지) 표시 후 원하는 영상 선택 다운로드. 다운로드 이력 테이블에 Album 컬럼, Link 컬럼 (`mb_recording_id` 있으면 `LB ↗` 뱃지로 listenbrainz.org/track/{mb_recording_id} 링크, 없으면 `—` 회색 뱃지), Actions 컬럼: ▶ Play 버튼(done 상태 + file_path 있는 행만), ✏ Edit 버튼(done 상태, 메타데이터 직접 편집 모달). Edit 모달: artist/album/track_name 텍스트 입력 → `POST /api/edit/{song_id}` 호출 → 즉시 행 업데이트. 컬럼 순서: Artist / Track / Album / Source / Status / Link / Time / Actions. 하단 고정 미니 플레이어(HTML5 audio, 트랙명/아티스트명 표시, ✕ 닫기). UI 텍스트 영어 통일, 버튼 min-width 고정, 테이블 fixed layout |

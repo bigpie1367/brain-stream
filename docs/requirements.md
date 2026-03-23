@@ -1,8 +1,8 @@
 # 요구사항 정의서
 
 - **프로젝트명**: music-bot
-- **버전**: 1.1.0
-- **작성일**: 2026-03-18
+- **버전**: 2.0.0
+- **작성일**: 2026-03-21
 - **상태**: 구현 완료
 
 ---
@@ -117,8 +117,21 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-08 |
-| 설명 | 전체 다운로드 이력(최신 100건)을 Web UI 및 API로 조회 가능 |
-| 표시 항목 | mbid, artist, track_name, status, source, attempts, downloaded_at, error_msg |
+| 설명 | 다운로드 이력을 페이지네이션(limit/offset)으로 조회하고, 아티스트/트랙/앨범명으로 검색할 수 있다 |
+| 표시 항목 | mbid, artist, track_name, album, status, source, attempts, downloaded_at, error_msg, file_path, mb_recording_id |
+| 페이지네이션 | `limit` (1~500, 기본 100), `offset` (기본 0) 파라미터로 페이지 단위 조회. `total` 카운트 반환 |
+| 검색 | `search` 파라미터로 artist/track_name/album LIKE 부분 일치 검색 |
+| 무한 스크롤 | Web UI에서 IntersectionObserver 기반 무한 스크롤로 추가 로딩 (debounce 300ms) |
+| 필터 | `ignored` 상태 레코드는 항상 제외 |
+| 우선순위 | 필수 |
+
+### FR-09. 수동 다운로드 중복 방지
+
+| 항목 | 내용 |
+|------|------|
+| ID | FR-09 |
+| 설명 | 동일 artist + track 조합의 done/downloading/pending 레코드가 이미 존재하면 중복 다운로드를 방지한다 |
+| 동작 | `mark_pending_if_not_duplicate()`로 원자적 중복 체크. 중복 시 기존 레코드를 `{"duplicate": true, "existing": {...}}` 형태로 반환 |
 | 우선순위 | 필수 |
 
 ---
