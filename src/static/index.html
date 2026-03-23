@@ -1786,14 +1786,16 @@
       const res = await fetch('/api/settings/pipeline-interval');
       if (res.ok) {
         const data = await res.json();
-        document.getElementById('pipeline-interval').value = data.interval_hours;
+        const select = document.getElementById('pipeline-interval');
+        select.value = data.interval_hours;
+        select.dataset.prev = String(data.interval_hours);
       }
     } catch (e) { /* use default */ }
   }
 
   async function updateInterval(value) {
     const select = document.getElementById('pipeline-interval');
-    const prev = select.dataset.prev || select.value;
+    const prev = select.dataset.prev || '6';
     select.dataset.prev = value;
     try {
       const res = await fetch('/api/settings/pipeline-interval', {

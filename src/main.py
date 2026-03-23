@@ -116,7 +116,7 @@ def run_pipeline(cfg):
             seen.add(t["mbid"])
             unique.append(t)
     new_tracks = [t for t in unique if not is_downloaded(db, t["mbid"])]
-    log.info("tracks to process", new=len(new_tracks), total=len(all_tracks))
+    log.info("tracks to process", new=len(new_tracks), total=len(unique))
 
     # ── 4. 재시도 큐 추가 ──
     retryable = get_retryable(db)
