@@ -109,8 +109,13 @@ def run_pipeline(cfg):
             set_setting(db, "cf_offset", str(cur_offset + len(extra)))
 
     # ── 3. 중복 필터링 ──
-    all_tracks = cf_tracks + radio_tracks
-    new_tracks = [t for t in all_tracks if not is_downloaded(db, t["mbid"])]
+    seen = set()
+    unique = []
+    for t in cf_tracks + radio_tracks:
+        if t["mbid"] not in seen:
+            seen.add(t["mbid"])
+            unique.append(t)
+    new_tracks = [t for t in unique if not is_downloaded(db, t["mbid"])]
     log.info("tracks to process", new=len(new_tracks), total=len(all_tracks))
 
     # ── 4. 재시도 큐 추가 ──
@@ -152,17 +157,20 @@ def run_pipeline(cfg):
 
 def _run_scheduler(cfg):
     last_run = time.time()  # 초기 실행은 별도 스레드에서 이미 수행
+    default_interval = str(cfg.scheduler.interval_hours)
     while not worker_module._shutdown_event.is_set():
         worker_module._shutdown_event.wait(60)
-        interval = int(
-            get_setting(
-                cfg.state_db,
-                "pipeline_interval_hours",
-                str(cfg.scheduler.interval_hours),
+        try:
+            interval = int(
+                get_setting(cfg.state_db, "pipeline_interval_hours", default_interval)
             )
-        )
+        except (ValueError, TypeError):
+            interval = cfg.scheduler.interval_hours
         if time.time() - last_run >= interval * 3600:
-            run_pipeline(cfg)
+            try:
+                run_pipeline(cfg)
+            except Exception:
+                log.exception("pipeline run failed in scheduler")
             last_run = time.time()
 
 
