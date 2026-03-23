@@ -48,29 +48,19 @@ def run_pipeline(cfg):
             offset=offset,
         )
         if cf_tracks:
-            # 모델 갱신 감지
-            new_first = cf_tracks[0]["mbid"]
-            old_first = get_setting(db, "cf_first_mbid", "")
-            if old_first and new_first != old_first and offset > 0:
-                log.info("CF model refreshed, resetting offset")
-                offset = 0
-                cf_tracks = fetch_recommendations(
-                    cfg.listenbrainz.username,
-                    cfg.listenbrainz.token,
-                    count=cf_target,
-                    offset=0,
-                )
-                new_first = cf_tracks[0]["mbid"] if cf_tracks else ""
-            if cf_tracks:
-                set_setting(db, "cf_first_mbid", new_first)
-                set_setting(db, "cf_offset", str(offset + len(cf_tracks)))
-            else:
-                cf_exhausted = True
-                radio_target += cf_target
+            # 모델 갱신 감지: offset=0일 때만 첫 MBID를 저장/비교
+            if offset == 0:
+                set_setting(db, "cf_first_mbid", cf_tracks[0]["mbid"])
+            set_setting(db, "cf_offset", str(offset + len(cf_tracks)))
         else:
+            # CF 풀 소진 → 모델 갱신까지 대기, offset=0으로 리셋해서 다음에 재시도
+            old_first = get_setting(db, "cf_first_mbid", "")
+            if offset > 0:
+                # 풀 끝까지 감. offset 리셋하되, 다음 실행에서 모델 갱신 여부 확인
+                log.info("CF pool exhausted at offset, resetting to 0", offset=offset)
+                set_setting(db, "cf_offset", "0")
             cf_exhausted = True
             radio_target += cf_target
-            log.info("CF pool exhausted, shifting target to radio")
     except Exception as exc:
         log.error("CF fetch failed, proceeding with radio only", error=str(exc))
         cf_exhausted = True
