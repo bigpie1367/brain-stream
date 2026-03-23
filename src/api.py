@@ -1101,6 +1101,8 @@ async def navidrome_proxy(path: str, request: Request):
 
 @app.get("/api/settings/pipeline-interval")
 async def get_pipeline_interval():
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
     value = get_setting(
         _cfg.state_db,
         "pipeline_interval_hours",
@@ -1115,6 +1117,8 @@ class IntervalUpdate(BaseModel):
 
 @app.put("/api/settings/pipeline-interval")
 async def set_pipeline_interval(body: IntervalUpdate):
+    if not _cfg:
+        raise HTTPException(status_code=503, detail="config not loaded yet")
     set_setting(
         _cfg.state_db,
         "pipeline_interval_hours",

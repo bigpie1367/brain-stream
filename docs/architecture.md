@@ -7,7 +7,7 @@
 
 ## 1. 전체 구성도
 
-```
+```text
 인터넷 클라이언트 (Amperfy 등 Subsonic 앱, 브라우저)
         │ HTTPS :443
         ▼
@@ -94,7 +94,7 @@ External APIs:
 
 ### 3.1 자동 파이프라인 (ListenBrainz)
 
-```
+```text
 [Scheduler: dynamic interval (settings.pipeline_interval_hours) or 수동 트리거]
         │
         ▼
@@ -110,7 +110,7 @@ ListenBrainz CF API
         ▼
 [LB Radio — 20% 목표 (탐색 소스)]
 ListenBrainz Radio API
-  → 장르/분위기 기반 랜덤 트랙 반환
+  → 유저 탑 아티스트 기반 artist:() 프롬프트 탐색
   → CF 실패 또는 결과 부족 시 Radio가 CF 몫까지 대체 (fallback)
         │
         ▼
@@ -135,7 +135,7 @@ state.db 중복 체크 (mbid 기준)
 
 ### 3.2 수동 다운로드 파이프라인 (Web UI)
 
-```
+```text
 [Web UI] POST /api/download {artist, track}
         │
         ▼
@@ -154,7 +154,7 @@ SSE emit: "queued" (대기 중...)
 
 LB 자동 트랙과 수동 요청 트랙이 동일한 워커 스레드에서 FIFO 순서로 처리됨.
 
-```
+```text
 [worker_loop — 단일 워커 스레드, 순차 처리]
         │
         ├─ _work_queue.get()  → job_spec 획득
@@ -248,7 +248,7 @@ LB 자동 트랙과 수동 요청 트랙이 동일한 워커 스레드에서 FIF
 
 ## 4. 스레딩 모델
 
-```
+```text
 Main Thread
   └─ uvicorn (HTTP 서버, 블로킹)
 
@@ -300,7 +300,7 @@ Daemon Thread 2 — scheduler
 
 ## 5. 데이터 흐름 (파일)
 
-```
+```text
 YouTube
   └─ yt-dlp 다운로드
        └─ data/staging/{mbid}.flac   ← 임시 파일

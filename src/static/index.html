@@ -1796,7 +1796,6 @@
   async function updateInterval(value) {
     const select = document.getElementById('pipeline-interval');
     const prev = select.dataset.prev || '6';
-    select.dataset.prev = value;
     try {
       const res = await fetch('/api/settings/pipeline-interval', {
         method: 'PUT',
@@ -1804,9 +1803,14 @@
         body: JSON.stringify({ interval_hours: parseInt(value) }),
       });
       if (!res.ok) throw new Error(await res.text());
+      select.dataset.prev = String(value);
     } catch (e) {
       select.value = prev;
-      showToast('Failed to update interval: ' + e.message, true);
+      const lbMsg = document.getElementById('lb-msg');
+      if (lbMsg) {
+        lbMsg.textContent = 'Failed to update interval';
+        setTimeout(() => { if (lbMsg.textContent === 'Failed to update interval') lbMsg.textContent = ''; }, 5000);
+      }
     }
   }
 

@@ -54,7 +54,6 @@ def run_pipeline(cfg):
             set_setting(db, "cf_offset", str(offset + len(cf_tracks)))
         else:
             # CF 풀 소진 → 모델 갱신까지 대기, offset=0으로 리셋해서 다음에 재시도
-            old_first = get_setting(db, "cf_first_mbid", "")
             if offset > 0:
                 # 풀 끝까지 감. offset 리셋하되, 다음 실행에서 모델 갱신 여부 확인
                 log.info("CF pool exhausted at offset, resetting to 0", offset=offset)
