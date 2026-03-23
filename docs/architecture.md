@@ -95,14 +95,27 @@ External APIs:
 ### 3.1 자동 파이프라인 (ListenBrainz)
 
 ```
-[Scheduler: 6h 주기 or 수동 트리거]
+[Scheduler: dynamic interval (settings.pipeline_interval_hours) or 수동 트리거]
         │
         ▼
+[CF 추천 — 80% 목표]
 ListenBrainz CF API
-  GET /1/cf/recommendation/user/{username}/recording
+  GET /1/cf/recommendation/user/{username}/recording?offset={cf_offset}
   → recording_mbid 목록만 반환
+  → cf_offset 진행 (offset progression, 80% 채울 때까지 순차 소진)
+  → 첫 번째 mbid가 settings.cf_first_mbid와 다르면 모델 갱신 감지 → offset 리셋
   → _lookup_recording(mbid): MB API GET /ws/2/recording/{mbid}?inc=artist-credits
        artist/track이 비어있으면 skip
+        │
+        ▼
+[LB Radio — 20% 목표 (탐색 소스)]
+ListenBrainz Radio API
+  → 장르/분위기 기반 랜덤 트랙 반환
+  → CF 실패 또는 결과 부족 시 Radio가 CF 몫까지 대체 (fallback)
+        │
+        ▼
+[트랙 중복 제거]
+  CF 결과와 Radio 결과 간 mbid 교차 중복 제거
         │
         ▼
 state.db 중복 체크 (mbid 기준)
@@ -248,8 +261,8 @@ Daemon Thread 1 — pipeline
   └─ run_pipeline() (기동 시 즉시 1회 실행 → 각 트랙 enqueue_job())
 
 Daemon Thread 2 — scheduler
-  └─ _run_scheduler() (60초 틱, schedule 라이브러리)
-       └─ run_pipeline() (N시간마다 호출)
+  └─ _run_scheduler() (60초 틱, 직접 시간 비교)
+       └─ run_pipeline() (settings.pipeline_interval_hours 마다 호출, 기본 6h)
 ```
 
 **동시성 제어:**
@@ -272,6 +285,7 @@ Daemon Thread 2 — scheduler
 | API 입력 검증 | Pydantic `Field(max_length=500)`, `Query(max_length=500)` |
 | SSE 큐 TTL | `_job_queues`에 last-activity 타임스탬프, 30분 비활성 시 워커 루프(잡 완료 후) 정리. `touch_sse_queue()`로 keep-alive 시 갱신 |
 | 로그 로테이션 | `RotatingFileHandler` 50MB × 5 파일 (최대 ~300MB) |
+| 트랙 중복 제거 | CF 추천과 Radio 탐색 소스 간 mbid 교차 중복 제거 (pipeline 내부) |
 
 **재시작 복구 (`_reload_pending_jobs`):**
 - `status = 'pending'` 잡: 그대로 재큐
