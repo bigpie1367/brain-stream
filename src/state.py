@@ -57,6 +57,13 @@ def init_db(db_path: str):
             conn.execute("ALTER TABLE downloads ADD COLUMN mb_recording_id TEXT")
         except sqlite3.OperationalError:
             pass  # already exists
+        # Settings table for persistent configuration
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
     log.info("state.db initialised", path=db_path)
 
 
@@ -298,3 +305,21 @@ def mark_pending_if_not_duplicate(
 def delete_download(db_path: str, mbid: str):
     with _conn(db_path) as conn:
         conn.execute("DELETE FROM downloads WHERE mbid = ?", (mbid,))
+
+
+def get_setting(db_path: str, key: str, default: str = "") -> str:
+    """settings 테이블에서 값 조회. 없으면 default 반환."""
+    with _conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(db_path: str, key: str, value: str) -> None:
+    """settings 테이블에 값 저장 (INSERT OR REPLACE)."""
+    with _conn(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
