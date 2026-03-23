@@ -78,15 +78,16 @@ def fetch_user_top_artists(
         return []
 
 
-def fetch_lb_radio(prompt: str, mode: str = "easy") -> List[Dict[str, Any]]:
+def fetch_lb_radio(prompt: str, token: str, mode: str = "easy") -> List[Dict[str, Any]]:
     """LB Radio API 호출. JSPF 파싱하여 [{mbid, artist, track_name}, ...] 반환.
     API 실패 시 빈 리스트 반환.
     """
     url = f"{LB_BASE}/explore/lb-radio"
+    headers = {"Authorization": f"Token {token}"}
     params = {"prompt": prompt, "mode": mode}
     try:
         log.info("fetching lb-radio", prompt=prompt, mode=mode)
-        resp = requests.get(url, params=params, timeout=60)
+        resp = requests.get(url, headers=headers, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
         tracks = (

@@ -279,7 +279,7 @@ def test_fetch_lb_radio_parses_jspf(monkeypatch):
     )
 
     with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response):
-        results = fetch_lb_radio("artist:(Radiohead)", mode="easy")
+        results = fetch_lb_radio("artist:(Radiohead)", "testtoken", mode="easy")
 
     assert len(results) == 2
     assert results[0]["mbid"] == "aaaa-0001"
@@ -309,7 +309,7 @@ def test_fetch_lb_radio_skips_entries_without_identifier(monkeypatch):
     )
 
     with patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response):
-        results = fetch_lb_radio("artist:(Test)", mode="easy")
+        results = fetch_lb_radio("artist:(Test)", "testtoken", mode="easy")
 
     assert len(results) == 1
 
@@ -320,7 +320,7 @@ def test_fetch_lb_radio_returns_empty_on_error(monkeypatch):
         "src.pipeline.listenbrainz.requests.get",
         side_effect=requests.ConnectionError("timeout"),
     ):
-        results = fetch_lb_radio("artist:(Test)")
+        results = fetch_lb_radio("artist:(Test)", "testtoken")
 
     assert results == []
 
@@ -352,7 +352,7 @@ def test_fetch_lb_radio_falls_back_to_lookup_when_creator_missing(monkeypatch):
         patch("src.pipeline.listenbrainz.requests.get", return_value=fake_response),
         patch("src.pipeline.listenbrainz.lookup_recording", side_effect=fake_lookup),
     ):
-        results = fetch_lb_radio("artist:(Radiohead)", mode="easy")
+        results = fetch_lb_radio("artist:(Radiohead)", "testtoken", mode="easy")
 
     assert len(results) == 1
     assert results[0]["artist"] == "Radiohead"

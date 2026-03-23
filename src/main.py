@@ -90,7 +90,7 @@ def run_pipeline(cfg):
             seed = random.choice(top_artists)
             prompt = f"artist:({seed['artist_name']})"
             log.info("lb-radio seed artist", artist=seed["artist_name"])
-            radio_tracks = fetch_lb_radio(prompt, mode="easy")
+            radio_tracks = fetch_lb_radio(prompt, cfg.listenbrainz.token, mode="easy")
             radio_tracks = radio_tracks[:radio_target]
     except Exception as exc:
         log.warning("radio fetch failed", error=str(exc))
