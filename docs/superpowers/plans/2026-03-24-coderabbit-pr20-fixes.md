@@ -20,3 +20,6 @@
 13. Make `_write_single_tag` raise on failure in `src/pipeline/tagger.py`
 14. Atomic `INSERT ... WHERE NOT EXISTS` in `src/state.py`
 15. Update tests for collision check mock and exception expectations
+16. Fix `is_downloaded()` to include pending/downloading in `src/state.py`
+17. Add `source` to `get_retryable()` SELECT in `src/state.py`
+18. Use `track.get("source")` in pipeline enqueue in `src/main.py`

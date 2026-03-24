@@ -23,3 +23,6 @@ PR #20 received several review comments from CodeRabbit identifying potential bu
 13. **tagger.py**: `_write_single_tag` swallowed exceptions — make it raise so API callers can fail-fast
 14. **state.py**: `mark_pending_if_not_duplicate` race condition — replace SELECT+INSERT with atomic `INSERT ... WHERE NOT EXISTS`
 15. **tests**: Update rematch_apply tests for collision check mock, tagger tests for raised exceptions
+16. **state.py**: `is_downloaded()` should also filter pending/downloading to prevent double-enqueue on restart
+17. **state.py**: `get_retryable()` missing `source` column — manual failed jobs lose source context
+18. **main.py**: `run_pipeline()` enqueue should use `track.get("source")` instead of hardcoded `"listenbrainz"`
