@@ -181,8 +181,28 @@ def _extract_mb_recording_title(recordings: list, best_id: str) -> str:
 
 
 def _escape_mb_query(value: str) -> str:
-    """Escape Lucene special characters for MusicBrainz search queries."""
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    """Escape Lucene special characters for MusicBrainz search queries.
+
+    Special chars: + - && || ! ( ) { } [ ] ^ " ~ * ? : \\ /
+    """
+    out = []
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        # Multi-char operators
+        if i + 1 < len(value):
+            pair = value[i : i + 2]
+            if pair in ("&&", "||"):
+                out.append(f"\\{pair}")
+                i += 2
+                continue
+        # Single-char specials
+        if ch in r'+-!(){}[]^"~*?:\/':
+            out.append(f"\\{ch}")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _mb_lookup_artist_ids(artist: str, limit: int = 3) -> list[str]:
