@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import mutagen.flac
+import pytest
 from src.pipeline.musicbrainz import (
     _collect_recording_candidates,
     _mb_lookup_artist_ids,
