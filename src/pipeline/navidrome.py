@@ -1,8 +1,6 @@
 import hashlib
-import random
-import string
+import secrets
 import time
-from typing import Optional
 
 import requests
 
@@ -15,7 +13,7 @@ _CLIENT = "music-auto"
 
 
 def _auth_params(username: str, password: str) -> dict:
-    salt = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    salt = secrets.token_hex(6)
     token = hashlib.md5((password + salt).encode()).hexdigest()
     return {
         "u": username,

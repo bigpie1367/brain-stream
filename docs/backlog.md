@@ -1,8 +1,8 @@
 # 프로젝트 백로그
 
 - **작성일**: 2026-03-04
-- **현재 버전**: 1.0.2
-- **최종 업데이트**: 2026-03-16
+- **현재 버전**: 1.1.0
+- **최종 업데이트**: 2026-03-18
 
 ---
 
@@ -129,6 +129,27 @@
 | US-24 | Navidrome이 외부 포트 미노출 — brainstream 도메인 하나만으로 외부 앱 연동 가능 | 2026-03-05 |
 | ~~US-25~~ | ~~beets MusicBrainz 연결 시 IPv6 비활성화(sysctls)로 컨테이너 내 연결 실패 방지~~ (beets 제거로 불필요) | 2026-03-05 |
 
+### Epic 14: 추천 품질 강화 — CF Offset + LB Radio + Dynamic Interval (2026-03-23)
+
+| ID | User Story | 완료일 |
+|----|-----------|--------|
+| US-68 | CF 추천에 offset 페이지네이션 도입 — 매 파이프라인 실행마다 `cf_offset`을 진행시켜 같은 트랙 반복 방지. settings 테이블의 `cf_offset` / `cf_first_mbid`로 경계 감지 및 자동 리셋 | 2026-03-23 |
+| US-69 | LB Radio를 상시 탐색 소스로 추가 — 사용자 탑 아티스트를 시드로 Radio 트랙을 목표량의 20% 할당. CF 80% + Radio 20% 분할 | 2026-03-23 |
+| US-70 | 추천 소스 통합 — CF와 Radio 모두 `source = "listenbrainz"`로 저장. MBID 기반 중복 제거(CF ∩ Radio 교집합 트랙 제거) | 2026-03-23 |
+| US-71 | 파이프라인 주기 동적 설정 — settings 테이블 `pipeline_interval_hours` 도입. `schedule` 라이브러리 제거 → `_run_scheduler()` 직접 시간 비교로 대체. Web UI 드롭다운(1~24시간) 추가 | 2026-03-23 |
+| US-72 | `GET /api/settings/pipeline-interval`, `PUT /api/settings/pipeline-interval` 엔드포인트 추가 — 재시작 없이 런타임 주기 변경 가능 | 2026-03-23 |
+
+### Epic 13: P0 안정성 강화 — Stability Hardening (2026-03-18)
+
+| ID | User Story | 완료일 |
+|----|-----------|--------|
+| US-62 | Worker thread를 non-daemon으로 변경, `_shutdown_event` + `try/finally`로 graceful shutdown 구현. Docker `stop_grace_period: 40s` | 2026-03-18 |
+| US-63 | yt-dlp `_run_with_timeout` 래퍼: EXTRACT_TIMEOUT=60s, DOWNLOAD_TIMEOUT=600s, `socket_timeout: 30`, `extractor_retries: 3` | 2026-03-18 |
+| US-64 | 인메모리 슬라이딩 윈도우 Rate Limiter: POST 10 req/min (`/api/pipeline/run` 2 req/min), 429 응답 | 2026-03-18 |
+| US-65 | API 입력값 검증: Pydantic `Field(max_length=500)`, `Query(max_length=500)` 전 문자열 필드 적용 | 2026-03-18 |
+| US-66 | SSE 큐 TTL: `_job_queues`에 last-activity 타임스탬프, 30분 비활성 시 `_cleanup_expired_queues()` 자동 정리 | 2026-03-18 |
+| US-67 | 로그 로테이션: `RotatingFileHandler` 50MB × 5 백업 (~300MB 총용량) | 2026-03-18 |
+
 ---
 
 ## 알려진 이슈 (Known Issues)
@@ -177,7 +198,7 @@
 | ID | 설명 | 근거 |
 |----|------|------|
 | ENH-04 | Web UI에서 다운로드 이력 필터링 (source, status, 날짜) | 이력이 많아질수록 필요 |
-| ENH-05 | 추천 소스 다양화 (Last.fm, Spotify 플레이리스트 등) | LB 추천 품질 편차 존재 |
+| ~~ENH-05~~ | ~~추천 소스 다양화 (Last.fm, Spotify 플레이리스트 등)~~ — **부분 해소 (2026-03-23, Epic 14)**: LB Radio 상시 탐색 소스 추가로 CF 단독 의존 탈피. Last.fm/Spotify 연동은 여전히 미구현 | LB 추천 품질 편차 존재 |
 | ~~ENH-06~~ | ~~중복 다운로드 방지를 위한 beets 라이브러리 사전 확인 (`beet list`로 검색)~~ | **해소됨 (state.db mbid 기준 중복 체크로 처리)** |
 | ENH-07 | acoustid 핑거프린팅 활성화 (현재 `apikey: ""` 미설정) | 파일명/태그 없는 경우 매칭 정확도 향상 |
 
@@ -226,6 +247,12 @@ rematch(MB 검색 필수) 없이 artist / album / track_name을 직접 텍스트
 - 다중 트랙 일괄 편집 (별도 Epic으로 분리)
 
 ---
+
+## Known Bugs
+
+| ID | 설명 | 심각도 |
+|----|------|--------|
+| BUG-23 | 수동 다운로드 시 artist+track 중복 체크 없음. `manual-{uuid}` mbid를 새로 생성하므로 PK 기반 dedup(`is_downloaded`)이 작동하지 않아 동일 곡 재다운로드 가능. 파일은 같은 경로에 덮어쓰지만 DB에 orphan 레코드 생성됨 (`src/api.py` POST /api/download) | Low |
 
 ## 기술 부채 (Technical Debt)
 

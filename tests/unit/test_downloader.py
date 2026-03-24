@@ -439,7 +439,7 @@ def test_strict_mode_false_keeps_live_entries():
     """strict=False: 라이브 entry를 필터링하지 않고 점수 기준으로만 선택한다."""
     entries = [
         _entry("Radiohead - Creep (Official Audio)", 300.0),  # duration 멀지만 스튜디오
-        _entry("Radiohead - Creep Live in Japan", 232.0),     # duration 가깝지만 라이브
+        _entry("Radiohead - Creep Live in Japan", 232.0),  # duration 가깝지만 라이브
     ]
     mb_duration = 232.0
     # strict=False이면 라이브 패널티(+500)와 duration 차이(68)가 합산되어
@@ -487,3 +487,26 @@ def test_strict_mode_filters_cover_unless_requested():
 )
 def test_is_cover(title, expected):
     assert _is_cover(title) is expected
+
+
+# ── _run_with_timeout 단위 테스트 ────────────────────────────────────────────
+
+import time as _time
+
+from src.pipeline.downloader import _run_with_timeout
+
+
+def test_run_with_timeout_raises_on_timeout():
+    """_run_with_timeout should raise DownloadError when function exceeds timeout."""
+
+    def slow_fn():
+        _time.sleep(10)
+
+    with pytest.raises(yt_dlp.utils.DownloadError, match="timed out"):
+        _run_with_timeout(slow_fn, timeout_sec=0.5)
+
+
+def test_run_with_timeout_returns_result():
+    """_run_with_timeout should return function result when within timeout."""
+    result = _run_with_timeout(lambda: 42, timeout_sec=5)
+    assert result == 42

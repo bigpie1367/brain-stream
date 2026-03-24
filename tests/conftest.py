@@ -24,23 +24,16 @@ if "yt_dlp" not in sys.modules:
     sys.modules["yt_dlp"] = _yt_dlp_stub
     sys.modules["yt_dlp.utils"] = _utils_stub
 
-# schedule: 스케줄러 라이브러리. 로컬에 없으면 stub으로 대체한다.
-if "schedule" not in sys.modules:
-    _schedule_stub = types.ModuleType("schedule")
-    _schedule_stub.every = MagicMock()
-    _schedule_stub.run_pending = MagicMock()
-    sys.modules["schedule"] = _schedule_stub
-
 # uvicorn: ASGI 서버. 테스트에서는 실행하지 않으므로 stub으로 대체한다.
 if "uvicorn" not in sys.modules:
     _uvicorn_stub = types.ModuleType("uvicorn")
     _uvicorn_stub.run = MagicMock()
     sys.modules["uvicorn"] = _uvicorn_stub
 
-from src.state import init_db, get_all_downloads
-
+from src.state import init_db
 
 # ── 환경변수 픽스처 ─────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def dummy_env_vars(monkeypatch):
@@ -53,6 +46,7 @@ def dummy_env_vars(monkeypatch):
 
 # ── DB 픽스처 ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def tmp_state_db(tmp_path):
     """tmpdir에 SQLite DB를 초기화하고 경로 문자열을 반환한다."""
@@ -62,6 +56,7 @@ def tmp_state_db(tmp_path):
 
 
 # ── FastAPI TestClient 픽스처 ──────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def client(tmp_state_db, tmp_path, monkeypatch):
@@ -73,8 +68,12 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     import src.api as api_module
     import src.worker as worker_module
     from src.config import (
-        AppConfig, ListenBrainzConfig, DownloadConfig,
-        BeetsConfig, NavidromeConfig, SchedulerConfig,
+        AppConfig,
+        MusicDirConfig,
+        DownloadConfig,
+        ListenBrainzConfig,
+        NavidromeConfig,
+        SchedulerConfig,
     )
 
     staging_dir = str(tmp_path / "staging")
@@ -85,8 +84,10 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     dummy_cfg = AppConfig(
         listenbrainz=ListenBrainzConfig(username="test_user", token="test_token"),
         download=DownloadConfig(staging_dir=staging_dir),
-        beets=BeetsConfig(music_dir=music_dir),
-        navidrome=NavidromeConfig(url="http://localhost:4533", username="admin", password="pass"),
+        beets=MusicDirConfig(music_dir=music_dir),
+        navidrome=NavidromeConfig(
+            url="http://localhost:4533", username="admin", password="pass"
+        ),
         scheduler=SchedulerConfig(interval_hours=6),
         state_db=tmp_state_db,
         log_level="INFO",
@@ -100,8 +101,22 @@ def client(tmp_state_db, tmp_path, monkeypatch):
     # 기존 job queue 오염 방지
     worker_module._job_queues.clear()
 
+    # Rate limit store 초기화 (테스트 간 429 오염 방지)
+    api_module._rate_store.clear()
+
+    # lifespan이 TestClient 밖에서 http_client를 설정하지 않으므로 직접 주입
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_http_client = MagicMock()
+    mock_http_client.get = AsyncMock()
+    mock_http_client.aclose = AsyncMock()
+    api_module.app.state.http_client = mock_http_client
+
     yield TestClient(api_module.app, raise_server_exceptions=True)
 
     # 픽스처 해제: 원래 _cfg 복원
     api_module._cfg = original_cfg
     worker_module._job_queues.clear()
+    # http_client 정리
+    if hasattr(api_module.app.state, "http_client"):
+        del api_module.app.state.http_client

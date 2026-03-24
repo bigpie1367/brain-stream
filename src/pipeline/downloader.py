@@ -2,18 +2,36 @@ import difflib
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
 import requests
 import yt_dlp
 
+from src.pipeline.musicbrainz import MB_API, MB_HEADERS
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-_MB_API = "https://musicbrainz.org/ws/2"
-_MB_HEADERS = {"User-Agent": "music-bot/1.0 (https://github.com/music-bot)"}
+# Timeout constants (seconds)
+EXTRACT_TIMEOUT = 60  # metadata extraction
+DOWNLOAD_TIMEOUT = 600  # actual download (10 min)
+
+_yt_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _run_with_timeout(fn, timeout_sec: float):
+    """Run fn in a thread pool with timeout. Raises DownloadError on timeout."""
+    future = _yt_executor.submit(fn)
+    try:
+        return future.result(timeout=timeout_sec)
+    except TimeoutError as e:
+        raise yt_dlp.utils.DownloadError(
+            f"operation timed out after {timeout_sec}s"
+        ) from e
+
+
 _DURATION_WARN_THRESHOLD = 90  # seconds
 
 
@@ -26,9 +44,9 @@ def _mb_recording_duration(artist: str, track_name: str) -> Optional[float]:
         time.sleep(1)  # rate limit
         query = f"artist:{artist} AND recording:{track_name}"
         r = requests.get(
-            f"{_MB_API}/recording",
+            f"{MB_API}/recording",
             params={"query": query, "fmt": "json", "limit": 5},
-            headers=_MB_HEADERS,
+            headers=MB_HEADERS,
             timeout=10,
         )
         r.raise_for_status()
@@ -47,7 +65,9 @@ def _mb_recording_duration(artist: str, track_name: str) -> Optional[float]:
         )
         return duration_sec
     except Exception as exc:
-        log.warning("MB duration lookup failed", artist=artist, track=track_name, error=str(exc))
+        log.warning(
+            "MB duration lookup failed", artist=artist, track=track_name, error=str(exc)
+        )
         return None
 
 
@@ -63,6 +83,8 @@ def _flac_opts(output_template: str) -> dict:
         ],
         "quiet": True,
         "no_warnings": True,
+        "socket_timeout": 30,
+        "extractor_retries": 3,
     }
 
 
@@ -78,6 +100,8 @@ def _opus_opts(output_template: str) -> dict:
         ],
         "quiet": True,
         "no_warnings": True,
+        "socket_timeout": 30,
+        "extractor_retries": 3,
     }
 
 
@@ -115,7 +139,8 @@ def _channel_score(entry: dict, artist: str) -> float:
     # Artist's official channel or VEVO
     if (
         norm_artist
-        and difflib.SequenceMatcher(None, norm_artist, _normalize(channel)).ratio() >= 0.8
+        and difflib.SequenceMatcher(None, norm_artist, _normalize(channel)).ratio()
+        >= 0.8
     ):
         return -200
     if "vevo" in channel:
@@ -154,7 +179,8 @@ def _select_best_entry(
 
     if strict:
         clean = [
-            e for e in entries
+            e
+            for e in entries
             if not _is_live(e.get("title", ""))
             and (user_wants_cover or not _is_cover(e.get("title", "")))
         ]
@@ -209,14 +235,21 @@ def download_track(
             "no_warnings": True,
             "extract_flat": False,
             "skip_download": True,
+            "socket_timeout": 30,
+            "extractor_retries": 3,
         }
         with yt_dlp.YoutubeDL(meta_opts) as ydl:
-            info = ydl.extract_info(search_query, download=False)
+            info = _run_with_timeout(
+                lambda: ydl.extract_info(search_query, download=False),
+                EXTRACT_TIMEOUT,
+            )
             if info:
                 raw_entries = info.get("entries") or [info]
                 entries = [e for e in raw_entries if e]
                 if entries:
-                    selected_entry = _select_best_entry(entries, mb_duration, artist, track_name)
+                    selected_entry = _select_best_entry(
+                        entries, mb_duration, artist, track_name
+                    )
                     yt_dur = selected_entry.get("duration")
                     log.info(
                         "selected YouTube result",
@@ -236,9 +269,17 @@ def download_track(
                                 track=track_name,
                             )
     except Exception as exc:
-        log.warning("metadata fetch failed, falling back to direct download", error=str(exc))
+        log.warning(
+            "metadata fetch failed, falling back to direct download", error=str(exc)
+        )
 
-    _BLOCKED_KEYWORDS = ("payment", "members-only", "members only", "private", "unavailable")
+    _BLOCKED_KEYWORDS = (
+        "payment",
+        "members-only",
+        "members only",
+        "private",
+        "unavailable",
+    )
 
     def _is_blocked_error(exc: Exception) -> bool:
         msg = str(exc).lower()
@@ -266,7 +307,9 @@ def download_track(
             )
             url = _entry_url(candidate_entry)
             if not url or url in attempted_urls:
-                remaining_entries = [e for e in remaining_entries if e is not candidate_entry]
+                remaining_entries = [
+                    e for e in remaining_entries if e is not candidate_entry
+                ]
                 continue
             download_target = url
         else:
@@ -280,13 +323,23 @@ def download_track(
             try:
                 yt_metadata = None
                 with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(download_target, download=True)
+                    info = _run_with_timeout(
+                        lambda dt=download_target: ydl.extract_info(dt, download=True),
+                        DOWNLOAD_TIMEOUT,
+                    )
                     if info:
-                        entry = info.get("entries", [info])[0] if "entries" in info else info
+                        entry = (
+                            info.get("entries", [info])[0]
+                            if "entries" in info
+                            else info
+                        )
                         thumbnail_url = entry.get("thumbnail", "")
                         channel = entry.get("channel") or entry.get("uploader", "")
                         if thumbnail_url or channel:
-                            yt_metadata = {"thumbnail_url": thumbnail_url, "channel": channel}
+                            yt_metadata = {
+                                "thumbnail_url": thumbnail_url,
+                                "channel": channel,
+                            }
 
                 # Find the downloaded file
                 for ext in ("flac", "opus", "webm", "m4a", "mp3"):
@@ -304,12 +357,16 @@ def download_track(
                     )
                     blocked = True
                     break  # skip remaining opts, move to next entry
-                log.warning("download attempt failed", error=str(exc), opts=opts.get("format"))
+                log.warning(
+                    "download attempt failed", error=str(exc), opts=opts.get("format")
+                )
                 continue
 
         if blocked:
             # Remove the blocked entry and retry with next candidate
-            remaining_entries = [e for e in remaining_entries if _entry_url(e) != download_target]
+            remaining_entries = [
+                e for e in remaining_entries if _entry_url(e) != download_target
+            ]
             if (
                 not remaining_entries
                 and download_target == f"ytsearch1:{artist} {track_name} official audio"
@@ -322,7 +379,9 @@ def download_track(
         # and it was not a blocked error — break out to avoid infinite loop
         if download_target == f"ytsearch1:{artist} {track_name} official audio":
             break
-        remaining_entries = [e for e in remaining_entries if _entry_url(e) != download_target]
+        remaining_entries = [
+            e for e in remaining_entries if _entry_url(e) != download_target
+        ]
         if not remaining_entries:
             # No more entries — try ytsearch1 fallback once
             continue
@@ -354,10 +413,15 @@ def search_candidates(artist: str, track_name: str) -> list[dict]:
         "no_warnings": True,
         "extract_flat": "in_playlist",
         "skip_download": True,
+        "socket_timeout": 30,
+        "extractor_retries": 3,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=False)
+            info = _run_with_timeout(
+                lambda: ydl.extract_info(query, download=False),
+                EXTRACT_TIMEOUT,
+            )
             if not info:
                 return []
             raw_entries = info.get("entries") or [info]
@@ -368,7 +432,11 @@ def search_candidates(artist: str, track_name: str) -> list[dict]:
                 title = entry.get("title") or ""
                 channel = entry.get("channel") or entry.get("uploader") or ""
                 duration = entry.get("duration") or 0
-                thumbnail_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg" if video_id else ""
+                thumbnail_url = (
+                    f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+                    if video_id
+                    else ""
+                )
                 url = f"https://www.youtube.com/watch?v={video_id}" if video_id else ""
                 results.append(
                     {
@@ -390,7 +458,9 @@ def search_candidates(artist: str, track_name: str) -> list[dict]:
         return []
 
 
-def download_track_by_id(video_id: str, mbid: str, staging_dir: str) -> tuple[str, dict]:
+def download_track_by_id(
+    video_id: str, mbid: str, staging_dir: str
+) -> tuple[str, dict]:
     """특정 YouTube video_id로 직접 다운로드.
 
     반환: (file_path, yt_metadata)
@@ -407,12 +477,18 @@ def download_track_by_id(video_id: str, mbid: str, staging_dir: str) -> tuple[st
         try:
             yt_metadata = None
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+                info = _run_with_timeout(
+                    lambda: ydl.extract_info(url, download=True),
+                    DOWNLOAD_TIMEOUT,
+                )
                 if info:
                     thumbnail_url = info.get("thumbnail", "")
                     channel = info.get("channel") or info.get("uploader", "")
                     if thumbnail_url or channel:
-                        yt_metadata = {"thumbnail_url": thumbnail_url, "channel": channel}
+                        yt_metadata = {
+                            "thumbnail_url": thumbnail_url,
+                            "channel": channel,
+                        }
 
             for ext in ("flac", "opus", "webm", "m4a", "mp3"):
                 candidate_file = Path(staging_dir) / f"{mbid}.{ext}"

@@ -1,7 +1,7 @@
 # 데이터 모델
 
-- **버전**: 1.4.0
-- **작성일**: 2026-03-13
+- **버전**: 2.0.0
+- **작성일**: 2026-03-21
 
 ---
 
@@ -44,6 +44,25 @@ CREATE TABLE IF NOT EXISTS downloads (
 | file_path | TEXT | 임포트된 파일 경로. 삭제 API 및 enrichment에서 사용 | `/app/data/music/Radiohead/Pablo Honey/Creep.flac` |
 | album | TEXT | 태깅 완료 후 canonical album명으로 업데이트됨 | `Pablo Honey` |
 | mb_recording_id | TEXT | MusicBrainz recording UUID. LB 트랙은 mbid와 동일 값 저장. 수동 트랙은 MB 매칭 성공 시 기록, 실패 시 null | `3c3e5e5c-1234-5678-abcd-ef0123456789` |
+
+### 테이블: `settings`
+
+```sql
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+```
+
+파이프라인 동작에 영향을 주는 런타임 설정 및 상태 값을 키-값 쌍으로 저장한다.
+
+**알려진 키**
+
+| key | 설명 |
+|-----|------|
+| `cf_offset` | CF 추천 현재 offset 위치. 파이프라인 실행 시마다 진행됨. 모델 갱신 감지 시 0으로 리셋 |
+| `cf_first_mbid` | CF 추천 첫 번째 MBID. 모델 갱신 감지에 사용 — 새 실행 시 첫 MBID가 저장값과 다르면 offset 리셋 |
+| `pipeline_interval_hours` | 파이프라인 실행 주기 (시간 단위). `PUT /api/settings/pipeline-interval`으로 변경. 미설정 시 기본값 6 |
 
 ---
 
@@ -115,3 +134,21 @@ data/
 └── logs/
     └── music-bot.log           # music-bot 애플리케이션 로그
 ```
+
+---
+
+## 4. 주요 state.py 함수
+
+| 함수 | 설명 |
+|------|------|
+| `mark_pending(mbid, track_name, artist, source)` | 새 다운로드 레코드 생성 (status=pending) |
+| `mark_pending_if_not_duplicate(mbid, track_name, artist, source)` | 동일 artist+track의 done/downloading/pending 레코드가 없을 때만 INSERT. 중복 시 기존 레코드 반환, 신규 시 None 반환. 단일 트랜잭션으로 원자적 처리 |
+| `mark_downloading(mbid)` | status를 downloading으로 전이 |
+| `mark_done(db_path, mbid, file_path=None, album=None)` | status=done, downloaded_at 기록, file_path 및 album 저장 |
+| `mark_failed(mbid, error_msg)` | status=failed, attempts 증가, error_msg 기록 |
+| `get_download_by_mbid(mbid)` | 단일 레코드 조회 |
+| `get_all_downloads()` | 전체 레코드 조회 (최신 순, ignored 제외) |
+| `get_downloads_page(limit, offset, search)` | 페이지네이션 조회. `{"items": [...], "total": int, "limit": int, "offset": int}` 반환. ignored 상태 제외. search로 artist/track_name/album LIKE 검색 |
+| `find_active_download(artist, track_name)` | artist+track_name이 일치하는 done/downloading/pending 레코드 검색. 중복 다운로드 방지에 사용 |
+| `update_track_info(mbid, ...)` | artist/file_path/album/mb_recording_id 선택적 업데이트 |
+| `get_pending_jobs()` | pending/downloading 잡을 rowid ASC 순서로 반환 (재시작 복구용) |

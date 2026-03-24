@@ -2,7 +2,9 @@
 Shared work queue and single worker thread.
 Both manual downloads (api.py) and LB pipeline use this module.
 """
+
 import threading
+import time
 from queue import Empty, Queue
 from typing import Optional
 
@@ -10,24 +12,30 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# Per-job SSE event queues (job_id → Queue)
-_job_queues: dict[str, Queue] = {}
+# Per-job SSE event queues (job_id → (Queue, last_active_timestamp))
+_job_queues: dict[str, tuple[Queue, float]] = {}
 _job_queues_lock = threading.Lock()
 
 # Global FIFO work queue
 _work_queue: Queue = Queue()
 
+# Shutdown signal for graceful stop
+_shutdown_event = threading.Event()
+
+_QUEUE_TTL = 1800  # 30 minutes
+
 
 def create_sse_queue(job_id: str) -> Queue:
     q: Queue = Queue()
     with _job_queues_lock:
-        _job_queues[job_id] = q
+        _job_queues[job_id] = (q, time.time())
     return q
 
 
 def get_sse_queue(job_id: str) -> Optional[Queue]:
     with _job_queues_lock:
-        return _job_queues.get(job_id)
+        entry = _job_queues.get(job_id)
+        return entry[0] if entry else None
 
 
 def remove_sse_queue(job_id: str):
@@ -36,9 +44,34 @@ def remove_sse_queue(job_id: str):
 
 
 def emit(job_id: str, status: str, message: str):
-    q = get_sse_queue(job_id)
-    if q is not None:
-        q.put({"status": status, "message": message})
+    with _job_queues_lock:
+        entry = _job_queues.get(job_id)
+        if entry is not None:
+            q, _ = entry
+            _job_queues[job_id] = (q, time.time())
+            q.put({"status": status, "message": message})
+
+
+def touch_sse_queue(job_id: str):
+    """Update last_active timestamp for an SSE queue (called on keep-alive)."""
+    with _job_queues_lock:
+        entry = _job_queues.get(job_id)
+        if entry is not None:
+            q, _ = entry
+            _job_queues[job_id] = (q, time.time())
+
+
+def _cleanup_expired_queues():
+    """Remove SSE queues that have been inactive for > _QUEUE_TTL seconds."""
+    now = time.time()
+    with _job_queues_lock:
+        expired = [
+            jid for jid, (_, last_active) in _job_queues.items() if now - last_active > _QUEUE_TTL
+        ]
+        for jid in expired:
+            del _job_queues[jid]
+    if expired:
+        log.info("cleaned up expired SSE queues", count=len(expired))
 
 
 def enqueue_job(
@@ -74,9 +107,9 @@ def worker_loop(cfg, run_job_fn):
     run_job_fn(cfg, job_spec) — the actual download+tag+scan logic.
     """
     log.info("worker loop started")
-    while True:
+    while not _shutdown_event.is_set():
         try:
-            job = _work_queue.get(timeout=5)
+            job = _work_queue.get(timeout=2)
         except Empty:
             continue
         try:
@@ -85,3 +118,5 @@ def worker_loop(cfg, run_job_fn):
             log.error("worker: unhandled exception", job_id=job.get("job_id"), error=str(e))
         finally:
             _work_queue.task_done()
+        _cleanup_expired_queues()
+    log.info("worker loop stopped (shutdown event received)")

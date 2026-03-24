@@ -1,8 +1,8 @@
 # 요구사항 정의서
 
 - **프로젝트명**: music-bot
-- **버전**: 1.0.0
-- **작성일**: 2026-03-04
+- **버전**: 2.0.0
+- **작성일**: 2026-03-21
 - **상태**: 구현 완료
 
 ---
@@ -43,10 +43,10 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-01 |
-| 설명 | 설정된 ListenBrainz 계정의 CF 추천 트랙 목록을 주기적으로 가져온다 |
-| 입력 | username, token, count |
-| 출력 | mbid, artist, track_name 목록 |
-| 조건 | 이미 처리된 트랙(mbid 기준)은 건너뜀 |
+| 설명 | 설정된 ListenBrainz 계정의 CF 추천 트랙(80%) + LB Radio(탑 아티스트 시드, 20%)를 주기적으로 가져온다 |
+| 입력 | username, token, count, offset (settings 테이블의 cf_offset에서 읽음 — 매 실행마다 진행) |
+| 출력 | mbid, artist, track_name 목록 (source: "listenbrainz" 통일) |
+| 조건 | 이미 처리된 트랙(mbid 기준)은 건너뜀. CF와 Radio 간 중복 트랙은 MBID 기반으로 제거 |
 | 우선순위 | 필수 |
 
 ### FR-02. YouTube 자동 다운로드
@@ -66,8 +66,8 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-03 |
-| 설명 | MB API 3단계 검색으로 recording 매칭 후 mutagen으로 직접 태깅, shutil로 최종 경로에 복사 |
-| MB 검색 단계 | stage 1 (strict): artistname+recording+Album+Official / stage 2 (plain): artistname+recording / stage 3 (fallback): recording만, artist 유사도 0.3 이상 |
+| 설명 | MB API 4단계 검색으로 recording 매칭 후 mutagen으로 직접 태깅, shutil로 최종 경로에 복사 |
+| MB 검색 단계 | stage 1 (strict): artistname+recording+Album+Official / stage 2 (plain): artistname+recording / stage 2.5 (artist-id): MB artist MBID 조회 → arid+recording 재검색 / stage 3 (fallback): recording만, artist 유사도 0.3 이상 |
 | 태그 쓰기 | mutagen: artist, title, mb_trackid 초기 태그 → _enrich_track()으로 album 태그 + 커버아트 임베딩 |
 | 파일 복사 | `shutil.copy2`: staging → `data/music/{Artist}/{Album}/{Track}.ext` |
 | 우선순위 | 필수 |
@@ -98,8 +98,10 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-06 |
-| 설명 | 설정된 시간 간격(기본 6시간)으로 파이프라인을 자동 실행한다 |
-| 시작 | 컨테이너 기동 시 즉시 1회 실행 후 스케줄 등록 |
+| 설명 | 설정 가능한 시간 간격(기본 6시간, 1~24시간 범위)으로 파이프라인을 자동 실행한다 |
+| 동적 주기 | `pipeline_interval_hours`를 settings 테이블에 저장하고, Web UI 드롭다운 또는 `PUT /api/settings/pipeline-interval`로 런타임 변경 가능 |
+| 스케줄러 구현 | `schedule` 라이브러리 제거 — `_run_scheduler()`에서 직접 시간 비교(`time.time()`)로 대체. settings 테이블에서 매 tick마다 동적 주기를 읽어 적용 |
+| 시작 | 컨테이너 기동 시 즉시 1회 실행 후 스케줄 루프 진입 |
 | 재시도 | 실패한 트랙은 최대 3회(attempts < 3)까지 재시도 |
 | 우선순위 | 필수 |
 
@@ -117,8 +119,21 @@
 | 항목 | 내용 |
 |------|------|
 | ID | FR-08 |
-| 설명 | 전체 다운로드 이력(최신 100건)을 Web UI 및 API로 조회 가능 |
-| 표시 항목 | mbid, artist, track_name, status, source, attempts, downloaded_at, error_msg |
+| 설명 | 다운로드 이력을 페이지네이션(limit/offset)으로 조회하고, 아티스트/트랙/앨범명으로 검색할 수 있다 |
+| 표시 항목 | mbid, artist, track_name, album, status, source, attempts, downloaded_at, error_msg, file_path, mb_recording_id |
+| 페이지네이션 | `limit` (1~500, 기본 100), `offset` (기본 0) 파라미터로 페이지 단위 조회. `total` 카운트 반환 |
+| 검색 | `search` 파라미터로 artist/track_name/album LIKE 부분 일치 검색 |
+| 무한 스크롤 | Web UI에서 IntersectionObserver 기반 무한 스크롤로 추가 로딩 (debounce 300ms) |
+| 필터 | `ignored` 상태 레코드는 항상 제외 |
+| 우선순위 | 필수 |
+
+### FR-09. 수동 다운로드 중복 방지
+
+| 항목 | 내용 |
+|------|------|
+| ID | FR-09 |
+| 설명 | 동일 artist + track 조합의 done/downloading/pending 레코드가 이미 존재하면 중복 다운로드를 방지한다 |
+| 동작 | `mark_pending_if_not_duplicate()`로 원자적 중복 체크. 중복 시 기존 레코드를 `{"duplicate": true, "existing": {...}}` 형태로 반환 |
 | 우선순위 | 필수 |
 
 ---
@@ -152,6 +167,31 @@
 - MusicBrainz API: 각 호출 전 1초 대기
 - 에러 발생 시 즉시 재시도하지 않음
 
+### NFR-06. 안전한 중단 및 재시작 복구
+
+- Worker thread는 non-daemon으로 `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event`를 set하여 graceful shutdown 수행 (join 30s timeout)
+- Docker `stop_grace_period: 40s`로 설정하여 강제 종료 방지
+- 재시작 시 `pending`/`downloading` 잡 자동 복구
+
+### NFR-07. yt-dlp 다운로드 안정성
+
+- Metadata extraction: 60초 타임아웃 + `socket_timeout: 30`
+- File download: 600초 타임아웃 + `socket_timeout: 30`
+- `extractor_retries: 3` (일시적 실패 자동 재시도)
+- 타임아웃 시 다음 후보 또는 ytsearch1 폴백 자동 수행
+
+### NFR-08. API Rate Limiting 및 입력값 검증
+
+- 인메모리 슬라이딩 윈도우 Rate Limiter 적용 (IP 기반)
+- POST endpoints: 10 req/min (`/api/pipeline/run`: 2 req/min)
+- 초과 시 HTTP 429 반환, 재시도는 클라이언트 책임
+- 모든 문자열 입력: `Field(max_length=500)`, `Query(max_length=500)`
+
+### NFR-09. 로그 로테이션
+
+- `RotatingFileHandler`: 50MB per file, 최대 5개 백업 (~300MB 총용량)
+- `data/logs/music-bot.log*`에 구조화 로그 저장
+
 ---
 
 ## 5. 제약사항
@@ -163,6 +203,8 @@
 | CON-03 | MB 검색 폴백 3단계: recording-only 단계에서 artist 유사도 0.3 미만 시 실패 처리 | 관련 없는 아티스트 recording 매칭 방지 |
 | CON-04 | MusicBrainz API: 각 호출 전 1초 대기 | Rate limit 1 req/sec 준수 |
 | CON-05 | Linux 파일시스템 대소문자 구분으로 인한 폴더 충돌 방지 | `_resolve_dir`로 대소문자 무시 기존 폴더 재사용 |
+| CON-06 | API Rate Limit는 인메모리 저장 → 재시작 시 카운터 리셋 | Stateless (향후 Redis 고려 가능) |
+| CON-07 | 입력값 최대 길이 500자 | 악의적 대용량 입력 차단 |
 
 ---
 

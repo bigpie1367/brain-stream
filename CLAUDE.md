@@ -41,20 +41,20 @@ Before diving into code, read the relevant docs first to save context:
 ## Commands
 
 ```bash
-# Build and run all services
-docker compose up --build -d
+# Build and run all services (로컬)
+docker compose -f docker-compose.local.yml up --build -d
 
-# View logs (music-bot only)
-docker compose logs -f music-bot
+# View logs
+docker compose -f docker-compose.local.yml logs -f brainstream
 
-# Restart music-bot after code changes (no rebuild needed for config changes)
-docker restart music-bot-temp-music-bot-1
+# Restart after code changes (no rebuild needed for config changes)
+docker compose -f docker-compose.local.yml restart brainstream
 
 # Rebuild and restart after Python source changes
-docker compose up --build -d
+docker compose -f docker-compose.local.yml up --build -d
 
 # Inspect SQLite state DB
-docker compose exec brainstream sqlite3 /app/db/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
+docker compose -f docker-compose.local.yml exec brainstream sqlite3 /app/data/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
 
 # Manually trigger the LB pipeline via API
 curl -X POST http://localhost:8080/api/pipeline/run
@@ -67,7 +67,7 @@ curl http://localhost:8080/api/downloads | python3 -m json.tool
 
 **Pipeline flow (both LB and manual share the same worker queue):**
 ```
-[LB pipeline] fetch recommendations → mark_pending() → worker.enqueue_job()
+[LB pipeline] CF추천(offset 진행, 80%) + LB Radio(탑 아티스트 시드, 20%) → mark_pending() → worker.enqueue_job()
 [Manual]      POST /api/download    → mark_pending() → worker.enqueue_job() → SSE emit "queued"
 
 worker_loop (single thread, FIFO):
@@ -106,19 +106,32 @@ worker_loop (single thread, FIFO):
 
 **Threading model:**
 - `main()` runs uvicorn on the **main thread** (blocking)
-- **Worker thread** (daemon): `worker_loop()` — FIFO 큐에서 잡을 꺼내 하나씩 순차 처리
+- **Worker thread** (non-daemon): `worker_loop()` — FIFO 큐에서 잡을 꺼내 하나씩 순차 처리. `_shutdown_event` 기반 graceful shutdown (`try/finally`로 uvicorn 종료 후 join timeout=30s)
 - **Pipeline thread** (daemon): `run_pipeline()` — LB 추천 fetch 후 enqueue_job() 호출
-- **Scheduler thread** (daemon): 60s tick, N시간마다 run_pipeline() 호출
+- **Scheduler thread** (daemon): 60s tick, `schedule` 라이브러리 없이 직접 시간 비교(`time.time()`). settings 테이블의 `pipeline_interval_hours`를 매 tick마다 읽어 동적 주기 적용. N시간마다 run_pipeline() 호출
+
+**Stability hardening (P0):**
+- **Graceful shutdown**: `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event.set()` → 워커 스레드 join(30s) → `_yt_executor.shutdown()`. Docker `stop_grace_period: 40s`
+- **yt-dlp 타임아웃**: 메타데이터 추출 60s, 다운로드 600s (`_run_with_timeout` + `socket_timeout: 30`)
+- **API Rate Limiting**: POST 엔드포인트별 인메모리 슬라이딩 윈도우 (예: `/api/download` 10회/분). 429 반환
+- **API 입력 검증**: Pydantic `Field(max_length=500)`, Query params `Query(max_length=500)`
+- **SSE 큐 TTL**: `_job_queues`에 last-activity 타임스탬프 저장, 30분 비활성 시 자동 정리. `touch_sse_queue()`로 keep-alive 시 갱신
+- **로그 로테이션**: `RotatingFileHandler` 50MB × 5 파일 (최대 ~300MB)
+- **추천 소스 간 중복 제거**: CF와 LB Radio 트랙을 합산한 뒤 MBID 기반으로 중복 제거 후 enqueue. 이미 done/pending/downloading 상태인 MBID는 mark_pending 단계에서 건너뜀
 
 ## Key Files and their Roles
 
 | File | Role |
 |------|------|
 | `src/main.py` | Entrypoint; wires config → DB → API → worker/pipeline threads → reload pending jobs → uvicorn |
-| `src/worker.py` | Shared work queue module; `_work_queue` (FIFO), `_job_queues` (SSE), `enqueue_job()`, `emit()`, `worker_loop()` |
+| `src/worker.py` | Shared work queue module; `_work_queue` (FIFO), `_job_queues` (SSE, last-activity TTL), `_shutdown_event`, `enqueue_job()`, `emit()`, `touch_sse_queue()`, `worker_loop()`, `_cleanup_expired_queues()` |
 | `src/api.py` | FastAPI app; `_cfg` injected by main.py; POST /api/download calls `worker.enqueue_job()`; POST /api/edit/{song_id} 메타데이터 직접 편집 (mutagen 태그 수정 → 파일 이동 → state.db 업데이트 → Navidrome rescan) |
-| `src/state.py` | SQLite wrapper; `mbid` is PK; `get_pending_jobs()` returns pending/downloading jobs in rowid ASC order |
+| `src/state.py` | SQLite wrapper; `mbid` is PK; `get_pending_jobs()` returns pending/downloading jobs in rowid ASC order; settings 테이블 CRUD (`get_setting()`, `set_setting()`) — cf_offset, cf_first_mbid, pipeline_interval_hours 저장 |
 | `src/config.py` | Env-var only config (no file needed); `LB_USERNAME`, `LB_TOKEN`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`, `NAVIDROME_URL` |
+| `src/jobs.py` | Job execution logic; `run_download_job()` runs download→tag→scan→state-update flow in worker thread |
+| `src/pipeline/musicbrainz.py` | Shared MB API client; `lookup_recording(mbid)`, `_escape_mb_query()`, extracted from tagger.py to prevent circular imports |
+| `src/pipeline/listenbrainz.py` | LB API client; `fetch_recommendations(username, token, count, offset)` — CF 추천 offset 페이지네이션; `fetch_user_top_artists(username, token)` — Radio 시드 아티스트 조회; `fetch_lb_radio(artist_list, count)` — LB Radio 트랙 수집 |
+| `src/utils/fs.py` | Shared filesystem utilities; `sanitize_path_component()`, `resolve_dir()`, `move_to_music_dir()` |
 | `src/pipeline/tagger.py` | Most complex module; MB 4단계 검색(Stage 2.5 artist-id 추가) → shutil 복사 → mutagen 태깅 → iTunes/Deezer/MB 앨범 enrichment → CAA/iTunes/Deezer/YouTube 커버아트 임베딩. `write_title_tag` public alias 추가 (edit API에서 사용) |
 
 ## Tagger Constraints

@@ -1,6 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from src.utils.logger import get_logger
@@ -37,7 +37,9 @@ def init_db(db_path: str):
         """)
         # Migrate: add source column if missing
         try:
-            conn.execute("ALTER TABLE downloads ADD COLUMN source TEXT DEFAULT 'listenbrainz'")
+            conn.execute(
+                "ALTER TABLE downloads ADD COLUMN source TEXT DEFAULT 'listenbrainz'"
+            )
         except sqlite3.OperationalError:
             pass  # already exists
         # Migrate: add file_path column if missing
@@ -55,61 +57,93 @@ def init_db(db_path: str):
             conn.execute("ALTER TABLE downloads ADD COLUMN mb_recording_id TEXT")
         except sqlite3.OperationalError:
             pass  # already exists
+        # Settings table for persistent configuration
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
     log.info("state.db initialised", path=db_path)
 
 
 def is_downloaded(db_path: str, mbid: str) -> bool:
+    """Check if MBID already has an active or completed record (skip in pipeline).
+
+    Returns True for done/ignored/pending/downloading — all statuses that should
+    prevent the pipeline from re-enqueuing this MBID.
+    """
     with _conn(db_path) as conn:
         row = conn.execute(
             "SELECT status FROM downloads WHERE mbid = ?", (mbid,)
         ).fetchone()
-    return row is not None and row["status"] in ("done", "ignored")
+    return row is not None and row["status"] in (
+        "done",
+        "ignored",
+        "pending",
+        "downloading",
+    )
 
 
 def mark_pending(
     db_path: str, mbid: str, track_name: str, artist: str, source: str = "listenbrainz"
 ):
     with _conn(db_path) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT OR IGNORE INTO downloads (mbid, track_name, artist, status, source)
             VALUES (?, ?, ?, 'pending', ?)
-        """, (mbid, track_name, artist, source))
+        """,
+            (mbid, track_name, artist, source),
+        )
 
 
 def mark_downloading(db_path: str, mbid: str):
     with _conn(db_path) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE downloads SET status = 'downloading' WHERE mbid = ?
-        """, (mbid,))
+        """,
+            (mbid,),
+        )
 
 
 def mark_done(db_path: str, mbid: str, file_path: str = None, album: str = None):
     with _conn(db_path) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE downloads
-            SET status = 'done', downloaded_at = ?, file_path = ?, album = ?
+            SET status = 'done', downloaded_at = ?, file_path = ?, album = COALESCE(?, album)
             WHERE mbid = ?
-        """, (datetime.utcnow().isoformat(), file_path, album, mbid))
+        """,
+            (datetime.now(tz=timezone.utc).isoformat(), file_path, album, mbid),
+        )
 
 
 def mark_failed(db_path: str, mbid: str, error: str):
     with _conn(db_path) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE downloads
             SET status = 'failed',
                 attempts = attempts + 1,
                 error_msg = ?
             WHERE mbid = ?
-        """, (error, mbid))
+        """,
+            (error, mbid),
+        )
 
 
 def get_retryable(db_path: str, max_attempts: int = 3) -> List[sqlite3.Row]:
     with _conn(db_path) as conn:
-        rows = conn.execute("""
-            SELECT mbid, track_name, artist
+        rows = conn.execute(
+            """
+            SELECT mbid, track_name, artist, source
             FROM downloads
             WHERE status = 'failed' AND attempts < ?
-        """, (max_attempts,)).fetchall()
+        """,
+            (max_attempts,),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -127,24 +161,30 @@ def get_pending_jobs(db_path: str) -> List[dict]:
 
 def get_all_downloads(db_path: str, limit: int = 100) -> List[dict]:
     with _conn(db_path) as conn:
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT mbid, track_name, artist, album, status, source,
                    attempts, downloaded_at, error_msg, file_path, mb_recording_id
             FROM downloads
             ORDER BY rowid DESC
             LIMIT ?
-        """, (limit,)).fetchall()
+        """,
+            (limit,),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
 def get_download_by_mbid(db_path: str, mbid: str) -> Optional[dict]:
     with _conn(db_path) as conn:
-        row = conn.execute("""
+        row = conn.execute(
+            """
             SELECT mbid, track_name, artist, album, status, source,
                    attempts, downloaded_at, error_msg, file_path, mb_recording_id
             FROM downloads
             WHERE mbid = ?
-        """, (mbid,)).fetchone()
+        """,
+            (mbid,),
+        ).fetchone()
     return dict(row) if row is not None else None
 
 
@@ -200,6 +240,104 @@ def mark_ignored(db_path: str, mbid: str):
         )
 
 
+def get_downloads_page(
+    db_path: str, limit: int = 100, offset: int = 0, search: str = ""
+) -> dict:
+    """Paginated download list with optional search.
+
+    Returns: {"items": [...], "total": int, "limit": int, "offset": int}
+    """
+    with _conn(db_path) as conn:
+        if search:
+            pattern = f"%{search}%"
+            where = "WHERE status != 'ignored' AND (artist LIKE ? OR track_name LIKE ? OR album LIKE ?)"
+            params = (pattern, pattern, pattern)
+        else:
+            where = "WHERE status != 'ignored'"
+            params = ()
+
+        # Total count
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM downloads {where}", params
+        ).fetchone()[0]
+
+        # Paginated results
+        rows = conn.execute(
+            f"SELECT * FROM downloads {where} ORDER BY rowid DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+
+        return {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+
+def find_active_download(db_path: str, artist: str, track_name: str) -> dict | None:
+    """Find done/downloading/pending download with same artist+track_name.
+    Returns first match or None.
+    """
+    with _conn(db_path) as conn:
+        row = conn.execute(
+            """SELECT * FROM downloads
+               WHERE artist = ? AND track_name = ? AND status IN ('done', 'downloading', 'pending')
+               LIMIT 1""",
+            (artist, track_name),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def mark_pending_if_not_duplicate(
+    db_path: str, mbid: str, track_name: str, artist: str, source: str = "listenbrainz"
+) -> dict | None:
+    """Atomically check for active duplicate and insert pending row.
+    Uses a single INSERT ... WHERE NOT EXISTS to prevent concurrent requests
+    from both passing the duplicate check.
+    Returns existing record dict if duplicate found, None if inserted successfully.
+    """
+    with _conn(db_path) as conn:
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO downloads (mbid, track_name, artist, status, source)
+               SELECT ?, ?, ?, 'pending', ?
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM downloads
+                   WHERE artist = ? AND track_name = ?
+                     AND status IN ('done', 'downloading', 'pending')
+               )""",
+            (mbid, track_name, artist, source, artist, track_name),
+        )
+        if cursor.rowcount > 0:
+            return None
+        # Insert didn't happen — find the existing record
+        row = conn.execute(
+            """SELECT * FROM downloads
+               WHERE artist = ? AND track_name = ? AND status IN ('done', 'downloading', 'pending')
+               LIMIT 1""",
+            (artist, track_name),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def delete_download(db_path: str, mbid: str):
     with _conn(db_path) as conn:
         conn.execute("DELETE FROM downloads WHERE mbid = ?", (mbid,))
+
+
+def get_setting(db_path: str, key: str, default: str = "") -> str:
+    """settings 테이블에서 값 조회. 없으면 default 반환."""
+    with _conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(db_path: str, key: str, value: str) -> None:
+    """settings 테이블에 값 저장 (INSERT OR REPLACE)."""
+    with _conn(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
