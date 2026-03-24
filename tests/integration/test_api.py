@@ -230,7 +230,7 @@ def test_delete_download_returns_404_when_not_found(client):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["deleted"] == 1
+    assert data["deleted"] == 0
     assert data["files_removed"] == 0
 
 

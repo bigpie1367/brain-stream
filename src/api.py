@@ -352,6 +352,7 @@ async def delete_downloads_bulk(body: BulkDeleteRequest):
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
 
+    deleted_count = 0
     files_removed = 0
     errors = []
 
@@ -359,6 +360,7 @@ async def delete_downloads_bulk(body: BulkDeleteRequest):
         record = get_download_by_mbid(_cfg.state_db, mbid)
         if record is None:
             continue  # silently skip non-existent
+        deleted_count += 1
 
         file_path = record.get("file_path") or ""
         if file_path:
@@ -391,11 +393,9 @@ async def delete_downloads_bulk(body: BulkDeleteRequest):
             daemon=True,
         ).start()
 
-    log.info(
-        "bulk delete completed", count=len(body.mbids), files_removed=files_removed
-    )
+    log.info("bulk delete completed", count=deleted_count, files_removed=files_removed)
     return {
-        "deleted": len(body.mbids),
+        "deleted": deleted_count,
         "files_removed": files_removed,
         "errors": errors,
     }
