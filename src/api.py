@@ -9,7 +9,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from queue import Empty
-from typing import Optional
+from typing import Annotated, Optional
 
 import httpx
 import mutagen.flac
@@ -22,7 +22,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 import src.worker as worker
 from src.pipeline.downloader import search_candidates
@@ -148,8 +148,11 @@ class DownloadRequest(BaseModel):
     video_id: Optional[str] = None
 
 
+MbidStr = Annotated[str, StringConstraints(max_length=500)]
+
+
 class BulkDeleteRequest(BaseModel):
-    mbids: list[str] = Field(..., min_length=1)
+    mbids: list[MbidStr] = Field(..., min_length=1)
 
 
 class RematchApplyRequest(BaseModel):
@@ -352,7 +355,7 @@ async def delete_downloads_bulk(body: BulkDeleteRequest):
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
 
-    deleted_count = 0
+    succeeded_mbids = []
     files_removed = 0
     errors = []
 
@@ -360,7 +363,6 @@ async def delete_downloads_bulk(body: BulkDeleteRequest):
         record = get_download_by_mbid(_cfg.state_db, mbid)
         if record is None:
             continue  # silently skip non-existent
-        deleted_count += 1
 
         file_path = record.get("file_path") or ""
         if file_path:
@@ -378,13 +380,17 @@ async def delete_downloads_bulk(body: BulkDeleteRequest):
                             os.rmdir(artist_dir)
                 except Exception as exc:
                     log.warning("delete: failed to remove empty dirs", error=str(exc))
+                succeeded_mbids.append(mbid)
             except FileNotFoundError:
                 log.info("file already gone, skipping removal", file=file_path)
+                succeeded_mbids.append(mbid)
             except OSError as exc:
                 log.warning("could not remove file", file=file_path, error=str(exc))
                 errors.append({"mbid": mbid, "error": str(exc)})
+        else:
+            succeeded_mbids.append(mbid)
 
-    mark_ignored_bulk(_cfg.state_db, body.mbids)
+    mark_ignored_bulk(_cfg.state_db, succeeded_mbids)
 
     if files_removed:
         threading.Thread(
@@ -393,9 +399,11 @@ async def delete_downloads_bulk(body: BulkDeleteRequest):
             daemon=True,
         ).start()
 
-    log.info("bulk delete completed", count=deleted_count, files_removed=files_removed)
+    log.info(
+        "bulk delete completed", count=len(succeeded_mbids), files_removed=files_removed
+    )
     return {
-        "deleted": deleted_count,
+        "deleted": len(succeeded_mbids),
         "files_removed": files_removed,
         "errors": errors,
     }
