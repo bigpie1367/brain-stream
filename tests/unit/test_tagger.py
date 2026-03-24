@@ -239,10 +239,11 @@ def test_write_artist_tag_public_alias(tmp_path):
     assert f.get("artist") == ["AliasArtist"]
 
 
-def test_write_artist_tag_nonexistent_file_does_not_raise(tmp_path):
-    """존재하지 않는 파일에 대해 _write_artist_tag는 예외를 발생시키지 않는다 (경고 로그만)."""
+def test_write_artist_tag_nonexistent_file_raises(tmp_path):
+    """존재하지 않는 파일에 대해 write_artist_tag는 예외를 발생시킨다."""
     bad_path = tmp_path / "nonexistent.flac"
-    write_artist_tag(str(bad_path), "Artist")
+    with pytest.raises(Exception):
+        write_artist_tag(str(bad_path), "Artist")
 
 
 # ── _write_mb_trackid_tag 테스트 ──────────────────────────────────────────────
@@ -341,10 +342,11 @@ def test_write_mb_trackid_tag_public_alias(tmp_path):
     assert f.get("musicbrainz_trackid") == [recording_id]
 
 
-def test_write_mb_trackid_tag_nonexistent_file_does_not_raise(tmp_path):
-    """존재하지 않는 파일에 대해 _write_mb_trackid_tag는 예외를 발생시키지 않는다."""
+def test_write_mb_trackid_tag_nonexistent_file_raises(tmp_path):
+    """존재하지 않는 파일에 대해 write_mb_trackid_tag는 예외를 발생시킨다."""
     bad_path = tmp_path / "nonexistent.flac"
-    write_mb_trackid_tag(str(bad_path), "some-uuid")
+    with pytest.raises(Exception):
+        write_mb_trackid_tag(str(bad_path), "some-uuid")
 
 
 # ── tag_and_import 테스트 ─────────────────────────────────────────────────────

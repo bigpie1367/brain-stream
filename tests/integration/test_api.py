@@ -765,7 +765,7 @@ def test_rematch_apply_success(client, tmp_path):
         new_callable=AsyncMock,
         return_value={"path": song_relative_path},
     ):
-        with patch("src.api.os.path.exists", return_value=True):
+        with patch("src.api.os.path.exists", side_effect=[True, False]):
             patcher, _ = _patch_http_client_get(
                 client,
                 return_value=_httpx_response({"title": "OK Computer"}),
@@ -1083,7 +1083,7 @@ def test_rematch_apply_song_id_absolute_path_used_directly(client):
         new_callable=AsyncMock,
         return_value={"path": absolute_path},
     ):
-        with patch("src.api.os.path.exists", return_value=True):
+        with patch("src.api.os.path.exists", side_effect=[True, False]):
             patcher, _ = _patch_http_client_get(
                 client,
                 return_value=_httpx_response({"title": "OK Computer"}),
@@ -1324,7 +1324,7 @@ def test_rematch_apply_song_id_relative_path_gets_prefix(client):
         new_callable=AsyncMock,
         return_value={"path": relative_path},
     ):
-        with patch("src.api.os.path.exists", return_value=True):
+        with patch("src.api.os.path.exists", side_effect=[True, False]):
             patcher, _ = _patch_http_client_get(
                 client,
                 return_value=_httpx_response({"title": "OK Computer"}),
@@ -1435,7 +1435,7 @@ def test_rematch_apply_itunes_candidate_no_mb_album_id(client):
         new_callable=AsyncMock,
         return_value={"path": "Artist/track.flac"},
     ):
-        with patch("src.api.os.path.exists", return_value=True):
+        with patch("src.api.os.path.exists", side_effect=[True, False]):
             patcher, mock_get = _patch_http_client_get(client)
             with patcher:
                 with patch("src.api.write_album_tag") as mock_write:
