@@ -2479,7 +2479,7 @@
     const strong = document.createElement('strong');
     strong.textContent = artist + ' - ' + trackName;
     msgEl.appendChild(strong);
-    msgEl.appendChild(document.createTextNode(' will be deleted from history. Are you sure?'));
+    msgEl.appendChild(document.createTextNode(' will be deleted. Associated files will also be removed.'));
 
     const titleEl = document.getElementById('modal-title-text');
     titleEl.textContent = 'Delete Track';
@@ -2632,6 +2632,7 @@
     if (!searchInput) return;
     let _searchTimer = null;
     searchInput.addEventListener('input', () => {
+      if (_bulkDeleteMode) exitBulkDeleteMode();
       clearTimeout(_searchTimer);
       _searchTimer = setTimeout(() => {
         _historySearch = searchInput.value.trim();
