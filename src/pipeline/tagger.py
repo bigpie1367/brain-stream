@@ -474,7 +474,22 @@ def _enrich_track(
         album = itunes_result.get("album", "")
         if album:
             canonical_artist = itunes_result.get("artistName", "")
-            canonical_title = itunes_result.get("trackName", "")
+            itunes_track_name = itunes_result.get("trackName", "")
+            if itunes_track_name:
+                track_sim = difflib.SequenceMatcher(
+                    None,
+                    _normalize_for_match(track_name),
+                    _normalize_for_match(itunes_track_name),
+                ).ratio()
+                if track_sim >= 0.5:
+                    canonical_title = itunes_track_name
+                else:
+                    log.info(
+                        "iTunes trackName rejected (similarity too low)",
+                        requested=track_name,
+                        itunes_track=itunes_track_name,
+                        similarity=round(track_sim, 3),
+                    )
             log.info(
                 "album resolved via iTunes",
                 artist=artist,
@@ -498,8 +513,22 @@ def _enrich_track(
             album = deezer_result.get("album", "")
             if album:
                 canonical_artist = deezer_result.get("artistName", "")
-                if not canonical_title:
-                    canonical_title = deezer_result.get("trackName", "")
+                deezer_track_name = deezer_result.get("trackName", "")
+                if not canonical_title and deezer_track_name:
+                    track_sim = difflib.SequenceMatcher(
+                        None,
+                        _normalize_for_match(track_name),
+                        _normalize_for_match(deezer_track_name),
+                    ).ratio()
+                    if track_sim >= 0.5:
+                        canonical_title = deezer_track_name
+                    else:
+                        log.info(
+                            "Deezer trackName rejected (similarity too low)",
+                            requested=track_name,
+                            deezer_track=deezer_track_name,
+                            similarity=round(track_sim, 3),
+                        )
                 log.info(
                     "album resolved via Deezer",
                     artist=artist,

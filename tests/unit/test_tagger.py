@@ -2525,28 +2525,28 @@ def test_enrich_track_uses_mb_recording_title_when_itunes_fails(tmp_path, monkey
 def test_enrich_track_itunes_title_beats_mb_recording_title(tmp_path, monkeypatch):
     """iTunes trackName이 있으면 MB recording title보다 우선한다."""
     flac_path = _make_flac(tmp_path)
-    _write_tags(str(flac_path), "Artist", "Track")
+    _write_tags(str(flac_path), "Linkin Park", "Leave Out All the Rest")
 
     monkeypatch.setattr(
         "src.pipeline.tagger.itunes_search",
         lambda a, t, **kw: {
             "album": "iTunes Album",
             "artwork_url": "",
-            "artistName": "Artist",
-            "trackName": "iTunes Title",
+            "artistName": "Linkin Park",
+            "trackName": "Leave Out All The Rest",
         },
     )
 
     album, canonical_artist, canonical_title = _enrich_track(
         str(flac_path),
-        artist="Artist",
-        track_name="Track",
+        artist="Linkin Park",
+        track_name="Leave Out All the Rest",
         yt_metadata=None,
         recording_ids=None,
-        mb_recording_title="MB Title",
+        mb_recording_title="Leave Out All the Rest (MB)",
     )
 
-    assert canonical_title == "iTunes Title"
+    assert canonical_title == "Leave Out All The Rest"
 
 
 def test_tag_and_import_writes_mb_recording_title_when_itunes_fails(
@@ -2820,3 +2820,110 @@ def test_mb_search_recording_stage25_skips_low_title_similarity(monkeypatch):
     # stage 2.5에서 아무것도 매칭되지 않고 stage 3도 빈 결과 → 빈 리스트
     assert result == []
     assert artist_lookup_called[0] is True
+
+
+# ── canonical title similarity validation ─────────────────────────────────
+
+
+def test_enrich_track_rejects_low_similarity_itunes_canonical_title(
+    tmp_path, monkeypatch
+):
+    """iTunes trackName 유사도가 0.5 미만이면 canonical_title로 채택하지 않아야 한다."""
+    flac_path = tmp_path / "test.flac"
+    _make_minimal_flac(flac_path)
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger.itunes_search",
+        lambda artist, track, country=None: {
+            "album": "Some Album",
+            "artwork_url": "",
+            "artistName": "Imagine Dragons",
+            "trackName": "Demons (Official Music Video)",
+        },
+    )
+    monkeypatch.setattr("src.pipeline.tagger.deezer_search", lambda artist, track: {})
+    monkeypatch.setattr(
+        "src.pipeline.tagger.mb_search_recording", lambda artist, track: ([], "", "")
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger.embed_art_from_url", lambda *a, **kw: False
+    )
+
+    album, canonical_artist, canonical_title = _enrich_track(
+        str(flac_path),
+        artist="Imagine Dragons",
+        track_name="Believer",
+    )
+
+    assert album == "Some Album"
+    assert canonical_title == ""  # rejected
+
+
+def test_enrich_track_accepts_high_similarity_itunes_canonical_title(
+    tmp_path, monkeypatch
+):
+    """iTunes trackName 유사도가 0.5 이상이면 canonical_title로 채택한다."""
+    flac_path = tmp_path / "test.flac"
+    _make_minimal_flac(flac_path)
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger.itunes_search",
+        lambda artist, track, country=None: {
+            "album": "Minutes to Midnight",
+            "artwork_url": "",
+            "artistName": "Linkin Park",
+            "trackName": "Leave Out All The Rest",
+        },
+    )
+    monkeypatch.setattr("src.pipeline.tagger.deezer_search", lambda artist, track: {})
+    monkeypatch.setattr(
+        "src.pipeline.tagger.mb_search_recording", lambda artist, track: ([], "", "")
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger.embed_art_from_url", lambda *a, **kw: False
+    )
+
+    album, canonical_artist, canonical_title = _enrich_track(
+        str(flac_path),
+        artist="Linkin Park",
+        track_name="Leave Out All the Rest",
+    )
+
+    assert album == "Minutes to Midnight"
+    assert canonical_title == "Leave Out All The Rest"
+
+
+def test_enrich_track_rejects_low_similarity_deezer_canonical_title(
+    tmp_path, monkeypatch
+):
+    """Deezer trackName 유사도가 0.5 미만이면 canonical_title로 채택하지 않아야 한다."""
+    flac_path = tmp_path / "test.flac"
+    _make_minimal_flac(flac_path)
+
+    monkeypatch.setattr(
+        "src.pipeline.tagger.itunes_search", lambda artist, track, country=None: {}
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger.deezer_search",
+        lambda artist, track: {
+            "album": "Halcyon",
+            "artwork_url": "",
+            "artistName": "Ellie Goulding",
+            "trackName": "Lights",
+        },
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger.mb_search_recording", lambda artist, track: ([], "", "")
+    )
+    monkeypatch.setattr(
+        "src.pipeline.tagger.embed_art_from_url", lambda *a, **kw: False
+    )
+
+    album, canonical_artist, canonical_title = _enrich_track(
+        str(flac_path),
+        artist="Ellie Goulding",
+        track_name="Dead in the Water",
+    )
+
+    assert album == "Halcyon"
+    assert canonical_title == ""  # rejected
