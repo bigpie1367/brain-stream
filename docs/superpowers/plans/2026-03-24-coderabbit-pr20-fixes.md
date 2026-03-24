@@ -11,3 +11,12 @@
 7. Use `.get()` for meta dict access in `src/pipeline/tagger.py`
 8. Add dirname empty string guard in `src/utils/logger.py`
 9. Fix healthcheck port in `docs/operations.md`
+
+## Round 2 Steps
+
+10. Fix daemon comment mismatch in `src/main.py`
+11. Fix `#history-table` → `#section-history` in `src/static/index.html`
+12. Add file collision check in `rematch_apply` in `src/api.py`
+13. Make `_write_single_tag` raise on failure in `src/pipeline/tagger.py`
+14. Atomic `INSERT ... WHERE NOT EXISTS` in `src/state.py`
+15. Update tests for collision check mock and exception expectations
