@@ -655,10 +655,10 @@ def tag_and_import(
     if is_lb_track:
         # LB track: already have the correct recording_mbid, look it up directly
         meta = lookup_recording(mbid)
-        if meta["artist"] or meta["title"]:
+        if meta.get("artist") or meta.get("title"):
             recording_ids = [mbid]
-            mb_artist_name = meta["artist"]
-            mb_recording_title = meta["title"]
+            mb_artist_name = meta.get("artist", "")
+            mb_recording_title = meta.get("title", "")
         else:
             log.warning("MB direct lookup failed, falling back to search", mbid=mbid)
             if artist and track_name:

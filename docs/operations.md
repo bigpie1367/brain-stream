@@ -100,7 +100,7 @@ curl http://localhost:8080/health
 Docker Compose에서 HEALTHCHECK로 사용 가능:
 ```yaml
 healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+  test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
   interval: 30s
   timeout: 5s
   retries: 3
