@@ -2099,21 +2099,21 @@
           const { mainTr, expandTr } = existingRows.get(r.mbid);
           const cells = mainTr.cells;
 
-          // cells[0]: Artist
+          // cells[1]: Artist (cells[0] is checkbox column)
           const newArtist = r.artist;
-          if (cells[0] && cells[0].textContent !== newArtist) cells[0].textContent = newArtist;
+          if (cells[1] && cells[1].textContent !== newArtist) cells[1].textContent = newArtist;
 
-          // cells[1]: Track
+          // cells[2]: Track
           const newTrack = r.track_name;
-          if (cells[1] && cells[1].textContent !== newTrack) cells[1].textContent = newTrack;
+          if (cells[2] && cells[2].textContent !== newTrack) cells[2].textContent = newTrack;
 
-          // cells[2]: Album
+          // cells[3]: Album
           const newAlbum = r.album || '—';
-          if (cells[2] && cells[2].textContent !== newAlbum) cells[2].textContent = newAlbum;
+          if (cells[3] && cells[3].textContent !== newAlbum) cells[3].textContent = newAlbum;
 
-          // cells[3]: Source
+          // cells[4]: Source
           const newSource = sourceBadge(r.source);
-          if (cells[3] && cells[3].innerHTML !== newSource) cells[3].innerHTML = newSource;
+          if (cells[4] && cells[4].innerHTML !== newSource) cells[4].innerHTML = newSource;
 
           // Status — active job이 아닐 때만 업데이트
           if (!_activeJobStatuses.has(r.mbid)) {
@@ -2122,14 +2122,14 @@
             if (statusCell && statusCell.innerHTML !== newStatus) statusCell.innerHTML = newStatus;
           }
 
-          // cells[5]: MB link — mb_recording_id 변경 감지
+          // cells[6]: MB link — mb_recording_id 변경 감지
           // data-mbrecid 속성으로 변경 여부 판단
           const prevMbRecId = mainTr.dataset.mbrecid || '';
           const curMbRecId = r.mb_recording_id || '';
           if (prevMbRecId !== curMbRecId) {
             mainTr.dataset.mbrecid = curMbRecId;
-            if (cells[5]) {
-              cells[5].innerHTML = '';
+            if (cells[6]) {
+              cells[6].innerHTML = '';
               if (r.mb_recording_id) {
                 const mbLink = document.createElement('a');
                 mbLink.href = 'https://listenbrainz.org/track/' + encodeURIComponent(r.mb_recording_id);
@@ -2139,19 +2139,19 @@
                 mbLink.addEventListener('mouseover', () => mbLink.style.background = '#4a3f8a');
                 mbLink.addEventListener('mouseout', () => mbLink.style.background = '#353070');
                 mbLink.addEventListener('click', e => e.stopPropagation());
-                cells[5].appendChild(mbLink);
+                cells[6].appendChild(mbLink);
               } else {
                 const mbSpan = document.createElement('span');
                 mbSpan.textContent = '—';
                 mbSpan.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#2a2a2a; color:#6b7280; font-size:11px; white-space:nowrap;';
-                cells[5].appendChild(mbSpan);
+                cells[6].appendChild(mbSpan);
               }
             }
           }
 
-          // cells[6]: Time
+          // cells[7]: Time
           const newTime = relativeTime(r.downloaded_at);
-          if (cells[6] && cells[6].textContent !== newTime) cells[6].textContent = newTime;
+          if (cells[7] && cells[7].textContent !== newTime) cells[7].textContent = newTime;
 
           // 클릭 핸들러 등록 (pending→done 전환 시)
           const isNowExpandable = r.status !== 'pending' && r.status !== 'queued' && r.status !== 'downloading';
@@ -2160,6 +2160,11 @@
             const expandTd = expandTr.cells[0];
             mainTr.addEventListener('click', (e) => {
               e.stopPropagation();
+              if (_bulkDeleteMode) {
+                const cb = mainTr.querySelector('.bulk-cb-cell input[type="checkbox"]');
+                if (cb) { cb.checked = !cb.checked; onBulkCheckboxChange(r.mbid, cb.checked, mainTr); }
+                return;
+              }
               const isOpen = mainTr.classList.contains('expanded');
               collapseAllExpandRows();
               if (!isOpen) {
@@ -3528,9 +3533,9 @@
       // 성공: 해당 테이블 행의 셀 즉시 업데이트
       if (_editMainTr) {
         const cells = _editMainTr.cells;
-        if (artist    && cells[0]) cells[0].textContent = artist;
-        if (trackName && cells[1]) cells[1].textContent = trackName;
-        if (album     && cells[2]) cells[2].textContent = album;
+        if (artist    && cells[1]) cells[1].textContent = artist;
+        if (trackName && cells[2]) cells[2].textContent = trackName;
+        if (album     && cells[3]) cells[3].textContent = album;
       }
 
       closeEditModal();
