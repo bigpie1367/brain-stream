@@ -2453,7 +2453,9 @@
     // Auto-refresh only when near the top to avoid disrupting infinite scroll
     const historySection = document.getElementById('section-history');
     if (historySection && historySection.getBoundingClientRect().top > -200) {
-      resetAndLoadHistory();
+      _historyOffset = 0;
+      _historyTotal = 0;
+      loadHistory(false);
     }
   }, 5000);
 
