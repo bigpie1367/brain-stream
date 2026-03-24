@@ -231,12 +231,14 @@ def update_track_info(
         conn.execute(f"UPDATE downloads SET {', '.join(fields)} WHERE mbid = ?", values)
 
 
-def mark_ignored(db_path: str, mbid: str):
-    """사용자가 명시적으로 제거한 트랙. 파이프라인이 재다운로드하지 않도록 스킵."""
+def mark_ignored_bulk(db_path: str, mbids: list[str]):
+    """Bulk-mark tracks as ignored so the pipeline won't re-download them."""
+    if not mbids:
+        return
     with _conn(db_path) as conn:
-        conn.execute(
+        conn.executemany(
             "UPDATE downloads SET status = 'ignored' WHERE mbid = ?",
-            (mbid,),
+            [(m,) for m in mbids],
         )
 
 
@@ -318,11 +320,6 @@ def mark_pending_if_not_duplicate(
             (artist, track_name),
         ).fetchone()
         return dict(row) if row else None
-
-
-def delete_download(db_path: str, mbid: str):
-    with _conn(db_path) as conn:
-        conn.execute("DELETE FROM downloads WHERE mbid = ?", (mbid,))
 
 
 def get_setting(db_path: str, key: str, default: str = "") -> str:

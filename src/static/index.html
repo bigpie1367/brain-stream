@@ -985,6 +985,34 @@
     }
     .btn-expand-delete:hover { background: #3b1515; border-color: #fc8181; color: #fc8181; }
 
+    /* Bulk delete mode */
+    .bulk-delete-active .history-row { cursor: pointer; }
+    .bulk-delete-active .history-row:hover { background: #2a1a1a; }
+    .bulk-delete-active .history-row.bulk-selected { background: #2a1a1a; }
+    .bulk-cb-cell { width: 32px; text-align: center; padding: 0 4px; vertical-align: middle; }
+    .bulk-cb-cell input[type="checkbox"] {
+      width: 15px; height: 15px; cursor: pointer;
+      accent-color: #fc8181;
+    }
+    .bulk-cb-col { display: none; }
+    .bulk-delete-active .bulk-cb-col { display: table-cell; }
+    .btn-bulk-delete {
+      padding: 5px 12px; font-size: 0.8rem; min-width: 0;
+      background: #4a2020; border: 1px solid #fc8181; color: #fc8181;
+      border-radius: 6px; cursor: pointer; font-weight: 500;
+      transition: background 0.12s, opacity 0.12s;
+    }
+    .btn-bulk-delete:hover { background: #5a2525; }
+    .btn-bulk-delete:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-bulk-cancel {
+      padding: 5px 12px; font-size: 0.8rem; min-width: 0;
+      background: none; border: 1px solid #4a5568; color: #a0aec0;
+      border-radius: 6px; cursor: pointer; font-weight: 500;
+      transition: background 0.12s;
+    }
+    .btn-bulk-cancel:hover { background: #2d3748; }
+    .bulk-delete-active .btn-expand-delete { display: none; }
+
     .btn-expand-edit {
       background: none;
       border: 1px solid #2d3147;
@@ -1286,7 +1314,18 @@
   <section id="section-history">
     <div class="table-header">
       <h2 style="margin-bottom:0">Download History</h2>
-      <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem; min-width:0;" onclick="resetAndLoadHistory()">Refresh</button>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <!-- Normal mode buttons -->
+        <span id="normal-mode-btns">
+          <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem; min-width:0;" onclick="resetAndLoadHistory()">Refresh</button>
+          <button class="btn-secondary" style="padding:5px 12px; font-size:0.8rem; min-width:0;" onclick="enterBulkDeleteMode()">Delete</button>
+        </span>
+        <!-- Bulk delete mode buttons (hidden by default) -->
+        <span id="bulk-mode-btns" style="display:none;">
+          <button class="btn-bulk-cancel" onclick="exitBulkDeleteMode()">Cancel</button>
+          <button class="btn-bulk-delete" id="bulk-delete-btn" disabled onclick="openBulkDeleteModal()">Delete 0 selected</button>
+        </span>
+      </div>
     </div>
     <div class="history-search-wrap">
       <input type="text" id="history-search" placeholder="Search artist or track…">
@@ -1295,6 +1334,7 @@
       <table style="width:100%;">
         <thead>
           <tr>
+            <th class="bulk-cb-col bulk-cb-cell"><input type="checkbox" id="bulk-select-all" title="Select all" onchange="toggleSelectAll(this.checked)"></th>
             <th style="width:17%">Artist</th>
             <th style="width:24%">Track</th>
             <th style="width:18%">Album</th>
@@ -1866,6 +1906,18 @@
     tr.dataset.mbid = r.mbid;
     tr.className = 'history-row';
 
+    const tdCb = document.createElement('td');
+    tdCb.className = 'bulk-cb-col bulk-cb-cell';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset.mbid = r.mbid;
+    cb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      onBulkCheckboxChange(r.mbid, cb.checked, tr);
+    });
+    cb.addEventListener('click', (e) => e.stopPropagation());
+    tdCb.appendChild(cb);
+
     const tdArtist = document.createElement('td');
     tdArtist.textContent = r.artist;
 
@@ -1906,6 +1958,7 @@
       tdMb.appendChild(mbSpan);
     }
 
+    tr.appendChild(tdCb);
     tr.appendChild(tdArtist);
     tr.appendChild(tdTrack);
     tr.appendChild(tdAlbum);
@@ -1920,7 +1973,7 @@
     expandTr.style.display = 'none';
 
     const expandTd = document.createElement('td');
-    expandTd.colSpan = 7;
+    expandTd.colSpan = 8;
     expandTr.appendChild(expandTd);
 
     // 이전에 펼쳐져 있던 행이면 즉시 복원
@@ -1935,6 +1988,11 @@
       // 행 클릭 → 아코디언 토글
       tr.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (_bulkDeleteMode) {
+          const cb = tr.querySelector('.bulk-cb-cell input[type="checkbox"]');
+          if (cb) { cb.checked = !cb.checked; onBulkCheckboxChange(r.mbid, cb.checked, tr); }
+          return;
+        }
         const isOpen = tr.classList.contains('expanded');
 
         // 먼저 모든 확장 행 닫기
@@ -1948,6 +2006,16 @@
           renderExpandInner(expandTd, r, expandTr, tr, false /* fresh load */);
         } else {
           _expandedMbid = null;
+        }
+      });
+    }
+
+    if (!isExpandable) {
+      tr.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (_bulkDeleteMode) {
+          const cb = tr.querySelector('.bulk-cb-cell input[type="checkbox"]');
+          if (cb) { cb.checked = !cb.checked; onBulkCheckboxChange(r.mbid, cb.checked, tr); }
         }
       });
     }
@@ -2031,21 +2099,21 @@
           const { mainTr, expandTr } = existingRows.get(r.mbid);
           const cells = mainTr.cells;
 
-          // cells[0]: Artist
+          // cells[1]: Artist (cells[0] is checkbox column)
           const newArtist = r.artist;
-          if (cells[0] && cells[0].textContent !== newArtist) cells[0].textContent = newArtist;
+          if (cells[1] && cells[1].textContent !== newArtist) cells[1].textContent = newArtist;
 
-          // cells[1]: Track
+          // cells[2]: Track
           const newTrack = r.track_name;
-          if (cells[1] && cells[1].textContent !== newTrack) cells[1].textContent = newTrack;
+          if (cells[2] && cells[2].textContent !== newTrack) cells[2].textContent = newTrack;
 
-          // cells[2]: Album
+          // cells[3]: Album
           const newAlbum = r.album || '—';
-          if (cells[2] && cells[2].textContent !== newAlbum) cells[2].textContent = newAlbum;
+          if (cells[3] && cells[3].textContent !== newAlbum) cells[3].textContent = newAlbum;
 
-          // cells[3]: Source
+          // cells[4]: Source
           const newSource = sourceBadge(r.source);
-          if (cells[3] && cells[3].innerHTML !== newSource) cells[3].innerHTML = newSource;
+          if (cells[4] && cells[4].innerHTML !== newSource) cells[4].innerHTML = newSource;
 
           // Status — active job이 아닐 때만 업데이트
           if (!_activeJobStatuses.has(r.mbid)) {
@@ -2054,14 +2122,14 @@
             if (statusCell && statusCell.innerHTML !== newStatus) statusCell.innerHTML = newStatus;
           }
 
-          // cells[5]: MB link — mb_recording_id 변경 감지
+          // cells[6]: MB link — mb_recording_id 변경 감지
           // data-mbrecid 속성으로 변경 여부 판단
           const prevMbRecId = mainTr.dataset.mbrecid || '';
           const curMbRecId = r.mb_recording_id || '';
           if (prevMbRecId !== curMbRecId) {
             mainTr.dataset.mbrecid = curMbRecId;
-            if (cells[5]) {
-              cells[5].innerHTML = '';
+            if (cells[6]) {
+              cells[6].innerHTML = '';
               if (r.mb_recording_id) {
                 const mbLink = document.createElement('a');
                 mbLink.href = 'https://listenbrainz.org/track/' + encodeURIComponent(r.mb_recording_id);
@@ -2071,19 +2139,19 @@
                 mbLink.addEventListener('mouseover', () => mbLink.style.background = '#4a3f8a');
                 mbLink.addEventListener('mouseout', () => mbLink.style.background = '#353070');
                 mbLink.addEventListener('click', e => e.stopPropagation());
-                cells[5].appendChild(mbLink);
+                cells[6].appendChild(mbLink);
               } else {
                 const mbSpan = document.createElement('span');
                 mbSpan.textContent = '—';
                 mbSpan.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:4px; background:#2a2a2a; color:#6b7280; font-size:11px; white-space:nowrap;';
-                cells[5].appendChild(mbSpan);
+                cells[6].appendChild(mbSpan);
               }
             }
           }
 
-          // cells[6]: Time
+          // cells[7]: Time
           const newTime = relativeTime(r.downloaded_at);
-          if (cells[6] && cells[6].textContent !== newTime) cells[6].textContent = newTime;
+          if (cells[7] && cells[7].textContent !== newTime) cells[7].textContent = newTime;
 
           // 클릭 핸들러 등록 (pending→done 전환 시)
           const isNowExpandable = r.status !== 'pending' && r.status !== 'queued' && r.status !== 'downloading';
@@ -2092,6 +2160,11 @@
             const expandTd = expandTr.cells[0];
             mainTr.addEventListener('click', (e) => {
               e.stopPropagation();
+              if (_bulkDeleteMode) {
+                const cb = mainTr.querySelector('.bulk-cb-cell input[type="checkbox"]');
+                if (cb) { cb.checked = !cb.checked; onBulkCheckboxChange(r.mbid, cb.checked, mainTr); }
+                return;
+              }
               const isOpen = mainTr.classList.contains('expanded');
               collapseAllExpandRows();
               if (!isOpen) {
@@ -2330,80 +2403,168 @@
     }
   }
 
-  // ── 삭제 모달 ──────────────────────────────────────────────────────────────
-  let _pendingDeleteMbid = null;
-  let _pendingDeleteRow  = null;
-  let _pendingDeleteExpandRow = null;
+  // ── Bulk delete mode ─────────────────────────────────────────────────────
+  let _bulkDeleteMode = false;
+  const _bulkSelectedMbids = new Set();
+
+  function enterBulkDeleteMode() {
+    _bulkDeleteMode = true;
+    _bulkSelectedMbids.clear();
+    document.getElementById('section-history').classList.add('bulk-delete-active');
+    document.getElementById('normal-mode-btns').style.display = 'none';
+    document.getElementById('bulk-mode-btns').style.display = '';
+    document.getElementById('bulk-select-all').checked = false;
+    collapseAllExpandRows();
+    _expandedMbid = null;
+    updateBulkDeleteBtn();
+  }
+
+  function exitBulkDeleteMode() {
+    _bulkDeleteMode = false;
+    _bulkSelectedMbids.clear();
+    document.getElementById('section-history').classList.remove('bulk-delete-active');
+    document.getElementById('normal-mode-btns').style.display = '';
+    document.getElementById('bulk-mode-btns').style.display = 'none';
+    document.getElementById('bulk-select-all').checked = false;
+    document.querySelectorAll('#history-body .bulk-cb-cell input[type="checkbox"]').forEach(cb => {
+      cb.checked = false;
+    });
+    document.querySelectorAll('#history-body .history-row.bulk-selected').forEach(tr => {
+      tr.classList.remove('bulk-selected');
+    });
+  }
+
+  function onBulkCheckboxChange(mbid, checked, tr) {
+    if (checked) {
+      _bulkSelectedMbids.add(mbid);
+      tr.classList.add('bulk-selected');
+    } else {
+      _bulkSelectedMbids.delete(mbid);
+      tr.classList.remove('bulk-selected');
+    }
+    updateBulkDeleteBtn();
+    const allCbs = document.querySelectorAll('#history-body .bulk-cb-cell input[type="checkbox"]');
+    const allChecked = allCbs.length > 0 && [...allCbs].every(cb => cb.checked);
+    document.getElementById('bulk-select-all').checked = allChecked;
+  }
+
+  function toggleSelectAll(checked) {
+    document.querySelectorAll('#history-body .bulk-cb-cell input[type="checkbox"]').forEach(cb => {
+      cb.checked = checked;
+      const mbid = cb.dataset.mbid;
+      const tr = cb.closest('tr');
+      if (checked) {
+        _bulkSelectedMbids.add(mbid);
+        if (tr) tr.classList.add('bulk-selected');
+      } else {
+        _bulkSelectedMbids.delete(mbid);
+        if (tr) tr.classList.remove('bulk-selected');
+      }
+    });
+    updateBulkDeleteBtn();
+  }
+
+  function updateBulkDeleteBtn() {
+    const btn = document.getElementById('bulk-delete-btn');
+    const count = _bulkSelectedMbids.size;
+    btn.textContent = 'Delete ' + count + ' selected';
+    btn.disabled = count === 0;
+  }
+
+  // ── Delete modal (supports both single and bulk) ─────────────────────────
+  let _pendingDeleteMbids = [];
+  let _pendingDeleteRows  = [];
 
   function openDeleteModal(mbid, artist, trackName, rowEl, expandRowEl) {
-    _pendingDeleteMbid = mbid;
-    _pendingDeleteRow  = rowEl;
-    _pendingDeleteExpandRow = expandRowEl ?? null;
+    _pendingDeleteMbids = [mbid];
+    _pendingDeleteRows = [{ mainTr: rowEl, expandTr: expandRowEl }];
 
     const msgEl = document.getElementById('modal-msg');
-    // textContent로 삽입해 XSS 방지
     msgEl.textContent = '';
     const strong = document.createElement('strong');
     strong.textContent = artist + ' - ' + trackName;
-    msgEl.appendChild(document.createTextNode(''));
     msgEl.appendChild(strong);
-    msgEl.appendChild(document.createTextNode(' will be deleted from history. Are you sure?'));
+    msgEl.appendChild(document.createTextNode(' will be deleted. Associated files will also be removed.'));
 
+    const titleEl = document.getElementById('modal-title-text');
+    titleEl.textContent = 'Delete Track';
     const confirmBtn = document.getElementById('modal-confirm-btn');
     confirmBtn.disabled = false;
     confirmBtn.textContent = 'Delete';
+    document.getElementById('delete-modal').classList.remove('hidden');
+  }
 
+  function openBulkDeleteModal() {
+    const count = _bulkSelectedMbids.size;
+    if (count === 0) return;
+    _pendingDeleteMbids = [..._bulkSelectedMbids];
+    _pendingDeleteRows = [];
+    _pendingDeleteMbids.forEach(mbid => {
+      const mainTr = document.querySelector('#history-body tr[data-mbid="' + mbid + '"]');
+      const expandTr = mainTr ? mainTr.nextElementSibling : null;
+      _pendingDeleteRows.push({
+        mainTr,
+        expandTr: (expandTr && expandTr.classList.contains('expand-row')) ? expandTr : null,
+      });
+    });
+
+    const msgEl = document.getElementById('modal-msg');
+    msgEl.textContent = 'Delete ' + count + ' track' + (count > 1 ? 's' : '') + '? Associated files will also be removed.';
+
+    const titleEl = document.getElementById('modal-title-text');
+    titleEl.textContent = 'Delete Tracks';
+    const confirmBtn = document.getElementById('modal-confirm-btn');
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'Delete';
     document.getElementById('delete-modal').classList.remove('hidden');
   }
 
   function closeDeleteModal() {
     document.getElementById('delete-modal').classList.add('hidden');
-    _pendingDeleteMbid = null;
-    _pendingDeleteRow  = null;
-    _pendingDeleteExpandRow = null;
+    _pendingDeleteMbids = [];
+    _pendingDeleteRows = [];
   }
 
   async function confirmDelete() {
-    if (!_pendingDeleteMbid) return;
+    if (!_pendingDeleteMbids.length) return;
 
     const confirmBtn = document.getElementById('modal-confirm-btn');
     confirmBtn.disabled = true;
     confirmBtn.textContent = 'Deleting...';
 
     try {
-      const res = await fetch('/api/downloads/' + encodeURIComponent(_pendingDeleteMbid), {
+      const res = await fetch('/api/downloads', {
         method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mbids: _pendingDeleteMbids }),
       });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(text || 'HTTP ' + res.status);
       }
 
-      // 성공: 해당 행과 확장 행을 DOM에서 제거
-      if (_pendingDeleteExpandRow && _pendingDeleteExpandRow.parentNode) {
-        _pendingDeleteExpandRow.parentNode.removeChild(_pendingDeleteExpandRow);
-      }
-      if (_pendingDeleteRow && _pendingDeleteRow.parentNode) {
-        _pendingDeleteRow.parentNode.removeChild(_pendingDeleteRow);
-      }
+      _pendingDeleteRows.forEach(({ mainTr, expandTr }) => {
+        if (expandTr && expandTr.parentNode) expandTr.parentNode.removeChild(expandTr);
+        if (mainTr && mainTr.parentNode) mainTr.parentNode.removeChild(mainTr);
+      });
 
-      // 삭제한 항목이 펼쳐져 있었으면 _expandedMbid 초기화
-      if (_expandedMbid === _pendingDeleteMbid) {
+      if (_pendingDeleteMbids.includes(_expandedMbid)) {
         _expandedMbid = null;
       }
 
-      // 남은 행이 없으면 "이력 없음" 표시
       const tbody = document.getElementById('history-body');
-      const remainingRows = tbody.querySelectorAll('tr.history-row');
-      if (!remainingRows.length) {
+      if (!tbody.querySelectorAll('tr.history-row').length) {
         document.getElementById('no-data').style.display = 'block';
       }
 
       closeDeleteModal();
+
+      if (_bulkDeleteMode) {
+        exitBulkDeleteMode();
+      }
     } catch (e) {
       confirmBtn.disabled = false;
       confirmBtn.textContent = 'Delete';
-      // keep modal open and show error
       const msgEl = document.getElementById('modal-msg');
       const errSpan = document.createElement('span');
       errSpan.style.color = '#fc8181';
@@ -2411,7 +2572,6 @@
       errSpan.style.marginTop = '8px';
       errSpan.style.fontSize = '0.8rem';
       errSpan.textContent = 'Delete failed: ' + e.message;
-      // 이전 에러 메시지가 있으면 교체
       const prevErr = msgEl.querySelector('.delete-err');
       if (prevErr) prevErr.remove();
       errSpan.className = 'delete-err';
@@ -2446,6 +2606,7 @@
   // 삭제/재매칭 모달이 열려 있는 동안은 자동 갱신을 건너뛰어 참조 보호
   resetAndLoadHistory();
   setInterval(() => {
+    if (_bulkDeleteMode) return;
     const deleteModalOpen  = !document.getElementById('delete-modal').classList.contains('hidden');
     const rematchModalOpen = !document.getElementById('rematch-modal').classList.contains('hidden');
     const editModalOpen    = !document.getElementById('edit-modal').classList.contains('hidden');
@@ -2478,6 +2639,7 @@
     if (!searchInput) return;
     let _searchTimer = null;
     searchInput.addEventListener('input', () => {
+      if (_bulkDeleteMode) exitBulkDeleteMode();
       clearTimeout(_searchTimer);
       _searchTimer = setTimeout(() => {
         _historySearch = searchInput.value.trim();
@@ -3371,9 +3533,9 @@
       // 성공: 해당 테이블 행의 셀 즉시 업데이트
       if (_editMainTr) {
         const cells = _editMainTr.cells;
-        if (artist    && cells[0]) cells[0].textContent = artist;
-        if (trackName && cells[1]) cells[1].textContent = trackName;
-        if (album     && cells[2]) cells[2].textContent = album;
+        if (artist    && cells[1]) cells[1].textContent = artist;
+        if (trackName && cells[2]) cells[2].textContent = trackName;
+        if (album     && cells[3]) cells[3].textContent = album;
       }
 
       closeEditModal();
