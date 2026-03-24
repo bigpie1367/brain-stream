@@ -131,6 +131,67 @@ def _normalize(s: str) -> str:
     return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
 
 
+_NOISE_PAREN_RE = re.compile(
+    r"\s*[\(\[]\s*(?:official|video|audio|lyrics?|lyric|visualizer|"
+    r"remaster(?:ed)?(?:\s+\d{4})?|upgrade|hd|4k|mv|music\s+video)"
+    r"[^\)\]]*[\)\]]",
+    re.IGNORECASE,
+)
+
+_TRAILING_NOISE_RE = re.compile(
+    r"\s*[-–—]\s*(?:official|video|audio|lyrics?|lyric|visualizer|"
+    r"remaster(?:ed)?(?:\s+\d{4})?|upgrade|hd|4k|mv|music\s+video).*$",
+    re.IGNORECASE,
+)
+
+_TRAILING_DASH_ARTIST_RE = re.compile(r"\s*[-–—]\s*$")
+
+
+def _extract_track_title(yt_title: str, artist: str) -> str:
+    """Extract the track title from a YouTube video title."""
+    title = yt_title.strip()
+    if not title:
+        return ""
+
+    # Remove "ft./feat." suffix at end of title (e.g. "... ft. Eminem")
+    title = re.sub(r"\s+(?:ft\.?|feat\.?)\s+[^(\[]*$", "", title, flags=re.IGNORECASE)
+
+    # Try "Artist - Track" pattern (most common)
+    norm_artist = _normalize(artist)
+    for sep in (" - ", " – ", " — ", " − "):
+        if sep in title:
+            parts = title.split(sep, 1)
+            left = parts[0].strip()
+            right = parts[1].strip()
+            if (
+                _normalize(left)
+                and difflib.SequenceMatcher(None, norm_artist, _normalize(left)).ratio()
+                >= 0.7
+            ):
+                title = right
+                break
+            elif (
+                _normalize(right)
+                and difflib.SequenceMatcher(
+                    None, norm_artist, _normalize(right)
+                ).ratio()
+                >= 0.7
+            ):
+                title = left
+                break
+
+    # Strip noise parentheticals
+    title = _NOISE_PAREN_RE.sub("", title)
+
+    # Strip trailing "- Official Visualizer", "- Remastered 2023", etc.
+    title = _TRAILING_NOISE_RE.sub("", title)
+
+    # Clean up trailing " - " left after artist removal from end
+    title = _TRAILING_DASH_ARTIST_RE.sub("", title)
+
+    return title.strip()
+
+
 def _channel_score(entry: dict, artist: str) -> float:
     """Return a bonus score (negative = better) for official channels."""
     channel = (entry.get("channel") or entry.get("uploader") or "").lower()

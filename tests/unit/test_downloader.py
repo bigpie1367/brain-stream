@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 import pytest
 import yt_dlp
-from src.pipeline.downloader import _is_cover, _is_live, _select_best_entry, download_track
+from src.pipeline.downloader import (
+    _is_cover,
+    _is_live,
+    _select_best_entry,
+    download_track,
+)
 
 # ── 성공 케이스 ───────────────────────────────────────────────────────────────
 
@@ -24,7 +29,9 @@ def test_download_track_returns_flac_path(tmp_path):
     expected_file.touch()
 
     mock_info = {
-        "entries": [{"thumbnail": "http://example.com/thumb.jpg", "channel": "TestChannel"}]
+        "entries": [
+            {"thumbnail": "http://example.com/thumb.jpg", "channel": "TestChannel"}
+        ]
     }
 
     class MockYDL:
@@ -510,3 +517,54 @@ def test_run_with_timeout_returns_result():
     """_run_with_timeout should return function result when within timeout."""
     result = _run_with_timeout(lambda: 42, timeout_sec=5)
     assert result == 42
+
+
+# ── _extract_track_title 단위 테스트 ─────────────────────────────────────────
+
+from src.pipeline.downloader import _extract_track_title
+
+
+@pytest.mark.parametrize(
+    "yt_title,artist,expected",
+    [
+        (
+            "Three Days Grace - Animal I Have Become (Official Video)",
+            "Three Days Grace",
+            "Animal I Have Become",
+        ),
+        (
+            "Imagine Dragons - Believer (Official Music Video)",
+            "Imagine Dragons",
+            "Believer",
+        ),
+        (
+            "Rihanna - Love The Way You Lie (Part II) (Audio) ft. Eminem",
+            "Rihanna",
+            "Love The Way You Lie (Part II)",
+        ),
+        ("Fuck Off (Hard Drums Remix)", "Rihanna", "Fuck Off (Hard Drums Remix)"),
+        (
+            "Leave Out All The Rest (Official Music Video) [4K Upgrade] - Linkin Park",
+            "Linkin Park",
+            "Leave Out All The Rest",
+        ),
+        (
+            "Evanescence - Going Under (Remastered 2023) - Official Visualizer",
+            "Evanescence",
+            "Going Under",
+        ),
+        (
+            "Cut The Bridge (Official Audio Visualizer) - Linkin Park",
+            "Linkin Park",
+            "Cut The Bridge",
+        ),
+        ("i love you", "Billie Eilish", "i love you"),
+        (
+            "Eminem - Love the Way You Lie (feat. Rihanna)",
+            "Eminem",
+            "Love the Way You Lie (feat. Rihanna)",
+        ),
+    ],
+)
+def test_extract_track_title(yt_title, artist, expected):
+    assert _extract_track_title(yt_title, artist) == expected
