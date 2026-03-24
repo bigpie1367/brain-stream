@@ -41,7 +41,7 @@ from src.state import (
     get_download_by_mbid,
     get_downloads_page,
     get_setting,
-    mark_ignored,
+    mark_ignored_bulk,
     mark_pending_if_not_duplicate,
     set_setting,
     update_track_info,
@@ -90,7 +90,7 @@ _RATE_LIMITS: dict[str, int] = {
     "POST /api/pipeline/run": 2,
     "POST /api/rematch/apply": 10,
     "POST /api/edit/": 10,
-    "DELETE /api/downloads/": 10,
+    "DELETE /api/downloads": 10,
     "PUT /api/settings/": 10,
 }
 _rate_window = 60  # seconds
@@ -146,6 +146,10 @@ class DownloadRequest(BaseModel):
     artist: str = Field(max_length=500)
     track: str = Field(max_length=500)
     video_id: Optional[str] = None
+
+
+class BulkDeleteRequest(BaseModel):
+    mbids: list[str] = Field(..., min_length=1)
 
 
 class RematchApplyRequest(BaseModel):
@@ -343,38 +347,42 @@ async def get_download_detail(mbid: str):
     return {"album_name": album_name, "year": year, "cover_art": cover_art}
 
 
-@app.delete("/api/downloads/{mbid}")
-async def delete_download_entry(mbid: str):
+@app.delete("/api/downloads")
+async def delete_downloads_bulk(body: BulkDeleteRequest):
     if not _cfg:
         raise HTTPException(status_code=503, detail="config not loaded yet")
 
-    record = get_download_by_mbid(_cfg.state_db, mbid)
-    if record is None:
-        raise HTTPException(status_code=404, detail="not found")
-
-    file_path = record.get("file_path") or ""
     files_removed = 0
-    if file_path:
-        try:
-            os.remove(file_path)
-            files_removed = 1
-            log.info("removed file", file=file_path)
-            # 빈 폴더 정리 (앨범 → 아티스트 순)
-            album_dir = os.path.dirname(file_path)
-            artist_dir = os.path.dirname(album_dir)
-            try:
-                if os.path.isdir(album_dir) and not os.listdir(album_dir):
-                    os.rmdir(album_dir)
-                    if os.path.isdir(artist_dir) and not os.listdir(artist_dir):
-                        os.rmdir(artist_dir)
-            except Exception as exc:
-                log.warning("delete: failed to remove empty dirs", error=str(exc))
-        except FileNotFoundError:
-            log.info("file already gone, skipping removal", file=file_path)
-        except OSError as exc:
-            log.warning("could not remove file", file=file_path, error=str(exc))
+    errors = []
 
-    mark_ignored(_cfg.state_db, mbid)
+    for mbid in body.mbids:
+        record = get_download_by_mbid(_cfg.state_db, mbid)
+        if record is None:
+            continue  # silently skip non-existent
+
+        file_path = record.get("file_path") or ""
+        if file_path:
+            try:
+                os.remove(file_path)
+                files_removed += 1
+                log.info("removed file", file=file_path)
+                # Clean empty folders (album → artist)
+                album_dir = os.path.dirname(file_path)
+                artist_dir = os.path.dirname(album_dir)
+                try:
+                    if os.path.isdir(album_dir) and not os.listdir(album_dir):
+                        os.rmdir(album_dir)
+                        if os.path.isdir(artist_dir) and not os.listdir(artist_dir):
+                            os.rmdir(artist_dir)
+                except Exception as exc:
+                    log.warning("delete: failed to remove empty dirs", error=str(exc))
+            except FileNotFoundError:
+                log.info("file already gone, skipping removal", file=file_path)
+            except OSError as exc:
+                log.warning("could not remove file", file=file_path, error=str(exc))
+                errors.append({"mbid": mbid, "error": str(exc)})
+
+    mark_ignored_bulk(_cfg.state_db, body.mbids)
 
     if files_removed:
         threading.Thread(
@@ -383,8 +391,14 @@ async def delete_download_entry(mbid: str):
             daemon=True,
         ).start()
 
-    log.info("download entry deleted", mbid=mbid, files_removed=files_removed)
-    return {"deleted": True, "files_removed": files_removed}
+    log.info(
+        "bulk delete completed", count=len(body.mbids), files_removed=files_removed
+    )
+    return {
+        "deleted": len(body.mbids),
+        "files_removed": files_removed,
+        "errors": errors,
+    }
 
 
 @app.get("/api/rematch/search")
