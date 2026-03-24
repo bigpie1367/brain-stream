@@ -481,7 +481,7 @@ def _enrich_track(
                     _normalize_for_match(track_name),
                     _normalize_for_match(itunes_track_name),
                 ).ratio()
-                if track_sim >= 0.5:
+                if track_sim >= 0.55:
                     canonical_title = itunes_track_name
                 else:
                     log.info(
@@ -520,7 +520,7 @@ def _enrich_track(
                         _normalize_for_match(track_name),
                         _normalize_for_match(deezer_track_name),
                     ).ratio()
-                    if track_sim >= 0.5:
+                    if track_sim >= 0.55:
                         canonical_title = deezer_track_name
                     else:
                         log.info(
