@@ -162,7 +162,7 @@ def run_pipeline(cfg):
             job_id=mbid,
             artist=artist,
             track=track_name,
-            source="listenbrainz",
+            source=track.get("source", "listenbrainz"),
         )
 
     log.info("pipeline finished — jobs enqueued")

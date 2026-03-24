@@ -68,11 +68,21 @@ def init_db(db_path: str):
 
 
 def is_downloaded(db_path: str, mbid: str) -> bool:
+    """Check if MBID already has an active or completed record (skip in pipeline).
+
+    Returns True for done/ignored/pending/downloading — all statuses that should
+    prevent the pipeline from re-enqueuing this MBID.
+    """
     with _conn(db_path) as conn:
         row = conn.execute(
             "SELECT status FROM downloads WHERE mbid = ?", (mbid,)
         ).fetchone()
-    return row is not None and row["status"] in ("done", "ignored")
+    return row is not None and row["status"] in (
+        "done",
+        "ignored",
+        "pending",
+        "downloading",
+    )
 
 
 def mark_pending(
@@ -128,7 +138,7 @@ def get_retryable(db_path: str, max_attempts: int = 3) -> List[sqlite3.Row]:
     with _conn(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT mbid, track_name, artist
+            SELECT mbid, track_name, artist, source
             FROM downloads
             WHERE status = 'failed' AND attempts < ?
         """,
