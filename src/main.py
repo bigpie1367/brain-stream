@@ -41,6 +41,24 @@ def run_pipeline(cfg):
     cf_tracks = []
     try:
         offset = int(get_setting(db, "cf_offset", "0"))
+        # 모델 갱신 감지: offset>0이면 첫 페이지 probe로 비교
+        if offset > 0:
+            prev_first = get_setting(db, "cf_first_mbid", "")
+            if prev_first:
+                probe = fetch_recommendations(
+                    cfg.listenbrainz.username,
+                    cfg.listenbrainz.token,
+                    count=1,
+                    offset=0,
+                )
+                if probe and probe[0]["mbid"] != prev_first:
+                    log.info(
+                        "CF model refreshed, resetting offset",
+                        old_first=prev_first,
+                        new_first=probe[0]["mbid"],
+                    )
+                    offset = 0
+                    set_setting(db, "cf_first_mbid", probe[0]["mbid"])
         cf_tracks = fetch_recommendations(
             cfg.listenbrainz.username,
             cfg.listenbrainz.token,
@@ -48,7 +66,6 @@ def run_pipeline(cfg):
             offset=offset,
         )
         if cf_tracks:
-            # 모델 갱신 감지: offset=0일 때만 첫 MBID를 저장/비교
             if offset == 0:
                 set_setting(db, "cf_first_mbid", cf_tracks[0]["mbid"])
             set_setting(db, "cf_offset", str(offset + len(cf_tracks)))
@@ -86,16 +103,19 @@ def run_pipeline(cfg):
 
     # Radio 실패 시 CF 폴백 (CF가 소진되지 않은 경우에만)
     if not radio_tracks and not cf_exhausted:
-        cur_offset = int(get_setting(db, "cf_offset", "0"))
-        extra = fetch_recommendations(
-            cfg.listenbrainz.username,
-            cfg.listenbrainz.token,
-            count=radio_target,
-            offset=cur_offset,
-        )
-        radio_tracks = extra
-        if extra:
-            set_setting(db, "cf_offset", str(cur_offset + len(extra)))
+        try:
+            cur_offset = int(get_setting(db, "cf_offset", "0"))
+            extra = fetch_recommendations(
+                cfg.listenbrainz.username,
+                cfg.listenbrainz.token,
+                count=radio_target,
+                offset=cur_offset,
+            )
+            radio_tracks = extra
+            if extra:
+                set_setting(db, "cf_offset", str(cur_offset + len(extra)))
+        except Exception as exc:
+            log.warning("CF fallback for radio failed", error=str(exc))
 
     # ── 3. 중복 필터링 ──
     seen = set()
@@ -111,7 +131,11 @@ def run_pipeline(cfg):
     retryable = get_retryable(db)
     if retryable:
         log.info("retrying failed tracks", count=len(retryable))
-        new_tracks = retryable + new_tracks
+        seen_mbids = {t["mbid"] for t in new_tracks}
+        for t in retryable:
+            if t["mbid"] not in seen_mbids:
+                seen_mbids.add(t["mbid"])
+                new_tracks.insert(0, t)
 
     if not new_tracks:
         log.info("nothing new to download")
@@ -204,7 +228,7 @@ def main():
     worker_thread = threading.Thread(
         target=worker_module.worker_loop,
         args=(cfg, run_download_job),
-        daemon=False,
+        daemon=True,
         name="worker",
     )
     worker_thread.start()

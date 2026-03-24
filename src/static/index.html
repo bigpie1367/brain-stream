@@ -1977,8 +1977,7 @@
       if (_historySearch) params.set('search', _historySearch);
       const res = await fetch('/api/downloads?' + params.toString());
       if (requestSeq !== _historyRequestSeq) {
-        _historyLoading = false;
-        return; // Stale response, discard
+        return; // Stale response, discard (don't reset loading flag)
       }
       const data = await res.json();
       // Support both paginated format { items, total, ... } and plain array (legacy)
@@ -2166,7 +2165,9 @@
     } catch (e) {
       console.error('history load failed', e);
     } finally {
-      _historyLoading = false;
+      if (requestSeq === _historyRequestSeq) {
+        _historyLoading = false;
+      }
       const loadMoreEl = document.getElementById('history-load-more');
       if (loadMoreEl) loadMoreEl.style.display = 'none';
     }
@@ -2448,8 +2449,12 @@
     const deleteModalOpen  = !document.getElementById('delete-modal').classList.contains('hidden');
     const rematchModalOpen = !document.getElementById('rematch-modal').classList.contains('hidden');
     const editModalOpen    = !document.getElementById('edit-modal').classList.contains('hidden');
-    // Auto-refresh only reloads from the top (non-append) to pick up new items
-    if (!deleteModalOpen && !rematchModalOpen && !editModalOpen) resetAndLoadHistory();
+    if (deleteModalOpen || rematchModalOpen || editModalOpen) return;
+    // Auto-refresh only when near the top to avoid disrupting infinite scroll
+    const historyTable = document.getElementById('history-table');
+    if (historyTable && historyTable.getBoundingClientRect().top > -200) {
+      resetAndLoadHistory();
+    }
   }, 5000);
 
   // ── Infinite scroll ─────────────────────────────────────────────────────────

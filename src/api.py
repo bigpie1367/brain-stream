@@ -1108,7 +1108,13 @@ async def get_pipeline_interval():
         "pipeline_interval_hours",
         str(_cfg.scheduler.interval_hours),
     )
-    return {"interval_hours": int(value)}
+    try:
+        interval = int(value)
+    except (TypeError, ValueError):
+        interval = _cfg.scheduler.interval_hours
+    if not 1 <= interval <= 24:
+        interval = _cfg.scheduler.interval_hours
+    return {"interval_hours": interval}
 
 
 class IntervalUpdate(BaseModel):
