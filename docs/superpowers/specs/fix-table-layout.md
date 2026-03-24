@@ -10,4 +10,4 @@
 `table-layout: fixed`로 변경하면 `<th>`에 지정된 퍼센트 너비가 고정되어 콘텐츠와 무관하게 일정한 레이아웃 유지.
 
 ## 영향 범위
-- `src/static/index.html` — CSS 1줄 변경
+- `src/static/index.html` — CSS 변경 (table-layout, 컬럼 너비, auto-refresh 깜빡임 수정)
