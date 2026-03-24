@@ -14,3 +14,12 @@ PR #20 received several review comments from CodeRabbit identifying potential bu
 7. **tagger.py**: `meta["artist"]` can raise KeyError — use `meta.get()` instead
 8. **logger.py**: `os.path.dirname(log_file)` can return empty string — add guard
 9. **operations.md**: Healthcheck port should be 8000 (container internal), not 8080
+
+## Round 2 Fixes
+
+10. **main.py**: Worker thread comment said "non-daemon" but code is daemon=True — fix comment
+11. **index.html**: `#history-table` selector doesn't exist in DOM — fix to `#section-history` (auto-refresh was broken)
+12. **api.py**: `rematch_apply` file collision check missing before `move_to_music_dir` — add `os.path.exists` guard with 409
+13. **tagger.py**: `_write_single_tag` swallowed exceptions — make it raise so API callers can fail-fast
+14. **state.py**: `mark_pending_if_not_duplicate` race condition — replace SELECT+INSERT with atomic `INSERT ... WHERE NOT EXISTS`
+15. **tests**: Update rematch_apply tests for collision check mock, tagger tests for raised exceptions
