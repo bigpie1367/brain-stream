@@ -607,3 +607,49 @@ def test_title_similarity(yt_title, artist, track_name, min_expected, max_expect
     assert min_expected <= ratio <= max_expected, (
         f"Expected {min_expected}-{max_expected}, got {ratio}"
     )
+
+
+# ── _select_best_entry title similarity 테스트 ────────────────────────────────
+
+
+def test_select_best_entry_filters_low_title_similarity():
+    """title 유사도 0.3 미만인 후보는 필터링되어야 한다."""
+    entries = [
+        _entry("Completely Wrong Song Title", 312.0, channel="Rihanna"),
+        _entry("Rihanna - Hard (Official Audio)", 230.0),
+    ]
+    result = _select_best_entry(
+        entries, mb_duration=312.0, artist="Rihanna", track_name="Hard (Illmana Remix)"
+    )
+    assert result is not None
+    assert "Hard" in result["title"]
+    assert "Wrong" not in result["title"]
+
+
+def test_select_best_entry_returns_none_when_all_filtered():
+    """모든 후보가 title 유사도 0.3 미만이면 None을 반환해야 한다."""
+    entries = [
+        _entry("Completely Unrelated Song", 200.0),
+        _entry("Another Wrong Track", 210.0),
+    ]
+    result = _select_best_entry(
+        entries, mb_duration=200.0, artist="Radiohead", track_name="Creep"
+    )
+    assert result is None
+
+
+def test_select_best_entry_title_similarity_affects_scoring():
+    """title 유사도가 낮은 후보는 채널 보너스가 있어도 패널티를 받아야 한다."""
+    entries = [
+        _entry(
+            "Imagine Dragons - Thunder (Official Music Video)",
+            217.0,
+            channel="Imagine Dragons",
+        ),
+        _entry("Believe Her - Imagine Dragons", 213.0, channel="RandomUser"),
+    ]
+    result = _select_best_entry(
+        entries, mb_duration=213.0, artist="Imagine Dragons", track_name="Believe Her"
+    )
+    assert result is not None
+    assert "Believe Her" in result["title"]
