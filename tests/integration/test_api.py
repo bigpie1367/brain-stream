@@ -223,7 +223,7 @@ def test_get_sse_existing_job_returns_200(client):
 # ── DELETE /api/downloads (bulk) ─────────────────────────────────────────────
 
 
-def test_delete_download_returns_404_when_not_found(client):
+def test_delete_nonexistent_mbid_is_silently_skipped(client):
     """존재하지 않는 mbid는 silently skip되어 200을 반환한다."""
     resp = client.request(
         "DELETE", "/api/downloads", json={"mbids": ["nonexistent-mbid"]}
