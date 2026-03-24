@@ -106,9 +106,10 @@ def test_is_downloaded_true_after_mark_done(tmp_state_db):
     assert is_downloaded(tmp_state_db, "mbid-chk") is True
 
 
-def test_is_downloaded_false_when_pending(tmp_state_db):
+def test_is_downloaded_true_when_pending(tmp_state_db):
+    """pending 상태도 is_downloaded=True — 파이프라인이 중복 enqueue하지 않도록."""
     mark_pending(tmp_state_db, "mbid-pnd", "Song", "Artist")
-    assert is_downloaded(tmp_state_db, "mbid-pnd") is False
+    assert is_downloaded(tmp_state_db, "mbid-pnd") is True
 
 
 def test_is_downloaded_false_when_not_exist(tmp_state_db):
