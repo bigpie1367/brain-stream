@@ -568,3 +568,42 @@ from src.pipeline.downloader import _extract_track_title
 )
 def test_extract_track_title(yt_title, artist, expected):
     assert _extract_track_title(yt_title, artist) == expected
+
+
+# ── _title_similarity 단위 테스트 ────────────────────────────────────────────
+
+from src.pipeline.downloader import _title_similarity
+
+
+@pytest.mark.parametrize(
+    "yt_title,artist,track_name,min_expected,max_expected",
+    [
+        (
+            "Three Days Grace - Animal I Have Become (Official Video)",
+            "Three Days Grace",
+            "Animal I Have Become",
+            0.99,
+            1.01,
+        ),
+        ("Fuck Off (Hard Drums Remix)", "Rihanna", "Hard (Illmana Remix)", 0.0, 0.6),
+        (
+            "Imagine Dragons - Believer (Official Music Video)",
+            "Imagine Dragons",
+            "Believe Her",
+            0.7,
+            0.95,
+        ),
+        (
+            "Rihanna - Love The Way You Lie (Part II) (Audio) ft. Eminem",
+            "Eminem feat. Rihanna",
+            "Love the Way You Lie",
+            0.7,
+            0.95,
+        ),
+    ],
+)
+def test_title_similarity(yt_title, artist, track_name, min_expected, max_expected):
+    ratio = _title_similarity(yt_title, artist, track_name)
+    assert min_expected <= ratio <= max_expected, (
+        f"Expected {min_expected}-{max_expected}, got {ratio}"
+    )

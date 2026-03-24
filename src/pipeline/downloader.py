@@ -192,6 +192,21 @@ def _extract_track_title(yt_title: str, artist: str) -> str:
     return title.strip()
 
 
+def _title_similarity(yt_title: str, artist: str, track_name: str) -> float:
+    """Compute similarity between YouTube title and requested track name.
+
+    Both sides are normalized: YouTube title has artist/noise stripped,
+    track_name has noise parentheticals stripped. Returns 0.0-1.0.
+    """
+    extracted = _normalize(
+        _NOISE_PAREN_RE.sub("", _extract_track_title(yt_title, artist))
+    )
+    normalized_track = _normalize(_NOISE_PAREN_RE.sub("", track_name))
+    if not extracted or not normalized_track:
+        return 0.0
+    return difflib.SequenceMatcher(None, extracted, normalized_track).ratio()
+
+
 def _channel_score(entry: dict, artist: str) -> float:
     """Return a bonus score (negative = better) for official channels."""
     channel = (entry.get("channel") or entry.get("uploader") or "").lower()
