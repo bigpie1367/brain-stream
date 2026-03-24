@@ -283,23 +283,31 @@ def mark_pending_if_not_duplicate(
     db_path: str, mbid: str, track_name: str, artist: str, source: str = "listenbrainz"
 ) -> dict | None:
     """Atomically check for active duplicate and insert pending row.
+    Uses a single INSERT ... WHERE NOT EXISTS to prevent concurrent requests
+    from both passing the duplicate check.
     Returns existing record dict if duplicate found, None if inserted successfully.
     """
     with _conn(db_path) as conn:
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO downloads (mbid, track_name, artist, status, source)
+               SELECT ?, ?, ?, 'pending', ?
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM downloads
+                   WHERE artist = ? AND track_name = ?
+                     AND status IN ('done', 'downloading', 'pending')
+               )""",
+            (mbid, track_name, artist, source, artist, track_name),
+        )
+        if cursor.rowcount > 0:
+            return None
+        # Insert didn't happen — find the existing record
         row = conn.execute(
             """SELECT * FROM downloads
                WHERE artist = ? AND track_name = ? AND status IN ('done', 'downloading', 'pending')
                LIMIT 1""",
             (artist, track_name),
         ).fetchone()
-        if row:
-            return dict(row)
-        conn.execute(
-            """INSERT OR IGNORE INTO downloads (mbid, track_name, artist, status, source)
-               VALUES (?, ?, ?, 'pending', ?)""",
-            (mbid, track_name, artist, source),
-        )
-        return None
+        return dict(row) if row else None
 
 
 def delete_download(db_path: str, mbid: str):

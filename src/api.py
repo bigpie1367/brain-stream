@@ -671,6 +671,11 @@ async def rematch_apply(req: RematchApplyRequest, request: Request):
     expected_path = os.path.join(music_root, expected_artist, expected_album, filename)
 
     if expected_path != file_path:
+        if os.path.exists(expected_path):
+            raise HTTPException(
+                status_code=409,
+                detail=f"file already exists at new path: {expected_path}",
+            )
         try:
             new_file_path = move_to_music_dir(
                 file_path, music_root, artist_for_move, album_name, filename

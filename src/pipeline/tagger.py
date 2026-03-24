@@ -129,17 +129,14 @@ def _write_tags(file_path: str, artist: str, track_name: str, mb_trackid: str = 
 
 
 def _write_single_tag(file_path: str, key_name: str, value: str):
-    """Write a single tag to audio file."""
-    try:
-        fmt = _detect_format(file_path)
-        f = _FORMAT_OPENER[fmt](file_path)
-        if f is None:
-            return
-        f[_FORMAT_KEYS[fmt][key_name]] = _wrap_value(fmt, key_name, value)
-        f.save()
-        log.debug(f"wrote {key_name} tag", file=file_path, value=value)
-    except Exception as exc:
-        log.warning(f"could not write {key_name} tag", file=file_path, error=str(exc))
+    """Write a single tag to audio file. Raises on failure."""
+    fmt = _detect_format(file_path)
+    f = _FORMAT_OPENER[fmt](file_path)
+    if f is None:
+        raise RuntimeError(f"could not open {file_path} for tagging")
+    f[_FORMAT_KEYS[fmt][key_name]] = _wrap_value(fmt, key_name, value)
+    f.save()
+    log.debug(f"wrote {key_name} tag", file=file_path, value=value)
 
 
 def write_mb_trackid_tag(file_path: str, recording_id: str):
@@ -573,7 +570,10 @@ def _enrich_track(
 
     if album and not has_album:
         log.info("setting album tag", artist=artist, track=track_name, album=album)
-        write_album_tag(dest_path, album)
+        try:
+            write_album_tag(dest_path, album)
+        except Exception as exc:
+            log.warning("enrichment: album tag write failed", error=str(exc))
 
     # ── 4. Cover art: CAA → iTunes → Deezer → YouTube thumbnail ─────────
     art_embedded = False

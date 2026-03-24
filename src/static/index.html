@@ -2451,8 +2451,8 @@
     const editModalOpen    = !document.getElementById('edit-modal').classList.contains('hidden');
     if (deleteModalOpen || rematchModalOpen || editModalOpen) return;
     // Auto-refresh only when near the top to avoid disrupting infinite scroll
-    const historyTable = document.getElementById('history-table');
-    if (historyTable && historyTable.getBoundingClientRect().top > -200) {
+    const historySection = document.getElementById('section-history');
+    if (historySection && historySection.getBoundingClientRect().top > -200) {
       resetAndLoadHistory();
     }
   }, 5000);

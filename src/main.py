@@ -222,7 +222,7 @@ def main():
     # Inject config into API module
     api_module._cfg = cfg
 
-    # Worker thread (single, sequential — non-daemon for graceful shutdown)
+    # Worker thread (daemon) — runs worker_loop(), processes _work_queue sequentially (FIFO)
     from src.jobs import run_download_job
 
     worker_thread = threading.Thread(
