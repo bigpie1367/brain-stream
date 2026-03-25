@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 import pytest
 import yt_dlp
-from src.pipeline.downloader import _is_cover, _is_live, _select_best_entry, download_track
+from src.pipeline.downloader import (
+    _is_cover,
+    _is_live,
+    _select_best_entry,
+    download_track,
+)
 
 # ── 성공 케이스 ───────────────────────────────────────────────────────────────
 
@@ -24,7 +29,9 @@ def test_download_track_returns_flac_path(tmp_path):
     expected_file.touch()
 
     mock_info = {
-        "entries": [{"thumbnail": "http://example.com/thumb.jpg", "channel": "TestChannel"}]
+        "entries": [
+            {"thumbnail": "http://example.com/thumb.jpg", "channel": "TestChannel"}
+        ]
     }
 
     class MockYDL:
@@ -510,3 +517,139 @@ def test_run_with_timeout_returns_result():
     """_run_with_timeout should return function result when within timeout."""
     result = _run_with_timeout(lambda: 42, timeout_sec=5)
     assert result == 42
+
+
+# ── _extract_track_title 단위 테스트 ─────────────────────────────────────────
+
+from src.pipeline.downloader import _extract_track_title
+
+
+@pytest.mark.parametrize(
+    "yt_title,artist,expected",
+    [
+        (
+            "Three Days Grace - Animal I Have Become (Official Video)",
+            "Three Days Grace",
+            "Animal I Have Become",
+        ),
+        (
+            "Imagine Dragons - Believer (Official Music Video)",
+            "Imagine Dragons",
+            "Believer",
+        ),
+        (
+            "Rihanna - Love The Way You Lie (Part II) (Audio) ft. Eminem",
+            "Rihanna",
+            "Love The Way You Lie (Part II)",
+        ),
+        ("Fuck Off (Hard Drums Remix)", "Rihanna", "Fuck Off (Hard Drums Remix)"),
+        (
+            "Leave Out All The Rest (Official Music Video) [4K Upgrade] - Linkin Park",
+            "Linkin Park",
+            "Leave Out All The Rest",
+        ),
+        (
+            "Evanescence - Going Under (Remastered 2023) - Official Visualizer",
+            "Evanescence",
+            "Going Under",
+        ),
+        (
+            "Cut The Bridge (Official Audio Visualizer) - Linkin Park",
+            "Linkin Park",
+            "Cut The Bridge",
+        ),
+        ("i love you", "Billie Eilish", "i love you"),
+        (
+            "Eminem - Love the Way You Lie (feat. Rihanna)",
+            "Eminem",
+            "Love the Way You Lie (feat. Rihanna)",
+        ),
+    ],
+)
+def test_extract_track_title(yt_title, artist, expected):
+    assert _extract_track_title(yt_title, artist) == expected
+
+
+# ── _title_similarity 단위 테스트 ────────────────────────────────────────────
+
+from src.pipeline.downloader import _title_similarity
+
+
+@pytest.mark.parametrize(
+    "yt_title,artist,track_name,min_expected,max_expected",
+    [
+        (
+            "Three Days Grace - Animal I Have Become (Official Video)",
+            "Three Days Grace",
+            "Animal I Have Become",
+            0.99,
+            1.01,
+        ),
+        ("Fuck Off (Hard Drums Remix)", "Rihanna", "Hard (Illmana Remix)", 0.0, 0.6),
+        (
+            "Imagine Dragons - Believer (Official Music Video)",
+            "Imagine Dragons",
+            "Believe Her",
+            0.7,
+            0.95,
+        ),
+        (
+            "Rihanna - Love The Way You Lie (Part II) (Audio) ft. Eminem",
+            "Eminem feat. Rihanna",
+            "Love the Way You Lie",
+            0.7,
+            0.95,
+        ),
+    ],
+)
+def test_title_similarity(yt_title, artist, track_name, min_expected, max_expected):
+    ratio = _title_similarity(yt_title, artist, track_name)
+    assert min_expected <= ratio <= max_expected, (
+        f"Expected {min_expected}-{max_expected}, got {ratio}"
+    )
+
+
+# ── _select_best_entry title similarity 테스트 ────────────────────────────────
+
+
+def test_select_best_entry_filters_low_title_similarity():
+    """title 유사도 0.3 미만인 후보는 필터링되어야 한다."""
+    entries = [
+        _entry("Completely Wrong Song Title", 312.0, channel="Rihanna"),
+        _entry("Rihanna - Hard (Official Audio)", 230.0),
+    ]
+    result = _select_best_entry(
+        entries, mb_duration=312.0, artist="Rihanna", track_name="Hard (Illmana Remix)"
+    )
+    assert result is not None
+    assert "Hard" in result["title"]
+    assert "Wrong" not in result["title"]
+
+
+def test_select_best_entry_returns_none_when_all_filtered():
+    """모든 후보가 title 유사도 0.3 미만이면 None을 반환해야 한다."""
+    entries = [
+        _entry("Completely Unrelated Song", 200.0),
+        _entry("Another Wrong Track", 210.0),
+    ]
+    result = _select_best_entry(
+        entries, mb_duration=200.0, artist="Radiohead", track_name="Creep"
+    )
+    assert result is None
+
+
+def test_select_best_entry_title_similarity_affects_scoring():
+    """title 유사도가 낮은 후보는 채널 보너스가 있어도 패널티를 받아야 한다."""
+    entries = [
+        _entry(
+            "Imagine Dragons - Thunder (Official Music Video)",
+            217.0,
+            channel="Imagine Dragons",
+        ),
+        _entry("Believe Her - Imagine Dragons", 213.0, channel="RandomUser"),
+    ]
+    result = _select_best_entry(
+        entries, mb_duration=213.0, artist="Imagine Dragons", track_name="Believe Her"
+    )
+    assert result is not None
+    assert "Believe Her" in result["title"]

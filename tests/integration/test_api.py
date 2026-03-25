@@ -220,13 +220,18 @@ def test_get_sse_existing_job_returns_200(client):
         worker_module._job_queues.pop(job_id, None)
 
 
-# ── DELETE /api/downloads/{mbid} ─────────────────────────────────────────────
+# ── DELETE /api/downloads (bulk) ─────────────────────────────────────────────
 
 
-def test_delete_download_returns_404_when_not_found(client):
-    """존재하지 않는 mbid 삭제 시 404를 반환해야 한다."""
-    resp = client.delete("/api/downloads/nonexistent-mbid")
-    assert resp.status_code == 404
+def test_delete_nonexistent_mbid_is_silently_skipped(client):
+    """존재하지 않는 mbid는 silently skip되어 200을 반환한다."""
+    resp = client.request(
+        "DELETE", "/api/downloads", json={"mbids": ["nonexistent-mbid"]}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["deleted"] == 0
+    assert data["files_removed"] == 0
 
 
 def test_delete_download_marks_record_as_ignored(client, tmp_state_db):
@@ -236,10 +241,10 @@ def test_delete_download_marks_record_as_ignored(client, tmp_state_db):
     mark_pending(tmp_state_db, "mbid-del", "Track", "Artist")
     mark_done(tmp_state_db, "mbid-del")
 
-    resp = client.delete("/api/downloads/mbid-del")
+    resp = client.request("DELETE", "/api/downloads", json={"mbids": ["mbid-del"]})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["deleted"] is True
+    assert data["deleted"] == 1
 
     row = get_download_by_mbid(tmp_state_db, "mbid-del")
     assert row is not None
@@ -261,7 +266,7 @@ def test_delete_download_removes_file_when_file_path_set(
 
     with patch("src.api.threading.Thread") as mock_thread_cls:
         mock_thread_cls.return_value = MagicMock()
-        resp = client.delete("/api/downloads/mbid-file")
+        resp = client.request("DELETE", "/api/downloads", json={"mbids": ["mbid-file"]})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -275,10 +280,10 @@ def test_delete_download_no_file_path_marks_ignored(client, tmp_state_db):
 
     mark_pending(tmp_state_db, "mbid-nofile", "Track", "Artist")
 
-    resp = client.delete("/api/downloads/mbid-nofile")
+    resp = client.request("DELETE", "/api/downloads", json={"mbids": ["mbid-nofile"]})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["deleted"] is True
+    assert data["deleted"] == 1
     assert data["files_removed"] == 0
 
     row = get_download_by_mbid(tmp_state_db, "mbid-nofile")

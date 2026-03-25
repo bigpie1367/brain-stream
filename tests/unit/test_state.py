@@ -13,7 +13,7 @@ from src.state import (
     mark_done,
     mark_downloading,
     mark_failed,
-    mark_ignored,
+    mark_ignored_bulk,
     mark_pending,
     update_file_path,
     update_track_info,
@@ -118,27 +118,38 @@ def test_is_downloaded_false_when_not_exist(tmp_state_db):
 
 def test_is_downloaded_true_after_mark_ignored(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-ign", "Song", "Artist")
-    mark_ignored(tmp_state_db, "mbid-ign")
+    mark_ignored_bulk(tmp_state_db, ["mbid-ign"])
     assert is_downloaded(tmp_state_db, "mbid-ign") is True
 
 
-def test_mark_ignored_sets_status(tmp_state_db):
+def test_mark_ignored_bulk_sets_status(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-ign2", "Song", "Artist")
-    mark_ignored(tmp_state_db, "mbid-ign2")
+    mark_ignored_bulk(tmp_state_db, ["mbid-ign2"])
     row = get_download_by_mbid(tmp_state_db, "mbid-ign2")
     assert row["status"] == "ignored"
 
 
+def test_mark_ignored_bulk_multiple(tmp_state_db):
+    """Bulk call should mark all given mbids as ignored in one transaction."""
+    mark_pending(tmp_state_db, "mbid-b1", "Song1", "Artist1")
+    mark_pending(tmp_state_db, "mbid-b2", "Song2", "Artist2")
+    mark_pending(tmp_state_db, "mbid-b3", "Song3", "Artist3")
+    mark_ignored_bulk(tmp_state_db, ["mbid-b1", "mbid-b2", "mbid-b3"])
+    for m in ["mbid-b1", "mbid-b2", "mbid-b3"]:
+        row = get_download_by_mbid(tmp_state_db, m)
+        assert row["status"] == "ignored"
+
+
 def test_mark_ignored_excluded_from_retryable(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-ign3", "Song", "Artist")
-    mark_ignored(tmp_state_db, "mbid-ign3")
+    mark_ignored_bulk(tmp_state_db, ["mbid-ign3"])
     retryable = get_retryable(tmp_state_db, max_attempts=3)
     assert not any(r["mbid"] == "mbid-ign3" for r in retryable)
 
 
 def test_mark_ignored_included_in_get_all_downloads(tmp_state_db):
     mark_pending(tmp_state_db, "mbid-ign4", "Song", "Artist")
-    mark_ignored(tmp_state_db, "mbid-ign4")
+    mark_ignored_bulk(tmp_state_db, ["mbid-ign4"])
     rows = get_all_downloads(tmp_state_db)
     assert any(r["mbid"] == "mbid-ign4" and r["status"] == "ignored" for r in rows)
 

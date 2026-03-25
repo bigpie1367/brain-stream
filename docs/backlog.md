@@ -1,8 +1,8 @@
 # 프로젝트 백로그
 
 - **작성일**: 2026-03-04
-- **현재 버전**: 1.1.0
-- **최종 업데이트**: 2026-03-18
+- **현재 버전**: 2.1.0
+- **최종 업데이트**: 2026-03-25
 
 ---
 
@@ -143,7 +143,7 @@
 
 | ID | User Story | 완료일 |
 |----|-----------|--------|
-| US-62 | Worker thread를 non-daemon으로 변경, `_shutdown_event` + `try/finally`로 graceful shutdown 구현. Docker `stop_grace_period: 40s` | 2026-03-18 |
+| US-62 | Worker thread를 daemon으로 설정, `_shutdown_event` + `try/finally`로 graceful shutdown 구현. Docker `stop_grace_period: 40s` | 2026-03-18 |
 | US-63 | yt-dlp `_run_with_timeout` 래퍼: EXTRACT_TIMEOUT=60s, DOWNLOAD_TIMEOUT=600s, `socket_timeout: 30`, `extractor_retries: 3` | 2026-03-18 |
 | US-64 | 인메모리 슬라이딩 윈도우 Rate Limiter: POST 10 req/min (`/api/pipeline/run` 2 req/min), 429 응답 | 2026-03-18 |
 | US-65 | API 입력값 검증: Pydantic `Field(max_length=500)`, `Query(max_length=500)` 전 문자열 필드 적용 | 2026-03-18 |
@@ -191,7 +191,7 @@
 | ~~ENH-02~~ | ~~staging 디렉토리 기동 시 정리 로직 추가 (BUG-01 해결)~~ | **구현 완료 (2026-03-13, US-56)** |
 | ENH-03 | 실패한 트랙 수동 재시도 API 엔드포인트 (`POST /api/retry/{mbid}`) | 운영 편의성 |
 | ~~ENH-12~~ | ~~라이브러리 트랙 삭제 기능~~ (`DELETE /api/downloads/{mbid}`, Web UI 삭제 버튼) → **구현 완료 (2026-03-10)** | 잘못 다운로드된 트랙 운영 편의성 |
-| ENH-13 | 메타데이터 직접 편집 모달 — rematch 없이 artist/album/track_name을 직접 수정 | rematch는 MB 검색 필수라 오매칭 교정 외 단순 오탈자 수정에 과함 |
+| ~~ENH-13~~ | ~~메타데이터 직접 편집 모달 — rematch 없이 artist/album/track_name을 직접 수정~~ → **구현 완료 (POST /api/edit/{song_id})** | rematch는 MB 검색 필수라 오매칭 교정 외 단순 오탈자 수정에 과함 |
 
 ### 우선순위: 중간
 
@@ -206,7 +206,7 @@
 
 | ID | 설명 | 근거 |
 |----|------|------|
-| ENH-08 | Web UI 개선: 진행 중인 잡 목록, 이력 페이지네이션 | UX 개선 |
+| ~~ENH-08~~ | ~~Web UI 개선: 진행 중인 잡 목록, 이력 페이지네이션~~ → **부분 해소**: 이력 페이지네이션 + 무한 스크롤 + 검색 구현 완료. 진행 중 잡 목록은 미구현 | UX 개선 |
 | ENH-09 | Prometheus 메트릭 엔드포인트 (`/metrics`) | 모니터링 인프라 연동 |
 | ENH-10 | 다중 사용자 ListenBrainz 계정 지원 | 현재 단일 계정만 지원 |
 | ENH-11 | 다운로드 파일 포맷 후처리 설정 (예: FLAC → AAC 변환) | 저장 공간 최적화 |

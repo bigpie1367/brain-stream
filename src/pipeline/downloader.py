@@ -131,6 +131,82 @@ def _normalize(s: str) -> str:
     return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
 
 
+_NOISE_PAREN_RE = re.compile(
+    r"\s*[\(\[]\s*(?:official|video|audio|lyrics?|lyric|visualizer|"
+    r"remaster(?:ed)?(?:\s+\d{4})?|upgrade|hd|4k|mv|music\s+video)"
+    r"[^\)\]]*[\)\]]",
+    re.IGNORECASE,
+)
+
+_TRAILING_NOISE_RE = re.compile(
+    r"\s*[-–—]\s*(?:official|video|audio|lyrics?|lyric|visualizer|"
+    r"remaster(?:ed)?(?:\s+\d{4})?|upgrade|hd|4k|mv|music\s+video).*$",
+    re.IGNORECASE,
+)
+
+_TRAILING_DASH_ARTIST_RE = re.compile(r"\s*[-–—]\s*$")
+
+
+def _extract_track_title(yt_title: str, artist: str) -> str:
+    """Extract the track title from a YouTube video title."""
+    title = yt_title.strip()
+    if not title:
+        return ""
+
+    # Remove "ft./feat." suffix at end of title (e.g. "... ft. Eminem")
+    title = re.sub(r"\s+(?:ft\.?|feat\.?)\s+[^(\[]*$", "", title, flags=re.IGNORECASE)
+
+    # Try "Artist - Track" pattern (most common)
+    norm_artist = _normalize(artist)
+    for sep in (" - ", " – ", " — ", " − "):
+        if sep in title:
+            parts = title.split(sep, 1)
+            left = parts[0].strip()
+            right = parts[1].strip()
+            if (
+                _normalize(left)
+                and difflib.SequenceMatcher(None, norm_artist, _normalize(left)).ratio()
+                >= 0.7
+            ):
+                title = right
+                break
+            elif (
+                _normalize(right)
+                and difflib.SequenceMatcher(
+                    None, norm_artist, _normalize(right)
+                ).ratio()
+                >= 0.7
+            ):
+                title = left
+                break
+
+    # Strip noise parentheticals
+    title = _NOISE_PAREN_RE.sub("", title)
+
+    # Strip trailing "- Official Visualizer", "- Remastered 2023", etc.
+    title = _TRAILING_NOISE_RE.sub("", title)
+
+    # Clean up trailing " - " left after artist removal from end
+    title = _TRAILING_DASH_ARTIST_RE.sub("", title)
+
+    return title.strip()
+
+
+def _title_similarity(yt_title: str, artist: str, track_name: str) -> float:
+    """Compute similarity between YouTube title and requested track name.
+
+    Both sides are normalized: YouTube title has artist/noise stripped,
+    track_name has noise parentheticals stripped. Returns 0.0-1.0.
+    """
+    extracted = _normalize(
+        _NOISE_PAREN_RE.sub("", _extract_track_title(yt_title, artist))
+    )
+    normalized_track = _normalize(_NOISE_PAREN_RE.sub("", track_name))
+    if not extracted or not normalized_track:
+        return 0.0
+    return difflib.SequenceMatcher(None, extracted, normalized_track).ratio()
+
+
 def _channel_score(entry: dict, artist: str) -> float:
     """Return a bonus score (negative = better) for official channels."""
     channel = (entry.get("channel") or entry.get("uploader") or "").lower()
@@ -157,10 +233,13 @@ def _select_best_entry(
     artist: str = "",
     track_name: str = "",
     strict: bool = True,
-) -> dict:
+) -> Optional[dict]:
     """Select the best YouTube entry using a scoring system.
 
+    Returns None if no candidate meets the title similarity threshold (0.3).
+
     Scoring factors (lower = better):
+    - Title dissimilarity: (1 - title_sim) * 800 penalty
     - Cover/remix/karaoke title: +1000 penalty (skipped if user explicitly
       searched for a cover/remix in track_name)
     - Live performance title: +500 penalty
@@ -197,9 +276,39 @@ def _select_best_entry(
                 total=len(entries),
             )
 
+    # Title similarity filter (threshold 0.3)
+    if track_name:
+        sim_entries = []
+        for e in entries:
+            sim = _title_similarity(e.get("title", ""), artist, track_name)
+            e["_title_sim"] = sim
+            if sim >= 0.3:
+                sim_entries.append(e)
+            else:
+                log.info(
+                    "title similarity too low, filtering candidate",
+                    yt_title=e.get("title", ""),
+                    track_name=track_name,
+                    similarity=round(sim, 3),
+                )
+        if sim_entries:
+            entries = sim_entries
+        else:
+            log.warning(
+                "all candidates below title similarity threshold",
+                track_name=track_name,
+                count=len(entries),
+            )
+            return None
+
     def score(e: dict) -> float:
         s = 0.0
         title = e.get("title") or ""
+        title_sim = e.get("_title_sim")
+        if title_sim is None and track_name:
+            title_sim = _title_similarity(title, artist, track_name)
+        if title_sim is not None:
+            s += (1 - title_sim) * 800
         if not user_wants_cover and _is_cover(title):
             s += 1000
         if _is_live(title):
@@ -209,7 +318,13 @@ def _select_best_entry(
             s += abs((e.get("duration") or 0) - mb_duration)
         return s
 
-    return min(entries, key=score)
+    best = min(entries, key=score)
+
+    # Clean up temporary key
+    for e in entries:
+        e.pop("_title_sim", None)
+
+    return best
 
 
 def download_track(
@@ -250,24 +365,32 @@ def download_track(
                     selected_entry = _select_best_entry(
                         entries, mb_duration, artist, track_name
                     )
-                    yt_dur = selected_entry.get("duration")
-                    log.info(
-                        "selected YouTube result",
-                        title=selected_entry.get("title", ""),
-                        yt_duration=yt_dur,
-                        mb_duration=mb_duration,
-                    )
-                    if mb_duration is not None and yt_dur is not None:
-                        diff = abs(yt_dur - mb_duration)
-                        if diff > _DURATION_WARN_THRESHOLD:
-                            log.warning(
-                                "YouTube duration deviates significantly from MB duration",
-                                yt_duration=yt_dur,
-                                mb_duration=mb_duration,
-                                diff_seconds=diff,
-                                artist=artist,
-                                track=track_name,
-                            )
+                    if selected_entry is None:
+                        log.warning(
+                            "no YouTube candidate met title similarity threshold",
+                            artist=artist,
+                            track=track_name,
+                        )
+                        entries = []  # fall through to ytsearch1 fallback
+                    else:
+                        yt_dur = selected_entry.get("duration")
+                        log.info(
+                            "selected YouTube result",
+                            title=selected_entry.get("title", ""),
+                            yt_duration=yt_dur,
+                            mb_duration=mb_duration,
+                        )
+                        if mb_duration is not None and yt_dur is not None:
+                            diff = abs(yt_dur - mb_duration)
+                            if diff > _DURATION_WARN_THRESHOLD:
+                                log.warning(
+                                    "YouTube duration deviates significantly from MB duration",
+                                    yt_duration=yt_dur,
+                                    mb_duration=mb_duration,
+                                    diff_seconds=diff,
+                                    artist=artist,
+                                    track=track_name,
+                                )
     except Exception as exc:
         log.warning(
             "metadata fetch failed, falling back to direct download", error=str(exc)
@@ -305,6 +428,9 @@ def download_track(
             candidate_entry = _select_best_entry(
                 remaining_entries, mb_duration, artist, track_name
             )
+            if candidate_entry is None:
+                remaining_entries = []
+                continue  # fall through to ytsearch1 fallback
             url = _entry_url(candidate_entry)
             if not url or url in attempted_urls:
                 remaining_entries = [
@@ -333,6 +459,27 @@ def download_track(
                             if "entries" in info
                             else info
                         )
+                        # ytsearch1 fallback: verify title similarity
+                        if (
+                            track_name
+                            and download_target.startswith("ytsearch1:")
+                            and entry.get("title")
+                        ):
+                            fallback_sim = _title_similarity(
+                                entry["title"], artist, track_name
+                            )
+                            if fallback_sim < 0.3:
+                                log.warning(
+                                    "ytsearch1 fallback title similarity too low",
+                                    yt_title=entry["title"],
+                                    track_name=track_name,
+                                    similarity=round(fallback_sim, 3),
+                                )
+                                for ext in ("flac", "opus", "webm", "m4a", "mp3"):
+                                    candidate_file = Path(staging_dir) / f"{mbid}.{ext}"
+                                    if candidate_file.exists():
+                                        candidate_file.unlink()
+                                break  # exit download loop → return None, None
                         thumbnail_url = entry.get("thumbnail", "")
                         channel = entry.get("channel") or entry.get("uploader", "")
                         if thumbnail_url or channel:
