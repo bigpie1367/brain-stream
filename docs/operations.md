@@ -407,8 +407,9 @@ docker compose exec brainstream find /app/data/staging -name "*.part" -delete
 ## 8. 백업
 
 ```bash
-# 상태 DB 백업
-cp data/state.db data/state.db.backup
+# state.db 백업 (named volume에서 추출)
+docker compose exec brainstream cp /app/db/state.db /app/data/state.db.backup
+cp data/state.db.backup ./state.db.backup
 
 # 전체 음악 라이브러리 백업
 tar -czf music-backup-$(date +%Y%m%d).tar.gz data/music/

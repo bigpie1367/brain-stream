@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS settings (
 | `cf_first_mbid` | CF 추천 첫 번째 MBID. 모델 갱신 감지에 사용 — 새 실행 시 첫 MBID가 저장값과 다르면 offset 리셋 |
 | `pipeline_interval_hours` | 파이프라인 실행 주기 (시간 단위). `PUT /api/settings/pipeline-interval`으로 변경. 미설정 시 기본값 6 |
 
+**스키마 마이그레이션**: `init_db()` 시 `ALTER TABLE ... ADD COLUMN` + `try/except OperationalError` 패턴으로 신규 컬럼을 점진적 추가. 기존 데이터 유실 없이 `source`, `file_path`, `album`, `mb_recording_id` 컬럼이 자동 추가됨.
+
 ---
 
 ## 2. 상태 전이도
@@ -152,3 +154,6 @@ data/
 | `find_active_download(artist, track_name)` | artist+track_name이 일치하는 done/downloading/pending 레코드 검색. 중복 다운로드 방지에 사용 |
 | `update_track_info(mbid, ...)` | artist/file_path/album/mb_recording_id 선택적 업데이트 |
 | `get_pending_jobs()` | pending/downloading 잡을 rowid ASC 순서로 반환 (재시작 복구용) |
+| `is_downloaded(db_path, mbid)` | mbid가 이미 active(pending/downloading/done) 또는 ignored 상태인지 확인. LB 파이프라인에서 중복 건너뜀에 사용 |
+| `update_file_path(db_path, mbid, new_file_path)` | file_path 컬럼만 단독 업데이트. update_track_info의 경량 대안 |
+| `mark_ignored_bulk(db_path, mbids)` | 여러 mbid를 한 번에 ignored 상태로 마킹 (일괄 삭제용) |

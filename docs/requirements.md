@@ -136,6 +136,16 @@
 | 동작 | `mark_pending_if_not_duplicate()`로 원자적 중복 체크. 중복 시 기존 레코드를 `{"duplicate": true, "existing": {...}}` 형태로 반환 |
 | 우선순위 | 필수 |
 
+### FR-10. 일괄 삭제
+
+| 항목 | 내용 |
+|------|------|
+| ID | FR-10 |
+| 설명 | 여러 트랙을 한 번에 선택하여 삭제할 수 있다 (파일 제거 + state.db ignored 마킹 + Navidrome 재스캔) |
+| API | `DELETE /api/downloads` — request body에 mbids 배열 전달 |
+| UI | 일괄 삭제 모드 토글, 체크박스 선택, 확인 모달 |
+| 우선순위 | 필수 |
+
 ---
 
 ## 4. 비기능 요구사항 (Non-Functional Requirements)
@@ -169,7 +179,7 @@
 
 ### NFR-06. 안전한 중단 및 재시작 복구
 
-- Worker thread는 non-daemon으로 `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event`를 set하여 graceful shutdown 수행 (join 30s timeout)
+- Worker thread는 daemon으로 `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event`를 set하여 graceful shutdown 수행 (join 30s timeout)
 - Docker `stop_grace_period: 40s`로 설정하여 강제 종료 방지
 - 재시작 시 `pending`/`downloading` 잡 자동 복구
 

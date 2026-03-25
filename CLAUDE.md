@@ -54,7 +54,7 @@ docker compose -f docker-compose.local.yml restart brainstream
 docker compose -f docker-compose.local.yml up --build -d
 
 # Inspect SQLite state DB
-docker compose -f docker-compose.local.yml exec brainstream sqlite3 /app/data/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
+docker compose -f docker-compose.local.yml exec brainstream sqlite3 /app/db/state.db "SELECT * FROM downloads ORDER BY rowid DESC LIMIT 20;"
 
 # Manually trigger the LB pipeline via API
 curl -X POST http://localhost:8080/api/pipeline/run
@@ -73,7 +73,7 @@ curl http://localhost:8080/api/downloads | python3 -m json.tool
 worker_loop (single thread, FIFO):
   → 잡 시작 전: staging/{mbid}.* 잔류 파일 삭제 (.part 포함)
   → file_path 설정 + 파일 존재 시: 재다운로드 스킵, scan + mark_done만 실행
-  → yt-dlp YouTube 검색 ("ytsearch5:{artist} {track}")
+  → yt-dlp YouTube 검색 ("ytsearch5:{artist} {track} official audio")
       차단 영상(payment/private/members-only) 감지 → 다음 후보 retry
       5개 소진 시 "ytsearch1:" 폴백 / FLAC 우선 → Opus fallback
   → LB 트랙: _lookup_recording_by_mbid(mbid) 직접 조회 → 실패 시 _mb_search_recording() 폴백
@@ -106,12 +106,12 @@ worker_loop (single thread, FIFO):
 
 **Threading model:**
 - `main()` runs uvicorn on the **main thread** (blocking)
-- **Worker thread** (non-daemon): `worker_loop()` — FIFO 큐에서 잡을 꺼내 하나씩 순차 처리. `_shutdown_event` 기반 graceful shutdown (`try/finally`로 uvicorn 종료 후 join timeout=30s)
+- **Worker thread** (daemon): `worker_loop()` — FIFO 큐에서 잡을 꺼내 하나씩 순차 처리. `_shutdown_event` 기반 graceful shutdown (`try/finally`로 uvicorn 종료 후 best-effort join)
 - **Pipeline thread** (daemon): `run_pipeline()` — LB 추천 fetch 후 enqueue_job() 호출
 - **Scheduler thread** (daemon): 60s tick, `schedule` 라이브러리 없이 직접 시간 비교(`time.time()`). settings 테이블의 `pipeline_interval_hours`를 매 tick마다 읽어 동적 주기 적용. N시간마다 run_pipeline() 호출
 
 **Stability hardening (P0):**
-- **Graceful shutdown**: `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event.set()` → 워커 스레드 join(30s) → `_yt_executor.shutdown()`. Docker `stop_grace_period: 40s`
+- **Graceful shutdown**: `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event.set()` → 워커 스레드 best-effort join → `_yt_executor.shutdown()`. Docker `stop_grace_period: 40s`. 워커는 daemon 스레드이므로 프로세스 종료를 막지 않음
 - **yt-dlp 타임아웃**: 메타데이터 추출 60s, 다운로드 600s (`_run_with_timeout` + `socket_timeout: 30`)
 - **API Rate Limiting**: POST 엔드포인트별 인메모리 슬라이딩 윈도우 (예: `/api/download` 10회/분). 429 반환
 - **API 입력 검증**: Pydantic `Field(max_length=500)`, Query params `Query(max_length=500)`
@@ -129,10 +129,11 @@ worker_loop (single thread, FIFO):
 | `src/state.py` | SQLite wrapper; `mbid` is PK; `get_pending_jobs()` returns pending/downloading jobs in rowid ASC order; settings 테이블 CRUD (`get_setting()`, `set_setting()`) — cf_offset, cf_first_mbid, pipeline_interval_hours 저장 |
 | `src/config.py` | Env-var only config (no file needed); `LB_USERNAME`, `LB_TOKEN`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`, `NAVIDROME_URL` |
 | `src/jobs.py` | Job execution logic; `run_download_job()` runs download→tag→scan→state-update flow in worker thread |
-| `src/pipeline/musicbrainz.py` | Shared MB API client; `lookup_recording(mbid)`, `_escape_mb_query()`, extracted from tagger.py to prevent circular imports |
+| `src/pipeline/musicbrainz.py` | Shared MB API client; lookup_recording(mbid), mb_search_recording(), mb_album_from_recording_id(), _escape_mb_query(), extracted from tagger.py to prevent circular imports |
 | `src/pipeline/listenbrainz.py` | LB API client; `fetch_recommendations(username, token, count, offset)` — CF 추천 offset 페이지네이션; `fetch_user_top_artists(username, token)` — Radio 시드 아티스트 조회; `fetch_lb_radio(artist_list, count)` — LB Radio 트랙 수집 |
 | `src/utils/fs.py` | Shared filesystem utilities; `sanitize_path_component()`, `resolve_dir()`, `move_to_music_dir()` |
-| `src/pipeline/tagger.py` | Most complex module; MB 4단계 검색(Stage 2.5 artist-id 추가) → shutil 복사 → mutagen 태깅 → iTunes/Deezer/MB 앨범 enrichment → CAA/iTunes/Deezer/YouTube 커버아트 임베딩. `write_title_tag` public alias 추가 (edit API에서 사용) |
+| `src/pipeline/tagger.py` | Enrichment + tagging module; _enrich_track() iTunes/Deezer/MB 앨범 enrichment → CAA/iTunes/Deezer/YouTube 커버아트 임베딩 → shutil 복사. write_title_tag, write_artist_tag, write_album_tag, write_mb_trackid_tag public 함수 (edit API에서 사용) |
+| `src/pipeline/downloader.py` | YouTube 다운로드; download_track(), search_candidates(). _select_best_entry() 후보 스코어링 (live/cover 필터, strict→fallback). _run_with_timeout ThreadPoolExecutor 래퍼 |
 
 ## Tagger Constraints
 
@@ -145,7 +146,9 @@ worker_loop (single thread, FIFO):
 
 | Host path | Container path | Notes |
 |-----------|----------------|-------|
-| `./data` | `/app/data` | Music files, staging, logs, state.db |
+| `./data` | `/app/data` | Music files, staging, logs |
+| `${MUSIC_DIR}` | `/app/data/music` | 호스트 음악 디렉토리 (prod 전용) |
+| `db-data` (named) | `/app/db` | SQLite state.db (named Docker volume) |
 
 ## Services
 
