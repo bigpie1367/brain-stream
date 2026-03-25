@@ -22,7 +22,7 @@
 │                     Docker Network                          │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │               brainstream :8080                      │   │
+│  │               brainstream :8000 (host→8080 매핑)      │   │
 │  │                                                      │   │
 │  │  ┌────────────────┐  ┌──────────────────────────┐   │   │
 │  │  │   FastAPI      │  │     Pipeline Core        │   │   │
@@ -82,7 +82,7 @@ External APIs:
 | `src/pipeline/downloader.py` | yt-dlp로 YouTube 검색 및 다운로드 (FLAC → Opus fallback); `ytsearch5:` 5개 후보 검색 후 차단 영상 감지 시 다음 후보 retry; `(file_path, yt_metadata)` 튜플 반환. `search_candidates(artist, track)`: 다운로드 없이 후보 5개 메타데이터 반환. `download_track_by_id(video_id, ...)`: 지정 video_id로 직접 다운로드. `_select_best_entry(entries, artist, track_name, strict=True)`: strict 모드에서 라이브/커버 영상을 점수 패널티 대신 사전 필터링으로 제외하고 클린 후보가 없을 때만 전체 후보 대상 스코어링으로 폴백. `download_track()`은 기본값 strict=True 사용 |
 | `src/pipeline/tagger.py` | MB API recording 검색 (artist 유사도 검증, 4단계 폴백) → mutagen 전체 태그 쓰기 → shutil 파일 복사 → MB enrichment → CAA/iTunes/Deezer 커버아트 임베딩 → YouTube 썸네일/채널명 폴백. `_lookup_recording_by_mbid(mbid)`: MB recording UUID로 직접 recording 조회. `_mb_lookup_artist_ids(artist, limit=3)`: MB Artist API로 아티스트명 검색 → MBID 목록 반환 (Stage 2.5에서 사용). `write_mb_trackid_tag(file_path, recording_id)`: 파일 포맷별(FLAC/Opus/MP4/기타) mb_trackid 태그 기록. `_write_artist_tag`, `_write_album_tag`, `_write_title_tag`, `_itunes_search(country=)` 등 public alias로 `api.py` 재매칭/편집에도 사용. LB 트랙은 `_lookup_recording_by_mbid(mbid)` 직접 조회 후 실패 시 `_mb_search_recording()`으로 폴백. `tag_and_import()` 반환: `(bool, dest_path, canonical_artist, canonical_title, canonical_album, mb_recording_id)` 6-tuple |
 | `src/jobs.py` | 다운로드 잡 실행 로직. `run_download_job()` — 워커 스레드에서 호출되어 다운로드→태깅→스캔→상태 업데이트 전체 흐름 실행. `api.py`와 `worker.py`에서 분리된 잡 실행 책임 |
-| `src/pipeline/musicbrainz.py` | 공유 MusicBrainz API 클라이언트. `lookup_recording(mbid)`, `_escape_mb_query()`, MB 검색 관련 공통 함수. tagger.py에서 분리되어 순환 import 방지 |
+| `src/pipeline/musicbrainz.py` | 공유 MusicBrainz API 클라이언트. `lookup_recording(mbid)`, `mb_search_recording()`, `mb_album_from_recording_id()`, `_escape_mb_query()`, MB 검색 관련 공통 함수. tagger.py에서 분리되어 순환 import 방지 |
 | `src/utils/fs.py` | 공유 파일시스템 유틸리티. `sanitize_path_component()` (특수문자 제거), `resolve_dir()` (대소문자 무시 기존 폴더 재사용), `move_to_music_dir()` (파일 이동 + 빈 폴더 정리) |
 | `src/pipeline/navidrome.py` | Subsonic API token-auth, startScan + getScanStatus 폴링 |
 | `src/utils/logger.py` | structlog 설정 (TTY: 컬러 콘솔, non-TTY: JSON). `RotatingFileHandler` 50MB × 5 백업 |
@@ -252,7 +252,7 @@ LB 자동 트랙과 수동 요청 트랙이 동일한 워커 스레드에서 FIF
 Main Thread
   └─ uvicorn (HTTP 서버, 블로킹)
 
-Non-daemon Thread — worker (graceful shutdown 대상)
+Daemon Thread — worker (best-effort graceful shutdown)
   └─ worker_loop() (단일 워커, FIFO 큐에서 잡을 꺼내 순차 처리)
        ├─ _run_download_job(cfg, job_spec) (한 번에 하나씩)
        └─ _cleanup_expired_queues() (잡 완료 후 30분 비활성 SSE 큐 정리)
@@ -272,14 +272,14 @@ Daemon Thread 2 — scheduler
 **Graceful Shutdown:**
 - `uvicorn.run()` 감싸는 `try/finally`에서 `_shutdown_event.set()` → 워커 스레드 `join(timeout=30)` → `_yt_executor.shutdown()`
 - Docker `stop_grace_period: 40s` (join 30s + 버퍼 10s)
-- SIGTERM → uvicorn 종료 → `finally` 블록에서 워커 종료 신호 전파 및 최대 30초 대기
+- SIGTERM → uvicorn 종료 → finally 블록에서 워커 종료 신호 전파 및 best-effort join (워커는 daemon이므로 프로세스 종료를 막지 않음)
 - 진행 중 잡은 완료될 수 있으나, 대기 큐 전체 drain은 보장하지 않음 (재시작 복구 경로로 처리)
 
 **안정성 강화 (P0):**
 
 | 항목 | 설명 |
 |------|------|
-| Graceful Shutdown | 워커 non-daemon + `try/finally` + `_shutdown_event` + `join(30s)` + `_yt_executor.shutdown(wait=False)`. Best-effort — 대기 큐 drain 미보장 |
+| Graceful Shutdown | 워커 daemon + `try/finally` + `_shutdown_event` + `join(30s)` + `_yt_executor.shutdown(wait=False)`. Best-effort — 대기 큐 drain 미보장 |
 | yt-dlp 타임아웃 | `_run_with_timeout` 래퍼: 메타데이터 60s, 다운로드 600s. `socket_timeout: 30`, `extractor_retries: 3` |
 | API Rate Limiting | 인메모리 슬라이딩 윈도우. POST 10회/분 (pipeline/run은 2회/분). 초과 시 429 |
 | API 입력 검증 | Pydantic `Field(max_length=500)`, `Query(max_length=500)` |
